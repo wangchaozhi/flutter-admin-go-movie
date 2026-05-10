@@ -1,0 +1,315 @@
+name: Manual Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, for example v1.0.0"
+        required: true
+        type: string
+      release_name:
+        description: "Release name, defaults to tag"
+        required: false
+        type: string
+      prerelease:
+        description: "Mark as prerelease"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Prepare tag
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag }}"
+          if [[ ! "$TAG" =~ ^v?[0-9]+(\.[0-9]+){1,2}([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid tag: $TAG"
+            echo "Recommended format: v1.0.0"
+            exit 1
+          fi
+
+      - name: Create tag when missing
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin "refs/tags/${TAG}:refs/tags/${TAG}" || true
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "Tag ${TAG} already exists. Release will use the existing tag."
+          else
+            git tag -a "${TAG}" -m "Release ${TAG}"
+            git push origin "refs/tags/${TAG}"
+          fi
+
+  build-backend-admin:
+    name: Build backend and admin web
+    runs-on: ubuntu-latest
+    needs: prepare
+    continue-on-error: true
+
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache: true
+          cache-dependency-path: backend/go.sum
+
+      - name: Build backend packages
+        shell: bash
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          mkdir -p ../dist/backend
+          targets=(
+            "linux amd64 flutter-admin-go"
+            "windows amd64 flutter-admin-go.exe"
+            "darwin amd64 flutter-admin-go"
+            "darwin arm64 flutter-admin-go"
+          )
+          for target in "${targets[@]}"; do
+            read -r goos goarch output <<< "$target"
+            out_dir="../dist/backend/flutter-admin-go-${{ inputs.tag }}-${goos}-${goarch}"
+            mkdir -p "$out_dir"
+            GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o "$out_dir/$output" ./cmd/server
+            cp ../README.md "$out_dir/"
+            tar -czf "../dist/flutter-admin-go-${{ inputs.tag }}-backend-${goos}-${goarch}.tar.gz" -C "../dist/backend" "$(basename "$out_dir")"
+          done
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: front/admin/package-lock.json
+
+      - name: Build admin web
+        working-directory: front/admin
+        run: |
+          npm install
+          npm run build
+
+      - name: Package admin web
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -czf "dist/flutter-admin-go-${{ inputs.tag }}-admin-web.tar.gz" -C front/admin/dist .
+
+      - name: Upload backend and admin assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-admin-assets
+          path: |
+            dist/*.tar.gz
+          if-no-files-found: error
+
+  build-flutter-android-web-linux:
+    name: Build Flutter Android, web and Linux
+    runs-on: ubuntu-latest
+    needs: prepare
+    continue-on-error: true
+
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Install Linux desktop dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Build Android APK
+        working-directory: front/mobile
+        run: |
+          flutter pub get
+          flutter build apk --release
+
+      - name: Build Flutter web
+        working-directory: front/mobile
+        run: flutter build web --release
+
+      - name: Build Flutter Linux
+        working-directory: front/mobile
+        run: |
+          flutter config --enable-linux-desktop
+          flutter build linux --release
+
+      - name: Package Flutter Android, web and Linux assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp front/mobile/build/app/outputs/flutter-apk/app-release.apk "dist/flutter-admin-go-${{ inputs.tag }}-mobile-android-release.apk"
+          tar -czf "dist/flutter-admin-go-${{ inputs.tag }}-mobile-web.tar.gz" -C front/mobile/build/web .
+          tar -czf "dist/flutter-admin-go-${{ inputs.tag }}-mobile-linux-x64.tar.gz" -C front/mobile/build/linux/x64/release/bundle .
+
+      - name: Upload Flutter Android, web and Linux assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter-android-web-linux-assets
+          path: dist/*
+          if-no-files-found: error
+
+  build-flutter-windows:
+    name: Build Flutter Windows
+    runs-on: windows-latest
+    needs: prepare
+    continue-on-error: true
+
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Build Flutter Windows
+        working-directory: front/mobile
+        run: |
+          flutter config --enable-windows-desktop
+          flutter pub get
+          flutter build windows --release
+
+      - name: Package Flutter Windows asset
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Compress-Archive -Path front/mobile/build/windows/x64/runner/Release/* -DestinationPath "dist/flutter-admin-go-${{ inputs.tag }}-mobile-windows-x64.zip" -Force
+
+      - name: Upload Flutter Windows asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter-windows-assets
+          path: dist/*
+          if-no-files-found: error
+
+  build-flutter-macos:
+    name: Build Flutter macOS
+    runs-on: macos-latest
+    needs: prepare
+    continue-on-error: true
+
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Build Flutter macOS
+        working-directory: front/mobile
+        run: |
+          flutter config --enable-macos-desktop
+          flutter pub get
+          flutter build macos --release
+
+      - name: Package Flutter macOS asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          APP_PATH="$(find front/mobile/build/macos/Build/Products/Release -maxdepth 1 -name '*.app' -print -quit)"
+          if [[ -z "$APP_PATH" ]]; then
+            echo "No macOS .app bundle found"
+            exit 1
+          fi
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "dist/flutter-admin-go-${{ inputs.tag }}-mobile-macos.zip"
+
+      - name: Upload Flutter macOS asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter-macos-assets
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    if: ${{ always() && needs.prepare.result == 'success' }}
+    needs:
+      - prepare
+      - build-backend-admin
+      - build-flutter-android-web-linux
+      - build-flutter-windows
+      - build-flutter-macos
+
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Check release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! find dist -maxdepth 1 -type f | grep -q .; then
+            echo "No release assets were produced."
+            exit 1
+          fi
+          echo "Release assets:"
+          find dist -maxdepth 1 -type f -printf " - %f\n" | sort
+
+      - name: Generate checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum * > SHA256SUMS.txt
+
+      - name: Create release and upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          name: ${{ inputs.release_name || inputs.tag }}
+          prerelease: ${{ inputs.prerelease }}
+          generate_release_notes: true
+          overwrite_files: true
+          fail_on_unmatched_files: true
+          files: |
+            dist/*
