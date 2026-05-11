@@ -95,7 +95,7 @@ func HLSIndexHandler(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(line, ".ts") && !strings.HasPrefix(line, "#") {
 			tsPath := fmt.Sprintf("/hls/%d/%s/%s", videoID, quality, line)
 			signed := SignPath(tsPath, 1800)
-			buf.WriteString(videoBaseURL() + signed + "\n")
+			buf.WriteString(videoBaseURL(r) + signed + "\n")
 		} else {
 			buf.WriteString(line + "\n")
 		}
