@@ -13,6 +13,9 @@ dependencies:
   http: ^1.2.2
   shared_preferences: ^2.3.3
   forui: ^0.21.3
+  media_kit: ^1.1.11
+  media_kit_video: ^1.2.4
+  media_kit_libs_video: ^1.0.4
 
 dev_dependencies:
   flutter_test:

@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../../core/api_client.dart';
+import '../../core/session.dart';
+import '../../models/video.dart';
+
 class MobileHomePage extends StatefulWidget {
   const MobileHomePage({super.key});
 
@@ -8,13 +12,86 @@ class MobileHomePage extends StatefulWidget {
 }
 
 class _MobileHomePageState extends State<MobileHomePage> {
-  int _selectedChannel = 0;
+  int _selectedCategoryIndex = 0; // 0 = 全部
   int _selectedNav = 0;
 
-  static const _channels = ['推荐', '电影', '剧集', '综艺', '动漫'];
+  List<Category> _categories = [];
+  List<Video> _videos = [];
+  bool _loadingCategories = true;
+  bool _loadingVideos = false;
+  String? _username;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAll();
+  }
+
+  Future<void> _loadAll() async {
+    final username = await Session.username();
+    if (mounted) setState(() => _username = username);
+    await Future.wait([_loadCategories(), _loadVideos(categoryId: 0)]);
+  }
+
+  Future<void> _loadCategories() async {
+    try {
+      final resp = await ApiClient().get('/api/categories');
+      if (!mounted) return;
+      if (resp['code'] == 0) {
+        final list = (resp['data'] as List<dynamic>? ?? [])
+            .map((e) => Category.fromJson(e as Map<String, dynamic>))
+            .toList();
+        setState(() { _categories = list; _loadingCategories = false; });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _loadingCategories = false);
+    }
+  }
+
+  Future<void> _loadVideos({required int categoryId}) async {
+    if (!mounted) return;
+    setState(() => _loadingVideos = true);
+    try {
+      final path = categoryId > 0
+          ? '/api/videos?category_id=$categoryId&per_page=50'
+          : '/api/videos?per_page=50';
+      final resp = await ApiClient().get(path);
+      if (!mounted) return;
+      if (resp['code'] == 0) {
+        final data = resp['data'] as Map<String, dynamic>?;
+        final list = (data?['items'] as List<dynamic>? ?? [])
+            .map((e) => Video.fromJson(e as Map<String, dynamic>))
+            .toList();
+        setState(() => _videos = list);
+      }
+    } catch (_) {
+      // ignore network errors — keep existing list
+    } finally {
+      if (mounted) setState(() => _loadingVideos = false);
+    }
+  }
+
+  Future<void> _logout() async {
+    await Session.clear();
+    if (!mounted) return;
+    Navigator.pushReplacementNamed(context, '/login');
+  }
+
+  void _onCategorySelected(int index) {
+    setState(() => _selectedCategoryIndex = index);
+    final categoryId = index == 0 ? 0 : _categories[index - 1].id;
+    _loadVideos(categoryId: categoryId);
+  }
+
+  void _openVideo(Video video) {
+    Navigator.pushNamed(context, '/player', arguments: video);
+  }
 
   @override
   Widget build(BuildContext context) {
+    final tabs = ['全部', ..._categories.map((c) => c.name)];
+    final featuredVideo = _videos.where((v) => v.isReady).firstOrNull;
+
     return Scaffold(
       backgroundColor: const Color(0xFF0D0F14),
       body: SafeArea(
@@ -22,29 +99,50 @@ class _MobileHomePageState extends State<MobileHomePage> {
         child: CustomScrollView(
           slivers: [
             SliverToBoxAdapter(
-              child: _TopBar(
-                onLogout: () =>
-                    Navigator.pushReplacementNamed(context, '/login'),
-              ),
+              child: _TopBar(username: _username ?? '', onLogout: _logout),
             ),
             SliverToBoxAdapter(
-              child: _ChannelTabs(
-                channels: _channels,
-                selectedIndex: _selectedChannel,
-                onSelected: (index) => setState(() => _selectedChannel = index),
-              ),
+              child: _loadingCategories
+                  ? const SizedBox(
+                      height: 48,
+                      child: Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF25D0AB)))),
+                    )
+                  : _ChannelTabs(
+                      tabs: tabs,
+                      selectedIndex: _selectedCategoryIndex,
+                      onSelected: _onCategorySelected,
+                    ),
             ),
-            const SliverToBoxAdapter(child: _FeaturedPlayer()),
-            const SliverToBoxAdapter(child: _ContinueWatching()),
-            SliverPadding(
-              padding: const EdgeInsets.fromLTRB(16, 18, 16, 112),
-              sliver: SliverList.separated(
-                itemCount: _videos.length,
-                separatorBuilder: (_, _) => const SizedBox(height: 14),
-                itemBuilder: (context, index) =>
-                    _VideoTile(video: _videos[index]),
+            if (featuredVideo != null)
+              SliverToBoxAdapter(
+                child: _FeaturedBanner(video: featuredVideo, onPlay: _openVideo),
               ),
-            ),
+            if (_loadingVideos)
+              const SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.all(32),
+                  child: Center(child: CircularProgressIndicator(color: Color(0xFF25D0AB))),
+                ),
+              )
+            else if (_videos.isEmpty)
+              const SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.all(48),
+                  child: Center(
+                    child: Text('暂无视频', style: TextStyle(color: Color(0xFF9CA3AF))),
+                  ),
+                ),
+              )
+            else
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(16, 18, 16, 112),
+                sliver: SliverList.separated(
+                  itemCount: _videos.length,
+                  separatorBuilder: (_, _) => const SizedBox(height: 14),
+                  itemBuilder: (context, index) =>
+                      _VideoTile(video: _videos[index], onTap: _openVideo),
+                ),
+              ),
           ],
         ),
       ),
@@ -57,8 +155,9 @@ class _MobileHomePageState extends State<MobileHomePage> {
 }
 
 class _TopBar extends StatelessWidget {
-  const _TopBar({required this.onLogout});
+  const _TopBar({required this.username, required this.onLogout});
 
+  final String username;
   final VoidCallback onLogout;
 
   @override
@@ -79,9 +178,9 @@ class _TopBar extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 2),
-                const Text(
-                  '今晚想看点什么？',
-                  style: TextStyle(color: Color(0xFF9CA3AF), fontSize: 13),
+                Text(
+                  username.isNotEmpty ? '你好，$username' : '今晚想看点什么？',
+                  style: const TextStyle(color: Color(0xFF9CA3AF), fontSize: 13),
                 ),
               ],
             ),
@@ -106,12 +205,12 @@ class _TopBar extends StatelessWidget {
 
 class _ChannelTabs extends StatelessWidget {
   const _ChannelTabs({
-    required this.channels,
+    required this.tabs,
     required this.selectedIndex,
     required this.onSelected,
   });
 
-  final List<String> channels;
+  final List<String> tabs;
   final int selectedIndex;
   final ValueChanged<int> onSelected;
 
@@ -127,35 +226,32 @@ class _ChannelTabs extends StatelessWidget {
           return ChoiceChip(
             selected: selected,
             showCheckmark: false,
-            label: Text(channels[index]),
+            label: Text(tabs[index]),
             labelStyle: TextStyle(
-              color: selected
-                  ? const Color(0xFF101318)
-                  : const Color(0xFFD1D5DB),
+              color: selected ? const Color(0xFF101318) : const Color(0xFFD1D5DB),
               fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
             ),
             selectedColor: const Color(0xFFF7C948),
             backgroundColor: const Color(0xFF1B1F2A),
             side: BorderSide(
-              color: selected
-                  ? const Color(0xFFF7C948)
-                  : const Color(0xFF2B3140),
+              color: selected ? const Color(0xFFF7C948) : const Color(0xFF2B3140),
             ),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
-            ),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
             onSelected: (_) => onSelected(index),
           );
         },
         separatorBuilder: (_, _) => const SizedBox(width: 10),
-        itemCount: channels.length,
+        itemCount: tabs.length,
       ),
     );
   }
 }
 
-class _FeaturedPlayer extends StatelessWidget {
-  const _FeaturedPlayer();
+class _FeaturedBanner extends StatelessWidget {
+  const _FeaturedBanner({required this.video, required this.onPlay});
+
+  final Video video;
+  final ValueChanged<Video> onPlay;
 
   @override
   Widget build(BuildContext context) {
@@ -168,20 +264,18 @@ class _FeaturedPlayer extends StatelessWidget {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              Image.network(
-                'https://images.unsplash.com/photo-1485846234645-a62644f84728?auto=format&fit=crop&w=1200&q=80',
-                fit: BoxFit.cover,
-                errorBuilder: (_, _, _) =>
-                    const ColoredBox(color: Color(0xFF202532)),
-              ),
+              video.fullCoverUrl.isNotEmpty
+                  ? Image.network(
+                      video.fullCoverUrl,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, _, _) =>
+                          const ColoredBox(color: Color(0xFF202532)),
+                    )
+                  : const ColoredBox(color: Color(0xFF202532)),
               const DecoratedBox(
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
-                    colors: [
-                      Color(0x99000000),
-                      Color(0x00000000),
-                      Color(0xDD000000),
-                    ],
+                    colors: [Color(0x99000000), Color(0x00000000), Color(0xDD000000)],
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
                   ),
@@ -194,62 +288,39 @@ class _FeaturedPlayer extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const _MetaPill(text: '独家首播  4K HDR'),
+                    if (video.isVip && !video.isFree)
+                      const _MetaPill(text: 'VIP 专属'),
                     const SizedBox(height: 10),
                     Text(
-                      '霓虹城市追踪',
+                      video.title,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.headlineSmall
-                          ?.copyWith(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w900,
-                          ),
+                      style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w900,
+                      ),
                     ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      '科幻 / 悬疑 / 118 分钟',
-                      style: TextStyle(color: Color(0xFFE5E7EB), fontSize: 13),
-                    ),
+                    if (video.description.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        video.description,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: Color(0xFFE5E7EB), fontSize: 13),
+                      ),
+                    ],
                     const SizedBox(height: 14),
-                    Row(
-                      children: [
-                        FilledButton.icon(
-                          onPressed: () {},
-                          icon: const Icon(Icons.play_arrow_rounded),
-                          label: const Text('播放'),
-                          style: FilledButton.styleFrom(
-                            backgroundColor: const Color(0xFFF7C948),
-                            foregroundColor: const Color(0xFF101318),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        IconButton.filledTonal(
-                          onPressed: () {},
-                          icon: const Icon(Icons.add_rounded),
-                          color: Colors.white,
-                          tooltip: '加入片单',
-                          style: IconButton.styleFrom(
-                            backgroundColor: const Color(0x662B3140),
-                          ),
-                        ),
-                      ],
+                    FilledButton.icon(
+                      onPressed: () => onPlay(video),
+                      icon: const Icon(Icons.play_arrow_rounded),
+                      label: const Text('播放'),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: const Color(0xFFF7C948),
+                        foregroundColor: const Color(0xFF101318),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
                     ),
                   ],
-                ),
-              ),
-              const Center(
-                child: CircleAvatar(
-                  radius: 31,
-                  backgroundColor: Color(0xCC101318),
-                  child: Icon(
-                    Icons.play_arrow_rounded,
-                    color: Colors.white,
-                    size: 38,
-                  ),
                 ),
               ),
             ],
@@ -260,100 +331,11 @@ class _FeaturedPlayer extends StatelessWidget {
   }
 }
 
-class _ContinueWatching extends StatelessWidget {
-  const _ContinueWatching();
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 22, 16, 0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const _SectionTitle(title: '继续观看'),
-          const SizedBox(height: 12),
-          SizedBox(
-            height: 148,
-            child: ListView.separated(
-              scrollDirection: Axis.horizontal,
-              itemCount: _watching.length,
-              separatorBuilder: (_, _) => const SizedBox(width: 12),
-              itemBuilder: (context, index) =>
-                  _WatchingCard(video: _watching[index]),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _WatchingCard extends StatelessWidget {
-  const _WatchingCard({required this.video});
-
-  final VideoItem video;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 174,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: AspectRatio(
-              aspectRatio: 16 / 9,
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  Image.network(
-                    video.imageUrl,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, _, _) =>
-                        const ColoredBox(color: Color(0xFF202532)),
-                  ),
-                  const Center(
-                    child: Icon(
-                      Icons.play_circle_fill_rounded,
-                      color: Colors.white,
-                      size: 34,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            video.title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const SizedBox(height: 6),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(99),
-            child: LinearProgressIndicator(
-              value: video.progress,
-              minHeight: 4,
-              backgroundColor: const Color(0xFF2B3140),
-              valueColor: const AlwaysStoppedAnimation(Color(0xFF25D0AB)),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _VideoTile extends StatelessWidget {
-  const _VideoTile({required this.video});
+  const _VideoTile({required this.video, required this.onTap});
 
-  final VideoItem video;
+  final Video video;
+  final ValueChanged<Video> onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -362,7 +344,7 @@ class _VideoTile extends StatelessWidget {
       borderRadius: BorderRadius.circular(8),
       child: InkWell(
         borderRadius: BorderRadius.circular(8),
-        onTap: () {},
+        onTap: video.isReady ? () => onTap(video) : null,
         child: Padding(
           padding: const EdgeInsets.all(10),
           child: Row(
@@ -375,33 +357,40 @@ class _VideoTile extends StatelessWidget {
                   child: Stack(
                     fit: StackFit.expand,
                     children: [
-                      Image.network(
-                        video.imageUrl,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, _, _) =>
-                            const ColoredBox(color: Color(0xFF202532)),
-                      ),
-                      Align(
-                        alignment: Alignment.bottomRight,
-                        child: Container(
-                          margin: const EdgeInsets.all(6),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 3,
-                          ),
-                          decoration: BoxDecoration(
-                            color: const Color(0xCC000000),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Text(
-                            video.duration,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 11,
+                      video.fullCoverUrl.isNotEmpty
+                          ? Image.network(
+                              video.fullCoverUrl,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, _, _) =>
+                                  const ColoredBox(color: Color(0xFF202532)),
+                            )
+                          : const ColoredBox(color: Color(0xFF202532)),
+                      if (video.durationLabel.isNotEmpty)
+                        Align(
+                          alignment: Alignment.bottomRight,
+                          child: Container(
+                            margin: const EdgeInsets.all(6),
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: const Color(0xCC000000),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              video.durationLabel,
+                              style: const TextStyle(color: Colors.white, fontSize: 11),
                             ),
                           ),
                         ),
-                      ),
+                      if (!video.isReady)
+                        Container(
+                          color: const Color(0x88000000),
+                          child: Center(
+                            child: Text(
+                              _statusLabel(video.status),
+                              style: const TextStyle(color: Colors.white70, fontSize: 11),
+                            ),
+                          ),
+                        ),
                     ],
                   ),
                 ),
@@ -411,76 +400,69 @@ class _VideoTile extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      video.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 16,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      video.description,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Color(0xFF9CA3AF),
-                        height: 1.35,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
                     Row(
                       children: [
-                        const Icon(
-                          Icons.star_rounded,
-                          color: Color(0xFFF7C948),
-                          size: 16,
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          video.score,
-                          style: const TextStyle(
-                            color: Color(0xFFE5E7EB),
-                            fontSize: 12,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        const Icon(
-                          Icons.visibility_rounded,
-                          color: Color(0xFF25D0AB),
-                          size: 15,
-                        ),
-                        const SizedBox(width: 4),
                         Expanded(
                           child: Text(
-                            video.views,
+                            video.title,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
-                              color: Color(0xFFE5E7EB),
-                              fontSize: 12,
+                              color: Colors.white,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 16,
                             ),
                           ),
                         ),
+                        if (video.isVip && !video.isFree)
+                          Container(
+                            margin: const EdgeInsets.only(left: 6),
+                            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF7C948),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: const Text(
+                              'VIP',
+                              style: TextStyle(color: Color(0xFF101318), fontSize: 10, fontWeight: FontWeight.w900),
+                            ),
+                          ),
                       ],
                     ),
+                    const SizedBox(height: 6),
+                    if (video.description.isNotEmpty)
+                      Text(
+                        video.description,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: Color(0xFF9CA3AF), height: 1.35),
+                      ),
+                    if (video.categoryName.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        video.categoryName,
+                        style: const TextStyle(color: Color(0xFF25D0AB), fontSize: 12),
+                      ),
+                    ],
                   ],
                 ),
-              ),
-              IconButton(
-                onPressed: () {},
-                icon: const Icon(Icons.more_vert_rounded),
-                color: const Color(0xFFD1D5DB),
-                tooltip: '更多',
               ),
             ],
           ),
         ),
       ),
     );
+  }
+
+  String _statusLabel(String status) {
+    return switch (status) {
+      'uploading' => '上传中',
+      'uploaded' => '待转码',
+      'transcoding' => '转码中',
+      'failed' => '转码失败',
+      'offline' => '已下架',
+      _ => status,
+    };
   }
 }
 
@@ -492,7 +474,7 @@ class _BottomNav extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final items = [
+    const items = [
       (Icons.home_rounded, '首页'),
       (Icons.explore_rounded, '发现'),
       (Icons.bookmark_rounded, '片单'),
@@ -506,13 +488,9 @@ class _BottomNav extends StatelessWidget {
       indicatorColor: const Color(0x3325D0AB),
       labelTextStyle: WidgetStateProperty.resolveWith(
         (states) => TextStyle(
-          color: states.contains(WidgetState.selected)
-              ? Colors.white
-              : const Color(0xFF9CA3AF),
+          color: states.contains(WidgetState.selected) ? Colors.white : const Color(0xFF9CA3AF),
           fontSize: 12,
-          fontWeight: states.contains(WidgetState.selected)
-              ? FontWeight.w800
-              : FontWeight.w600,
+          fontWeight: states.contains(WidgetState.selected) ? FontWeight.w800 : FontWeight.w600,
         ),
       ),
       destinations: [
@@ -523,24 +501,6 @@ class _BottomNav extends StatelessWidget {
             label: item.$2,
           ),
       ],
-    );
-  }
-}
-
-class _SectionTitle extends StatelessWidget {
-  const _SectionTitle({required this.title});
-
-  final String title;
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(
-      title,
-      style: const TextStyle(
-        color: Colors.white,
-        fontSize: 18,
-        fontWeight: FontWeight.w900,
-      ),
     );
   }
 }
@@ -571,95 +531,3 @@ class _MetaPill extends StatelessWidget {
     );
   }
 }
-
-class VideoItem {
-  const VideoItem({
-    required this.title,
-    required this.description,
-    required this.imageUrl,
-    required this.duration,
-    required this.score,
-    required this.views,
-    this.progress = 0,
-  });
-
-  final String title;
-  final String description;
-  final String imageUrl;
-  final String duration;
-  final String score;
-  final String views;
-  final double progress;
-}
-
-const _watching = [
-  VideoItem(
-    title: '边境日落 第 6 集',
-    description: '悬疑剧集',
-    imageUrl:
-        'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=800&q=80',
-    duration: '42:18',
-    score: '8.8',
-    views: '126 万',
-    progress: 0.62,
-  ),
-  VideoItem(
-    title: '城市厨房',
-    description: '纪录片',
-    imageUrl:
-        'https://images.unsplash.com/photo-1514933651103-005eec06c04b?auto=format&fit=crop&w=800&q=80',
-    duration: '28:04',
-    score: '9.1',
-    views: '82 万',
-    progress: 0.36,
-  ),
-  VideoItem(
-    title: '星际漫游',
-    description: '科幻电影',
-    imageUrl:
-        'https://images.unsplash.com/photo-1446776811953-b23d57bd21aa?auto=format&fit=crop&w=800&q=80',
-    duration: '01:55:20',
-    score: '8.6',
-    views: '246 万',
-    progress: 0.78,
-  ),
-];
-
-const _videos = [
-  VideoItem(
-    title: '深海信号',
-    description: '一支科考队在海底接收到来自未知文明的回声。',
-    imageUrl:
-        'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=800&q=80',
-    duration: '01:44:12',
-    score: '8.9',
-    views: '320 万播放',
-  ),
-  VideoItem(
-    title: '赛博雨夜',
-    description: '退役探员重返街头，追查一段被删除的城市记忆。',
-    imageUrl:
-        'https://images.unsplash.com/photo-1519608487953-e999c86e7455?auto=format&fit=crop&w=800&q=80',
-    duration: '01:58:36',
-    score: '8.5',
-    views: '198 万播放',
-  ),
-  VideoItem(
-    title: '山谷来信',
-    description: '治愈系公路片，在风景与旧友之间重新找回自己。',
-    imageUrl:
-        'https://images.unsplash.com/photo-1500534314209-a25ddb2bd429?auto=format&fit=crop&w=800&q=80',
-    duration: '01:32:08',
-    score: '9.0',
-    views: '154 万播放',
-  ),
-  VideoItem(
-    title: '午夜电台',
-    description: '每晚零点，一个主持人收到听众寄来的秘密故事。',
-    imageUrl:
-        'https://images.unsplash.com/photo-1485579149621-3123dd979885?auto=format&fit=crop&w=800&q=80',
-    duration: '52:40',
-    score: '8.2',
-    views: '76 万播放',
-  ),
-];

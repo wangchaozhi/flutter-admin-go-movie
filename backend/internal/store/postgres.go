@@ -9,6 +9,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -21,6 +22,8 @@ const defaultMinIOEndpoint = "localhost:9000"
 const defaultMinIOAccessKey = "admin_go"
 const defaultMinIOSecretKey = "admin_go_password"
 const defaultAvatarBucket = "admin-avatars"
+const defaultVideoBucket = "video"
+const defaultRedisAddr = "localhost:6379"
 
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
@@ -28,6 +31,7 @@ var migrationFiles embed.FS
 var db *gorm.DB
 var objectClient *minio.Client
 var avatarBucket string
+var videoBucket string
 
 type IntArray []int
 
@@ -105,10 +109,14 @@ func (AdminMenu) TableName() string {
 }
 
 type MobileUser struct {
-	ID       int    `gorm:"primaryKey;column:id"`
-	Username string `gorm:"column:username"`
-	Password string `gorm:"column:password"`
-	Nickname string `gorm:"column:nickname"`
+	ID        int       `gorm:"primaryKey;column:id"   json:"id"`
+	Username  string    `gorm:"column:username"        json:"username"`
+	Password  string    `gorm:"column:password"        json:"-"`
+	Nickname  string    `gorm:"column:nickname"        json:"nickname"`
+	Email     string    `gorm:"column:email"           json:"email"`
+	Status    string    `gorm:"column:status"          json:"status"`
+	CreatedAt time.Time `gorm:"column:created_at"      json:"created_at"`
+	UpdatedAt time.Time `gorm:"column:updated_at"      json:"updated_at"`
 }
 
 func (MobileUser) TableName() string {
@@ -157,11 +165,16 @@ func AvatarBucket() string {
 	return avatarBucket
 }
 
+func VideoBucket() string {
+	return videoBucket
+}
+
 func initObjectStore() error {
 	endpoint := envOrDefault("MINIO_ENDPOINT", defaultMinIOEndpoint)
 	accessKey := envOrDefault("MINIO_ACCESS_KEY", defaultMinIOAccessKey)
 	secretKey := envOrDefault("MINIO_SECRET_KEY", defaultMinIOSecretKey)
 	avatarBucket = envOrDefault("MINIO_AVATAR_BUCKET", defaultAvatarBucket)
+	videoBucket = envOrDefault("MINIO_VIDEO_BUCKET", defaultVideoBucket)
 	useSSL := strings.EqualFold(os.Getenv("MINIO_USE_SSL"), "true")
 
 	client, err := minio.New(endpoint, &minio.Options{
@@ -173,13 +186,15 @@ func initObjectStore() error {
 	}
 
 	ctx := context.Background()
-	exists, err := client.BucketExists(ctx, avatarBucket)
-	if err != nil {
-		return fmt.Errorf("check minio bucket: %w", err)
-	}
-	if !exists {
-		if err = client.MakeBucket(ctx, avatarBucket, minio.MakeBucketOptions{}); err != nil {
-			return fmt.Errorf("create minio bucket: %w", err)
+	for _, bucket := range []string{avatarBucket, videoBucket} {
+		exists, err := client.BucketExists(ctx, bucket)
+		if err != nil {
+			return fmt.Errorf("check minio bucket %s: %w", bucket, err)
+		}
+		if !exists {
+			if err = client.MakeBucket(ctx, bucket, minio.MakeBucketOptions{}); err != nil {
+				return fmt.Errorf("create minio bucket %s: %w", bucket, err)
+			}
 		}
 	}
 	objectClient = client

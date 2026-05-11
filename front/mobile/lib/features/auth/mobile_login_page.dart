@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/api_client.dart';
+import '../../core/session.dart';
 import 'login_storage.dart';
 import 'widgets/login_header.dart';
 
@@ -65,6 +66,9 @@ class _MobileLoginPageState extends State<MobileLoginPage> {
         return;
       }
 
+      final data = resp['data'] as Map<String, dynamic>?;
+      final token = data?['token'] as String? ?? '';
+      await Session.save(token, username);
       await _storage.save(
         username: username,
         password: password,

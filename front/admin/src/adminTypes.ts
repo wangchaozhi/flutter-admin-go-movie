@@ -1,4 +1,55 @@
-export type Entity = 'users' | 'roles' | 'menus'
+export type Entity = 'users' | 'roles' | 'menus' | 'videos' | 'categories' | 'app-users'
+
+export type VideoStatus = 'uploading' | 'uploaded' | 'transcoding' | 'ready' | 'failed' | 'offline'
+
+export type Category = {
+  id: number
+  name: string
+  sort_order: number
+  created_at: string
+}
+
+export type CategoryForm = {
+  id?: number
+  name: string
+  sort_order: number
+}
+
+export type Video = {
+  id: number
+  title: string
+  description: string
+  category_id: number
+  cover_key: string
+  original_key: string
+  hls_master_key: string
+  duration: number
+  size: number
+  status: VideoStatus
+  is_vip: boolean
+  is_free: boolean
+  created_at: string
+  updated_at: string
+}
+
+export type VideoForm = {
+  id?: number
+  title: string
+  description: string
+  category_id: number
+  is_vip: boolean
+  is_free: boolean
+}
+
+export type TranscodeTask = {
+  id: number
+  video_id: number
+  status: 'pending' | 'processing' | 'success' | 'failed'
+  error_message: string
+  started_at: string | null
+  finished_at: string | null
+  created_at: string
+}
 
 export type User = {
   id: number
@@ -49,6 +100,25 @@ export type Profile = {
   theme: ThemeMode
   avatarUrl: string
   thumbnailUrl: string
+}
+
+export type AppUser = {
+  id: number
+  username: string
+  nickname: string
+  email: string
+  status: 'active' | 'banned'
+  created_at: string
+  updated_at: string
+}
+
+export type AppUserForm = {
+  id?: number
+  username: string
+  password: string
+  nickname: string
+  email: string
+  status: 'active' | 'banned'
 }
 
 export type UserForm = Omit<User, 'id'> & { id?: number; password: string }

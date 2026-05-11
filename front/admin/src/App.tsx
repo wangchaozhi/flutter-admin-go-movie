@@ -3,6 +3,8 @@ import type { FormEvent } from 'react'
 import {
   BadgeCheck,
   ChevronRight,
+  Clapperboard,
+  FolderOpen,
   KeyRound,
   LogOut,
   Menu as MenuIcon,
@@ -12,6 +14,7 @@ import {
   PanelLeft,
   RefreshCw,
   Shield,
+  Smartphone,
   Sun,
   Users,
 } from 'lucide-react'
@@ -33,9 +36,12 @@ import type {
   UserForm,
 } from './adminTypes'
 import { ConfirmDialog } from './components/confirm'
+import { AppUserManagementSection } from './features/appUsers'
+import { CategoryManagementSection } from './features/categories'
 import { MenuManagementSection, buildMenuTree } from './features/menus'
 import { RoleManagementSection } from './features/roles'
 import { UserManagementSection } from './features/users'
+import { VideoManagementSection } from './features/videos'
 
 const emptyUser: UserForm = {
   username: '',
@@ -59,9 +65,12 @@ const emptyMenu: MenuForm = {
 }
 
 const tabs: Array<{ key: Entity; label: string; icon: typeof Users }> = [
-  { key: 'users', label: '用户', icon: Users },
+  { key: 'users', label: '管理员', icon: Users },
   { key: 'roles', label: '角色', icon: Shield },
   { key: 'menus', label: '菜单', icon: MenuIcon },
+  { key: 'app-users', label: 'App 用户', icon: Smartphone },
+  { key: 'categories', label: '类别', icon: FolderOpen },
+  { key: 'videos', label: '视频', icon: Clapperboard },
 ]
 
 const adminRememberKey = 'admin.remember'
@@ -344,7 +353,10 @@ function AdminDashboard({
       tabs
         .filter((tab) => tab.key !== 'users' || menuPaths.has('/system/user'))
         .filter((tab) => tab.key !== 'roles' || menuPaths.has('/system/role'))
-        .filter((tab) => tab.key !== 'menus' || menuPaths.has('/system/menu')),
+        .filter((tab) => tab.key !== 'menus' || menuPaths.has('/system/menu'))
+        .filter((tab) => tab.key !== 'app-users' || menuPaths.has('/app-users') || menuPaths.size === 0)
+        .filter((tab) => tab.key !== 'categories' || menuPaths.has('/categories') || menuPaths.size === 0)
+        .filter((tab) => tab.key !== 'videos' || menuPaths.has('/videos') || menuPaths.size === 0),
     [menuPaths],
   )
   const can = (permission: string) => permissions.has(permission)
@@ -699,6 +711,18 @@ function AdminDashboard({
             onSaveMenu={saveMenu}
             onDeleteMenu={(id) => deleteRecord('menus', id)}
           />
+        )}
+
+        {active === 'app-users' && (
+          <AppUserManagementSection token={session.token} can={can} />
+        )}
+
+        {active === 'categories' && (
+          <CategoryManagementSection token={session.token} can={can} />
+        )}
+
+        {active === 'videos' && (
+          <VideoManagementSection token={session.token} can={can} />
         )}
       </section>
 

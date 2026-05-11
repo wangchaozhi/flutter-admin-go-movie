@@ -10,6 +10,7 @@ import (
 	"image/jpeg"
 	"io"
 	"net/http"
+	"os"
 	"path"
 	"strconv"
 	"strings"
@@ -17,6 +18,7 @@ import (
 
 	"flutter-admin-go/internal/common"
 	"flutter-admin-go/internal/store"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/minio/minio-go/v7"
 	"gorm.io/gorm"
 	_ "image/png"
@@ -875,4 +877,65 @@ func MustGetMobileUser(username, password string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// GetMobileUser returns the user row on successful credential check.
+func GetMobileUser(username, password string) (*store.MobileUser, error) {
+	var user store.MobileUser
+	err := store.DB().Where("username = ? AND password = ?", username, password).First(&user).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if user.Status == "banned" {
+		return nil, fmt.Errorf("account banned")
+	}
+	return &user, nil
+}
+
+func mobileJWTSecret() []byte {
+	s := strings.TrimSpace(os.Getenv("JWT_SECRET"))
+	if s == "" {
+		return []byte("dev_jwt_secret_change_in_prod")
+	}
+	return []byte(s)
+}
+
+type MobileClaims struct {
+	UserID   int    `json:"uid"`
+	Username string `json:"username"`
+	jwt.RegisteredClaims
+}
+
+func BuildMobileToken(userID int, username string) (string, error) {
+	claims := MobileClaims{
+		UserID:   userID,
+		Username: username,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(30 * 24 * time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			Subject:   "mobile",
+		},
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString(mobileJWTSecret())
+}
+
+func ParseMobileToken(tokenStr string) (*MobileClaims, error) {
+	token, err := jwt.ParseWithClaims(tokenStr, &MobileClaims{}, func(t *jwt.Token) (interface{}, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method")
+		}
+		return mobileJWTSecret(), nil
+	})
+	if err != nil || !token.Valid {
+		return nil, fmt.Errorf("invalid token")
+	}
+	claims, ok := token.Claims.(*MobileClaims)
+	if !ok {
+		return nil, fmt.Errorf("invalid claims")
+	}
+	return claims, nil
 }

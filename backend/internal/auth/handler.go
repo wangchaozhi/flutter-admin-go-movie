@@ -70,14 +70,19 @@ func MobileLoginHandler(w http.ResponseWriter, r *http.Request) {
 		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "invalid body"})
 		return
 	}
-	ok, err := admin.MustGetMobileUser(req.Username, req.Password)
+	user, err := admin.GetMobileUser(req.Username, req.Password)
 	if err != nil {
 		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
 		return
 	}
-	if !ok {
+	if user == nil {
 		common.WriteJSON(w, http.StatusUnauthorized, common.APIResponse{Code: 401, Msg: "invalid credentials"})
 		return
 	}
-	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: LoginResponse{Token: "mobile-token", Username: req.Username, Client: "mobile"}})
+	token, err := admin.BuildMobileToken(user.ID, user.Username)
+	if err != nil {
+		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: "token generation failed"})
+		return
+	}
+	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: LoginResponse{Token: token, Username: user.Username, Client: "mobile"}})
 }
