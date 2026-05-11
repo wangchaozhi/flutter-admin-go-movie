@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -35,6 +36,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
   late final VideoController _controller;
   bool _loading = true;
   bool _switchingQuality = false;
+  bool _showResumePlaybackButton = false;
   String? _error;
   String _selectedQuality = 'auto';
   List<_QualityOption> _qualities = const [];
@@ -212,6 +214,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
     setState(() {
       _selectedQuality = name;
       _switchingQuality = true;
+      _showResumePlaybackButton = false;
     });
 
     try {
@@ -221,7 +224,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
         await _player.seek(position);
       }
       if (wasPlaying) {
-        await _player.play();
+        await _resumePlayback();
       } else {
         await _player.pause();
       }
@@ -244,6 +247,19 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
           .timeout(const Duration(seconds: 3));
     } on TimeoutException {
       // HLS metadata can be slow on some platforms; still attempt the seek.
+    }
+  }
+
+  Future<void> _resumePlayback() async {
+    try {
+      await _player.play();
+      if (mounted) {
+        setState(() => _showResumePlaybackButton = false);
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _showResumePlaybackButton = true);
+      }
     }
   }
 
@@ -332,8 +348,72 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
     return Stack(
       children: [
         Video(controller: _controller, controls: AdaptiveVideoControls),
+        _buildCenterPlayButton(),
         Positioned(right: 48, bottom: 4, child: _buildQualityMenu()),
       ],
+    );
+  }
+
+  Widget _buildCenterPlayButton() {
+    return StreamBuilder<bool>(
+      stream: _player.stream.playing,
+      initialData: _player.state.playing,
+      builder: (context, snapshot) {
+        final isPlaying = snapshot.data ?? false;
+        final shouldShow =
+            _showResumePlaybackButton || (!isPlaying && !_switchingQuality);
+        if (!shouldShow) return const SizedBox.shrink();
+
+        return Positioned.fill(
+          child: Container(
+            color: Colors.black26,
+            child: Center(
+              child: ClipOval(
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Colors.white.withValues(alpha: 0.18),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.42),
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.28),
+                          blurRadius: 28,
+                          offset: const Offset(0, 14),
+                        ),
+                        BoxShadow(
+                          color: Colors.white.withValues(alpha: 0.16),
+                          blurRadius: 18,
+                          offset: const Offset(-8, -8),
+                        ),
+                      ],
+                    ),
+                    child: Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        customBorder: const CircleBorder(),
+                        onTap: _resumePlayback,
+                        child: const SizedBox(
+                          width: 76,
+                          height: 76,
+                          child: Icon(
+                            Icons.play_arrow_rounded,
+                            color: Colors.white,
+                            size: 48,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -396,35 +476,52 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
             ),
           )
           .toList(),
-      child: SizedBox(
-        height: 48,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          child: Center(
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (_switchingQuality) ...[
-                  const SizedBox(
-                    width: 13,
-                    height: 13,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Color(0xFF25D0AB),
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                ],
-                Text(
-                  selected,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(18),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.14),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.26)),
+            ),
+            child: SizedBox(
+              height: 36,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                child: Center(
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (_switchingQuality) ...[
+                        const SizedBox(
+                          width: 13,
+                          height: 13,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                      ],
+                      Text(
+                        selected,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const Icon(
+                        Icons.expand_more,
+                        color: Colors.white,
+                        size: 18,
+                      ),
+                    ],
                   ),
                 ),
-                const Icon(Icons.expand_more, color: Colors.white, size: 18),
-              ],
+              ),
             ),
           ),
         ),
