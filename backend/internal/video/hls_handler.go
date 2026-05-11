@@ -18,6 +18,13 @@ import (
 	"github.com/minio/minio-go/v7"
 )
 
+type HLSQualityOption struct {
+	Name       string `json:"name"`
+	Label      string `json:"label"`
+	Resolution string `json:"resolution,omitempty"`
+	URL        string `json:"url"`
+}
+
 // GET /api/hls/{videoId}/master.m3u8?expires=xxx&sign=xxx
 func HLSMasterHandler(w http.ResponseWriter, r *http.Request) {
 	videoID, path, ok := parseHLSRequest(r, w)
@@ -133,12 +140,76 @@ func AppPlayHandler(w http.ResponseWriter, r *http.Request) {
 
 	masterPath := fmt.Sprintf("/api/hls/%d/master.m3u8", id)
 	signedPath := SignPath(masterPath, 1800)
+	qualities := signedHLSQualities(r.Context(), id)
 
 	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: map[string]interface{}{
-		"video_id": id,
-		"type":     "hls",
-		"url":      signedPath,
+		"video_id":   id,
+		"type":       "hls",
+		"url":        signedPath,
+		"qualities":  qualities,
+		"auto_label": "自动",
 	}})
+}
+
+func signedHLSQualities(ctx context.Context, videoID int64) []HLSQualityOption {
+	raw, err := readMinioText(ctx, fmt.Sprintf("hls/%d/master.m3u8", videoID))
+	if err != nil {
+		return nil
+	}
+
+	var qualities []HLSQualityOption
+	var resolution string
+	scanner := bufio.NewScanner(strings.NewReader(raw))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if strings.HasPrefix(line, "#EXT-X-STREAM-INF:") {
+			resolution = parseStreamResolution(line)
+			continue
+		}
+		if strings.HasPrefix(line, "#") || !strings.HasSuffix(line, ".m3u8") {
+			continue
+		}
+		name := strings.TrimSuffix(line, "/index.m3u8")
+		name = strings.TrimSuffix(name, "index.m3u8")
+		name = strings.Trim(name, "/")
+		if name == "" {
+			resolution = ""
+			continue
+		}
+		subPath := fmt.Sprintf("/api/hls/%d/%s/index.m3u8", videoID, name)
+		qualities = append(qualities, HLSQualityOption{
+			Name:       name,
+			Label:      qualityLabel(name, resolution),
+			Resolution: resolution,
+			URL:        SignPath(subPath, 1800),
+		})
+		resolution = ""
+	}
+	return qualities
+}
+
+func parseStreamResolution(line string) string {
+	for _, part := range strings.Split(line, ",") {
+		part = strings.TrimSpace(part)
+		if strings.HasPrefix(part, "RESOLUTION=") {
+			return strings.TrimPrefix(part, "RESOLUTION=")
+		}
+	}
+	return ""
+}
+
+func qualityLabel(name, resolution string) string {
+	if name != "" {
+		return name
+	}
+	if resolution == "" {
+		return "清晰度"
+	}
+	parts := strings.Split(resolution, "x")
+	if len(parts) == 2 && parts[1] != "" {
+		return parts[1] + "p"
+	}
+	return resolution
 }
 
 // GET /api/videos/{id}/cover  — proxy cover image from MinIO (no auth needed)
