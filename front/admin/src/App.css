@@ -764,3 +764,126 @@ td {
     flex-wrap: wrap;
   }
 }
+
+/* ── Video status badges ── */
+.status-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.status-uploading  { background: var(--surface-subtle); color: var(--text-muted); }
+.status-uploaded   { background: #eff6ff; color: #1d4ed8; }
+.status-transcoding { background: #fefce8; color: #854d0e; }
+.status-ready      { background: var(--success-bg); color: var(--success-text); border: 1px solid var(--success-border); }
+.status-failed     { background: var(--danger-bg); color: var(--danger-text); border: 1px solid var(--danger-border); }
+.status-offline    { background: var(--surface-subtle); color: var(--text-faint); }
+
+:root[data-theme='dark'] .status-uploaded,
+:root[data-theme='system'] .status-uploaded {
+  background: #1e3a5f;
+  color: #93c5fd;
+}
+:root[data-theme='dark'] .status-transcoding,
+:root[data-theme='system'] .status-transcoding {
+  background: #422006;
+  color: #fde68a;
+}
+
+/* spin animation for loader icon */
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin { animation: spin 1s linear infinite; }
+
+/* ── Video upload row ── */
+.upload-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.upload-row input[type='file'] {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  padding: 4px 0;
+}
+.upload-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  min-width: 64px;
+}
+
+/* ── Play URL box ── */
+.play-url-box {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.play-url-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--surface-subtle);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.play-url-box input[type='text'],
+.play-url-box input[readonly] {
+  width: 100%;
+  box-sizing: border-box;
+  border: none;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  padding: 10px 12px;
+  font-size: 12px;
+  font-family: monospace;
+  background: var(--surface);
+  color: var(--text);
+}
+
+/* ── Inline checkbox row ── */
+.checkbox-row {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+.inline-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.inline-check input[type='checkbox'] {
+  width: auto;
+  margin: 0;
+}
+
+.text-faint { color: var(--text-faint); font-size: 12px; }
+
+/* ── Upload progress bar ── */
+.upload-progress-bar {
+  height: 4px;
+  background: var(--border);
+  border-radius: 99px;
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+.upload-progress-fill {
+  height: 100%;
+  background: var(--primary);
+  border-radius: 99px;
+  transition: width 0.2s ease;
+}
+
+/* ── Active row highlight ── */
+tr.row-active td {
+  background: var(--surface-subtle);
+}
