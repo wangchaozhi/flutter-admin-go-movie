@@ -197,6 +197,23 @@ func initObjectStore() error {
 			}
 		}
 	}
+	// Allow Nginx to proxy HLS segments and cover images without credentials.
+	videoBucketPolicy := fmt.Sprintf(`{
+  "Version":"2012-10-17",
+  "Statement":[{
+    "Effect":"Allow",
+    "Principal":{"AWS":["*"]},
+    "Action":["s3:GetObject"],
+    "Resource":[
+      "arn:aws:s3:::%s/hls/*",
+      "arn:aws:s3:::%s/covers/*"
+    ]
+  }]
+}`, videoBucket, videoBucket)
+	if err := client.SetBucketPolicy(ctx, videoBucket, videoBucketPolicy); err != nil {
+		return fmt.Errorf("set video bucket policy: %w", err)
+	}
+
 	objectClient = client
 	return nil
 }
