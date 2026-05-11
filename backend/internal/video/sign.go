@@ -4,6 +4,8 @@ import (
 	"crypto/md5"
 	"encoding/base64"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -17,12 +19,45 @@ func hlsSecret() string {
 	return s
 }
 
-func videoBaseURL() string {
+func configuredVideoBaseURL() string {
 	s := strings.TrimSpace(os.Getenv("VIDEO_BASE_URL"))
-	if s == "" {
-		return "http://localhost:8081"
+	if s != "" {
+		return strings.TrimRight(s, "/")
 	}
-	return s
+	return ""
+}
+
+func videoBaseURL(r *http.Request) string {
+	if s := configuredVideoBaseURL(); s != "" {
+		return s
+	}
+
+	scheme := "http"
+	if forwardedProto := firstForwardedValue(r.Header.Get("X-Forwarded-Proto")); forwardedProto != "" {
+		scheme = forwardedProto
+	} else if r.TLS != nil {
+		scheme = "https"
+	}
+
+	host := firstForwardedValue(r.Header.Get("X-Forwarded-Host"))
+	if host == "" {
+		host = r.Host
+	}
+	hostname := host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		hostname = h
+	}
+	if strings.Contains(hostname, ":") && !strings.HasPrefix(hostname, "[") {
+		hostname = "[" + hostname + "]"
+	}
+	return fmt.Sprintf("%s://%s:8081", scheme, hostname)
+}
+
+func firstForwardedValue(value string) string {
+	if value == "" {
+		return ""
+	}
+	return strings.TrimSpace(strings.Split(value, ",")[0])
 }
 
 func apiBaseURL() string {
