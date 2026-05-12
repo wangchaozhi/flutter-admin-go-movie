@@ -29,6 +29,8 @@ class _MobileHomePageState extends State<MobileHomePage> {
   bool _loadingHistory = false;
   bool _loadingFavorites = false;
   bool _profileLoaded = false;
+  bool _libraryLoaded = false;
+  bool _favoritesLoaded = false;
   String? _username;
   MobileProfile? _profile;
   MobileSetting? _setting;
@@ -119,7 +121,10 @@ class _MobileHomePageState extends State<MobileHomePage> {
       _loadSetting(),
     ]);
     if (mounted) {
-      setState(() => _profileLoaded = true);
+      setState(() {
+        _profileLoaded = true;
+        _libraryLoaded = true;
+      });
     }
   }
 
@@ -205,7 +210,12 @@ class _MobileHomePageState extends State<MobileHomePage> {
     } catch (_) {
       // keep existing favorites
     } finally {
-      if (mounted) setState(() => _loadingFavorites = false);
+      if (mounted) {
+        setState(() {
+          _loadingFavorites = false;
+          _favoritesLoaded = true;
+        });
+      }
     }
   }
 
@@ -239,8 +249,20 @@ class _MobileHomePageState extends State<MobileHomePage> {
     await _loadFavorites();
   }
 
-  void _showHistorySheet() {
-    _loadHistory();
+  Future<void> _addFavorite(Video video) async {
+    await ApiClient().postAuth('/api/mobile/favorites/${video.id}', {});
+    await _loadFavorites();
+  }
+
+  Future<void> _loadLibrary({bool force = false}) async {
+    if (_libraryLoaded && !force) return;
+    await Future.wait([_loadHistory(), _loadFavorites()]);
+    if (mounted) setState(() => _libraryLoaded = true);
+  }
+
+  Future<void> _showHistorySheet() async {
+    await _loadHistory();
+    if (!mounted) return;
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: const Color(0xFF171B24),
@@ -253,8 +275,9 @@ class _MobileHomePageState extends State<MobileHomePage> {
     );
   }
 
-  void _showFavoritesSheet() {
-    _loadFavorites();
+  Future<void> _showFavoritesSheet() async {
+    await _loadFavorites();
+    if (!mounted) return;
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: const Color(0xFF171B24),
@@ -291,8 +314,13 @@ class _MobileHomePageState extends State<MobileHomePage> {
 
   void _onNavSelected(int index) {
     setState(() => _selectedNav = index);
-    if (index == 3) {
-      _loadProfileCenter();
+    switch (index) {
+      case 1:
+        if (!_favoritesLoaded) _loadFavorites();
+      case 2:
+        _loadLibrary();
+      case 3:
+        _loadProfileCenter();
     }
   }
 
@@ -300,94 +328,115 @@ class _MobileHomePageState extends State<MobileHomePage> {
   Widget build(BuildContext context) {
     final tabs = ['全部', ..._categories.map((c) => c.name)];
     final featuredVideo = _videos.where((v) => v.isReady).firstOrNull;
+    final favoriteVideoIds = _favorites.map((entry) => entry.video.id).toSet();
 
-    final content = _selectedNav == 3
-        ? ProfileCenter(
-            username: _username ?? '',
-            profile: _profile,
-            orders: _orders,
-            loadingProfile: _loadingProfile,
-            loadingOrders: _loadingOrders,
-            error: _profileError,
-            videos: _videos,
-            historyCount: _history.length,
-            favoriteCount: _favorites.length,
-            onOpenVip: () => Navigator.pushNamed(context, '/vip'),
-            onOpenHistory: _showHistorySheet,
-            onOpenFavorites: _showFavoritesSheet,
-            onOpenOrders: _showOrdersSheet,
-            onOpenSettings: _showSettingsSheet,
-            onRefresh: () => _loadProfileCenter(force: true),
-            onLogout: _logout,
-          )
-        : CustomScrollView(
-            slivers: [
-              SliverToBoxAdapter(
-                child: HomeTopBar(username: _username ?? '', onLogout: _logout),
-              ),
-              SliverToBoxAdapter(
-                child: _loadingCategories
-                    ? const SizedBox(
-                        height: 48,
-                        child: Center(
-                          child: SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Color(0xFF25D0AB),
-                            ),
-                          ),
+    final content = switch (_selectedNav) {
+      1 => DiscoverView(
+        categories: _categories,
+        videos: _videos,
+        loading: _loadingVideos,
+        favoriteVideoIds: favoriteVideoIds,
+        onOpenVideo: _openVideo,
+        onToggleFavorite: (video) => favoriteVideoIds.contains(video.id)
+            ? _removeFavorite(video)
+            : _addFavorite(video),
+        onOpenVip: () => Navigator.pushNamed(context, '/vip'),
+      ),
+      2 => PlaylistView(
+        favorites: _favorites,
+        history: _history,
+        videos: _videos,
+        loadingFavorites: _loadingFavorites,
+        loadingHistory: _loadingHistory,
+        onOpenVideo: _openVideo,
+        onToggleFavorite: (video) => favoriteVideoIds.contains(video.id)
+            ? _removeFavorite(video)
+            : _addFavorite(video),
+        onRemoveFavorite: _removeFavorite,
+        onRefresh: () => _loadLibrary(force: true),
+      ),
+      3 => ProfileCenter(
+        username: _username ?? '',
+        profile: _profile,
+        orders: _orders,
+        loadingProfile: _loadingProfile,
+        loadingOrders: _loadingOrders,
+        error: _profileError,
+        videos: _videos,
+        historyCount: _history.length,
+        favoriteCount: _favorites.length,
+        onOpenVip: () => Navigator.pushNamed(context, '/vip'),
+        onOpenHistory: _showHistorySheet,
+        onOpenFavorites: _showFavoritesSheet,
+        onOpenOrders: _showOrdersSheet,
+        onOpenSettings: _showSettingsSheet,
+        onRefresh: () => _loadProfileCenter(force: true),
+        onLogout: _logout,
+      ),
+      _ => CustomScrollView(
+        slivers: [
+          SliverToBoxAdapter(
+            child: HomeTopBar(username: _username ?? '', onLogout: _logout),
+          ),
+          SliverToBoxAdapter(
+            child: _loadingCategories
+                ? const SizedBox(
+                    height: 48,
+                    child: Center(
+                      child: SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Color(0xFF25D0AB),
                         ),
-                      )
-                    : ChannelTabs(
-                        tabs: tabs,
-                        selectedIndex: _selectedCategoryIndex,
-                        onSelected: _onCategorySelected,
                       ),
+                    ),
+                  )
+                : ChannelTabs(
+                    tabs: tabs,
+                    selectedIndex: _selectedCategoryIndex,
+                    onSelected: _onCategorySelected,
+                  ),
+          ),
+          if (featuredVideo != null)
+            SliverToBoxAdapter(
+              child: FeaturedBanner(video: featuredVideo, onPlay: _openVideo),
+            ),
+          if (_loadingVideos)
+            const SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.all(32),
+                child: Center(
+                  child: CircularProgressIndicator(color: Color(0xFF25D0AB)),
+                ),
               ),
-              if (featuredVideo != null)
-                SliverToBoxAdapter(
-                  child: FeaturedBanner(
-                    video: featuredVideo,
-                    onPlay: _openVideo,
+            )
+          else if (_videos.isEmpty)
+            const SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.all(48),
+                child: Center(
+                  child: Text(
+                    '暂无视频',
+                    style: TextStyle(color: Color(0xFF9CA3AF)),
                   ),
                 ),
-              if (_loadingVideos)
-                const SliverToBoxAdapter(
-                  child: Padding(
-                    padding: EdgeInsets.all(32),
-                    child: Center(
-                      child: CircularProgressIndicator(
-                        color: Color(0xFF25D0AB),
-                      ),
-                    ),
-                  ),
-                )
-              else if (_videos.isEmpty)
-                const SliverToBoxAdapter(
-                  child: Padding(
-                    padding: EdgeInsets.all(48),
-                    child: Center(
-                      child: Text(
-                        '暂无视频',
-                        style: TextStyle(color: Color(0xFF9CA3AF)),
-                      ),
-                    ),
-                  ),
-                )
-              else
-                SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(16, 18, 16, 112),
-                  sliver: SliverList.separated(
-                    itemCount: _videos.length,
-                    separatorBuilder: (_, _) => const SizedBox(height: 14),
-                    itemBuilder: (context, index) =>
-                        VideoTile(video: _videos[index], onTap: _openVideo),
-                  ),
-                ),
-            ],
-          );
+              ),
+            )
+          else
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(16, 18, 16, 112),
+              sliver: SliverList.separated(
+                itemCount: _videos.length,
+                separatorBuilder: (_, _) => const SizedBox(height: 14),
+                itemBuilder: (context, index) =>
+                    VideoTile(video: _videos[index], onTap: _openVideo),
+              ),
+            ),
+        ],
+      ),
+    };
 
     return Scaffold(
       backgroundColor: const Color(0xFF0D0F14),
