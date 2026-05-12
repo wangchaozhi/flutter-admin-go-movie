@@ -1,14 +1,9 @@
 package video
 
 import (
-	"os"
-	"strings"
+	"flutter-admin-go/internal/config"
 )
 
 func redisAddr() string {
-	s := strings.TrimSpace(os.Getenv("REDIS_ADDR"))
-	if s == "" {
-		return "localhost:6379"
-	}
-	return s
+	return config.Load().Redis.Addr
 }

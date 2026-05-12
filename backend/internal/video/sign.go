@@ -6,25 +6,18 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"os"
 	"strings"
 	"time"
+
+	"flutter-admin-go/internal/config"
 )
 
 func hlsSecret() string {
-	s := strings.TrimSpace(os.Getenv("HLS_SECRET"))
-	if s == "" {
-		return "dev_secret"
-	}
-	return s
+	return config.Load().Video.HLSSecret
 }
 
 func configuredVideoBaseURL() string {
-	s := strings.TrimSpace(os.Getenv("VIDEO_BASE_URL"))
-	if s != "" {
-		return strings.TrimRight(s, "/")
-	}
-	return ""
+	return config.Load().Video.VideoBaseURL
 }
 
 func videoBaseURL(r *http.Request) string {
@@ -61,11 +54,7 @@ func firstForwardedValue(value string) string {
 }
 
 func apiBaseURL() string {
-	s := strings.TrimSpace(os.Getenv("API_BASE_URL"))
-	if s == "" {
-		return "http://localhost:8080"
-	}
-	return s
+	return config.Load().Video.APIBaseURL
 }
 
 // SignPath returns a path with expires and sign query params.

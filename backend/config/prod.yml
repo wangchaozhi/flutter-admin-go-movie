@@ -1,0 +1,40 @@
+env: prod
+http_addr: ":8080"
+
+database:
+  dsn: ""
+
+redis:
+  addr: ""
+
+minio:
+  endpoint: ""
+  access_key: ""
+  secret_key: ""
+  use_ssl: true
+  avatar_bucket: "admin-avatars"
+  video_bucket: "video"
+
+video:
+  hls_secret: ""
+  video_base_url: ""
+  api_base_url: ""
+
+auth:
+  jwt_secret: ""
+
+payment:
+  mock_enabled: false
+  public_base_url: ""
+  default_currency: "USD"
+  stripe_secret_key: ""
+  stripe_webhook_key: ""
+  stripe_success_url: ""
+  stripe_cancel_url: ""
+  paypal_client_id: ""
+  paypal_secret: ""
+  paypal_webhook_id: ""
+  paypal_base_url: "https://api-m.paypal.com"
+
+worker:
+  transcode_concurrency: 2

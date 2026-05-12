@@ -89,6 +89,16 @@ go run ./cmd/server
 http://localhost:8080
 ```
 
+后端配置文件在 `backend/config/*.yml`，配置读取逻辑集中在 `backend/internal/config`。通过 `APP_ENV` 选择环境：
+
+```bash
+APP_ENV=local go run ./cmd/server # 默认，本机 PostgreSQL/Redis/MinIO
+APP_ENV=dev go run ./cmd/server   # Docker Compose 服务名 postgres/redis/minio
+APP_ENV=prod go run ./cmd/server  # 生产环境，需通过环境变量补齐连接和密钥
+```
+
+配置仍可用环境变量覆盖，例如 `HTTP_ADDR`、`DATABASE_DSN`、`REDIS_ADDR`、`MINIO_ENDPOINT`、`JWT_SECRET`、`HLS_SECRET`。
+
 首次启动会自动执行 `backend/internal/store/migrations/*.sql`。已执行版本记录在 `schema_migrations` 表中。
 后端也会自动创建头像 bucket。用户主题、头像对象 key 和缩略图对象 key 由迁移文件写入 `admin_users` 扩展字段。
 

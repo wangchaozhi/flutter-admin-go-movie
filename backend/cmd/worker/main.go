@@ -2,10 +2,8 @@ package main
 
 import (
 	"log"
-	"os"
-	"strconv"
-	"strings"
 
+	"flutter-admin-go/internal/config"
 	"flutter-admin-go/internal/store"
 	"flutter-admin-go/internal/video"
 
@@ -13,31 +11,20 @@ import (
 )
 
 func main() {
-	if err := store.Init(""); err != nil {
+	cfg := config.Load()
+	if err := store.Init(cfg); err != nil {
 		log.Fatal(err)
 	}
 
-	redisAddr := strings.TrimSpace(os.Getenv("REDIS_ADDR"))
-	if redisAddr == "" {
-		redisAddr = "localhost:6379"
-	}
-
-	concurrency := 2
-	if s := strings.TrimSpace(os.Getenv("TRANSCODE_CONCURRENCY")); s != "" {
-		if n, err := strconv.Atoi(s); err == nil && n > 0 {
-			concurrency = n
-		}
-	}
-
 	srv := asynq.NewServer(
-		asynq.RedisClientOpt{Addr: redisAddr},
-		asynq.Config{Concurrency: concurrency},
+		asynq.RedisClientOpt{Addr: cfg.Redis.Addr},
+		asynq.Config{Concurrency: cfg.Worker.TranscodeConcurrency},
 	)
 
 	mux := asynq.NewServeMux()
 	mux.HandleFunc(video.TypeTranscode, video.HandleTranscodeTask)
 
-	log.Printf("worker started, concurrency=%d", concurrency)
+	log.Printf("worker started, env=%s redis=%s concurrency=%d", cfg.Env, cfg.Redis.Addr, cfg.Worker.TranscodeConcurrency)
 	if err := srv.Run(mux); err != nil {
 		log.Fatal(err)
 	}

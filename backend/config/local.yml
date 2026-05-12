@@ -1,0 +1,40 @@
+env: local
+http_addr: ":8080"
+
+database:
+  dsn: "host=localhost port=5432 user=admin_go password=admin_go_password dbname=flutter_admin_go sslmode=disable TimeZone=Asia/Shanghai"
+
+redis:
+  addr: "localhost:6379"
+
+minio:
+  endpoint: "localhost:9000"
+  access_key: "admin_go"
+  secret_key: "admin_go_password"
+  use_ssl: false
+  avatar_bucket: "admin-avatars"
+  video_bucket: "video"
+
+video:
+  hls_secret: "dev_secret"
+  video_base_url: ""
+  api_base_url: "http://localhost:8080"
+
+auth:
+  jwt_secret: "dev_jwt_secret_change_in_prod"
+
+payment:
+  mock_enabled: false
+  public_base_url: "http://localhost:8080"
+  default_currency: "USD"
+  stripe_secret_key: ""
+  stripe_webhook_key: ""
+  stripe_success_url: ""
+  stripe_cancel_url: ""
+  paypal_client_id: ""
+  paypal_secret: ""
+  paypal_webhook_id: ""
+  paypal_base_url: "https://api-m.sandbox.paypal.com"
+
+worker:
+  transcode_concurrency: 2

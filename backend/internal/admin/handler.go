@@ -10,13 +10,13 @@ import (
 	"image/jpeg"
 	"io"
 	"net/http"
-	"os"
 	"path"
 	"strconv"
 	"strings"
 	"time"
 
 	"flutter-admin-go/internal/common"
+	"flutter-admin-go/internal/config"
 	"flutter-admin-go/internal/store"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/minio/minio-go/v7"
@@ -896,11 +896,7 @@ func GetMobileUser(username, password string) (*store.MobileUser, error) {
 }
 
 func mobileJWTSecret() []byte {
-	s := strings.TrimSpace(os.Getenv("JWT_SECRET"))
-	if s == "" {
-		return []byte("dev_jwt_secret_change_in_prod")
-	}
-	return []byte(s)
+	return []byte(config.Load().Auth.JWTSecret)
 }
 
 type MobileClaims struct {

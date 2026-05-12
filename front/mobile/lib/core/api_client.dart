@@ -7,7 +7,7 @@ import 'session.dart';
 class ApiClient {
   static const String baseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'http://127.0.0.1:8080',
+    defaultValue: 'http://192.168.1.20:8080',
   );
 
   Future<Map<String, dynamic>> post(
