@@ -72,6 +72,8 @@ services:
     depends_on:
       minio:
         condition: service_healthy
+    environment:
+      HLS_SECRET: ${HLS_SECRET:-your_hls_secret_key_change_in_prod}
     ports:
       - "8081:80"
     volumes:

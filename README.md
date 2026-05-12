@@ -7,6 +7,7 @@
 ```text
 .
 ├── docker-compose.yml                 # PostgreSQL + MinIO 本地开发环境
+├── docs/                              # 项目文档
 ├── backend/                           # Go 后端模块
 │   ├── go.mod / go.sum                # 后端依赖
 │   ├── cmd/server/main.go             # Go 服务入口
@@ -19,6 +20,10 @@
 ├── front/admin/                       # React + TypeScript + Vite 管理端
 └── front/mobile/                      # Flutter 移动端
 ```
+
+## 文档
+
+- [播放器与 HLS 链路优化记录](docs/player_optimization.md)
 
 ## 环境要求
 

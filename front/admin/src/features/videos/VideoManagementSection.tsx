@@ -329,7 +329,7 @@ export function VideoManagementSection({
         {playUrl && activeVideoId && (
           <div className="play-url-box">
             <div className="play-url-header">
-              <span>视频 #{activeVideoId} 播放地址（30分钟有效）</span>
+              <span>视频 #{activeVideoId} 播放地址（6小时有效）</span>
               <button type="button" onClick={() => { setPlayUrl(null); setActiveVideoId(null) }}>关闭</button>
             </div>
             <input readOnly value={playUrl} onClick={e => (e.target as HTMLInputElement).select()} />

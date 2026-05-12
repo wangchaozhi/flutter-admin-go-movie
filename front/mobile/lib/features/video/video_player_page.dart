@@ -22,6 +22,13 @@ class _QualityOption {
   });
 }
 
+class _PlaybackSource {
+  final String url;
+  final List<_QualityOption> qualities;
+
+  const _PlaybackSource({required this.url, required this.qualities});
+}
+
 class VideoPlayerPage extends StatefulWidget {
   final model.Video video;
 
@@ -31,21 +38,37 @@ class VideoPlayerPage extends StatefulWidget {
   State<VideoPlayerPage> createState() => _VideoPlayerPageState();
 }
 
-class _VideoPlayerPageState extends State<VideoPlayerPage> {
+class _VideoPlayerPageState extends State<VideoPlayerPage>
+    with WidgetsBindingObserver {
   late final Player _player;
   late final VideoController _controller;
+  StreamSubscription<String>? _playerErrorSubscription;
+  StreamSubscription<bool>? _playerCompletedSubscription;
   bool _loading = true;
   bool _switchingQuality = false;
   bool _showResumePlaybackButton = false;
   String? _error;
   String _selectedQuality = 'auto';
   List<_QualityOption> _qualities = const [];
+  Timer? _progressTimer;
+  Timer? _refreshTimer;
+  Duration _lastSavedPosition = Duration.zero;
+  bool _savingProgress = false;
+  bool _refreshingSource = false;
+  bool _recoveringPlayback = false;
+  bool _isFullscreen = false;
+  double _playbackRate = 1.0;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _player = Player();
     _controller = VideoController(_player);
+    _playerErrorSubscription = _player.stream.error.listen(_handlePlayerError);
+    _playerCompletedSubscription = _player.stream.completed.listen(
+      _handlePlayerCompleted,
+    );
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.landscapeLeft,
       DeviceOrientation.landscapeRight,
@@ -56,53 +79,54 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
 
   @override
   void dispose() {
-    SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+    WidgetsBinding.instance.removeObserver(this);
+    _progressTimer?.cancel();
+    _refreshTimer?.cancel();
+    _playerErrorSubscription?.cancel();
+    _playerCompletedSubscription?.cancel();
+    unawaited(_saveProgress(force: true));
+    unawaited(_restoreSystemUi());
     _player.dispose();
     super.dispose();
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached ||
+        state == AppLifecycleState.hidden) {
+      unawaited(_saveProgress(force: true));
+    }
+  }
+
   Future<void> _init() async {
+    if (mounted) {
+      setState(() {
+        _loading = true;
+        _error = null;
+        _showResumePlaybackButton = false;
+      });
+    }
     try {
-      final resp = await ApiClient().getAuth(
-        '/api/videos/${widget.video.id}/play',
-      );
-      if (resp['code'] != 0) {
-        if (mounted) {
-          setState(() {
-            _error = resp['msg']?.toString() ?? '获取播放地址失败';
-            _loading = false;
-          });
-        }
-        return;
+      final source = await _fetchPlaybackSource();
+      final resumePosition = await _loadSavedProgress();
+      await _player.open(Media(source.url), play: false);
+      await _player.setRate(_playbackRate);
+      await _waitForMediaReady();
+      if (resumePosition > Duration.zero && _canResumeAt(resumePosition)) {
+        await _player.seek(resumePosition);
       }
-      final rawUrl =
-          (resp['data'] as Map<String, dynamic>?)?['url'] as String? ?? '';
-      if (rawUrl.isEmpty) {
-        if (mounted) {
-          setState(() {
-            _error = '播放地址为空';
-            _loading = false;
-          });
-        }
-        return;
-      }
-      // backend returns a relative signed path; prepend baseUrl so it works on
-      // emulator (10.0.2.2), simulator (localhost), and physical device (LAN IP)
-      final url = _absoluteUrl(rawUrl);
-      var qualities = _parseQualities(resp['data'] as Map<String, dynamic>?);
-      if (qualities.isEmpty) {
-        qualities = await _parseQualitiesFromMaster(url);
-      }
-      await _player.open(Media(url));
+      await _resumePlayback();
       if (mounted) {
         setState(() {
-          _qualities = [
-            _QualityOption(name: 'auto', label: '自动', url: url),
-            ...qualities,
-          ];
+          _qualities = source.qualities;
+          _selectedQuality = 'auto';
           _loading = false;
         });
       }
+      _startProgressTimer();
+      _startRefreshTimer();
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -111,6 +135,34 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
         });
       }
     }
+  }
+
+  Future<_PlaybackSource> _fetchPlaybackSource() async {
+    final resp = await ApiClient().getAuth(
+      '/api/videos/${widget.video.id}/play',
+    );
+    if (resp['code'] != 0) {
+      throw Exception(resp['msg']?.toString() ?? '获取播放地址失败');
+    }
+    final data = resp['data'] as Map<String, dynamic>?;
+    final rawUrl = data?['url'] as String? ?? '';
+    if (rawUrl.isEmpty) {
+      throw Exception('播放地址为空');
+    }
+    // backend returns a relative signed path; prepend baseUrl so it works on
+    // emulator (10.0.2.2), simulator (localhost), and physical device (LAN IP)
+    final url = _absoluteUrl(rawUrl);
+    var qualities = _parseQualities(data);
+    if (qualities.isEmpty) {
+      qualities = await _parseQualitiesFromMaster(url);
+    }
+    return _PlaybackSource(
+      url: url,
+      qualities: [
+        _QualityOption(name: 'auto', label: '自动', url: url),
+        ...qualities,
+      ],
+    );
   }
 
   String _absoluteUrl(String url) {
@@ -211,17 +263,24 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
 
     final position = _player.state.position;
     final wasPlaying = _player.state.playing;
+    final previousQuality = _selectedQuality;
+    final previousOption = _qualities
+        .where((quality) => quality.name == previousQuality)
+        .firstOrNull;
     setState(() {
-      _selectedQuality = name;
       _switchingQuality = true;
       _showResumePlaybackButton = false;
     });
 
     try {
       await _player.open(Media(option.url), play: false);
+      await _player.setRate(_playbackRate);
       await _waitForMediaReady();
       if (position > Duration.zero) {
         await _player.seek(position);
+      }
+      if (mounted) {
+        setState(() => _selectedQuality = name);
       }
       if (wasPlaying) {
         await _resumePlayback();
@@ -229,6 +288,9 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
         await _player.pause();
       }
     } catch (e) {
+      if (previousOption != null) {
+        await _restoreQuality(previousOption, position, wasPlaying);
+      }
       if (mounted) {
         ScaffoldMessenger.of(
           context,
@@ -236,6 +298,28 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
       }
     } finally {
       if (mounted) setState(() => _switchingQuality = false);
+    }
+  }
+
+  Future<void> _restoreQuality(
+    _QualityOption option,
+    Duration position,
+    bool shouldPlay,
+  ) async {
+    try {
+      await _player.open(Media(option.url), play: false);
+      await _player.setRate(_playbackRate);
+      await _waitForMediaReady();
+      if (position > Duration.zero) {
+        await _player.seek(position);
+      }
+      if (shouldPlay) {
+        await _resumePlayback();
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _showResumePlaybackButton = true);
+      }
     }
   }
 
@@ -252,6 +336,9 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
 
   Future<void> _resumePlayback() async {
     try {
+      if (_player.state.completed) {
+        await _player.seek(Duration.zero);
+      }
       await _player.play();
       if (mounted) {
         setState(() => _showResumePlaybackButton = false);
@@ -263,8 +350,228 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
     }
   }
 
+  Future<void> _seekRelative(Duration offset) async {
+    final duration = _player.state.duration;
+    final current = _player.state.position;
+    var target = current + offset;
+    if (target < Duration.zero) {
+      target = Duration.zero;
+    }
+    if (duration > Duration.zero && target > duration) {
+      target = duration;
+    }
+    await _player.seek(target);
+    unawaited(_saveProgress(force: true));
+  }
+
+  Future<void> _changePlaybackRate(double rate) async {
+    await _player.setRate(rate);
+    if (mounted) {
+      setState(() => _playbackRate = rate);
+    }
+  }
+
+  void _handlePlayerCompleted(bool completed) {
+    if (!completed) return;
+    unawaited(_saveProgress(force: true, positionOverride: Duration.zero));
+    if (mounted) {
+      setState(() => _showResumePlaybackButton = true);
+    }
+  }
+
+  Future<Duration> _loadSavedProgress() async {
+    try {
+      final resp = await ApiClient().getAuth(
+        '/api/videos/${widget.video.id}/progress',
+      );
+      if (resp['code'] != 0) return Duration.zero;
+      final data = resp['data'];
+      final position = data is Map<String, dynamic> ? data['position'] : null;
+      if (position is num && position > 0) {
+        return Duration(seconds: position.toInt());
+      }
+    } catch (_) {
+      // Progress is a comfort feature; playback should not fail when it is absent.
+    }
+    return Duration.zero;
+  }
+
+  bool _canResumeAt(Duration position) {
+    final duration = _player.state.duration;
+    if (duration <= Duration.zero) return true;
+    return position < duration - const Duration(seconds: 20);
+  }
+
+  void _startProgressTimer() {
+    _progressTimer?.cancel();
+    _progressTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      unawaited(_saveProgress());
+    });
+  }
+
+  void _handlePlayerError(String error) {
+    final lower = error.toLowerCase();
+    final mayBeExpiredHls =
+        lower.contains('403') ||
+        lower.contains('410') ||
+        lower.contains('expired') ||
+        lower.contains('forbidden');
+    if (mayBeExpiredHls) {
+      unawaited(_recoverPlaybackAfterError());
+      return;
+    }
+    if (mounted) {
+      setState(() => _showResumePlaybackButton = true);
+    }
+  }
+
+  Future<void> _saveProgress({
+    bool force = false,
+    Duration? positionOverride,
+  }) async {
+    if (_savingProgress) return;
+    final position = positionOverride ?? _player.state.position;
+    final duration = _player.state.duration;
+    if (position < Duration.zero) return;
+    if (position == Duration.zero && positionOverride == null) return;
+    if (!force &&
+        (position - _lastSavedPosition).abs() < const Duration(seconds: 5)) {
+      return;
+    }
+
+    _savingProgress = true;
+    try {
+      await ApiClient().postAuth('/api/videos/${widget.video.id}/progress', {
+        'position': position.inSeconds,
+        'duration': duration.inSeconds,
+      });
+      _lastSavedPosition = position;
+    } catch (_) {
+      // Network blips are expected during playback; the next tick will retry.
+    } finally {
+      _savingProgress = false;
+    }
+  }
+
+  void _startRefreshTimer() {
+    _refreshTimer?.cancel();
+    _refreshTimer = Timer.periodic(const Duration(minutes: 20), (_) {
+      unawaited(_refreshPlaybackSource());
+    });
+  }
+
+  Future<void> _refreshPlaybackSource({bool resumeAfterRefresh = false}) async {
+    if (_refreshingSource || _switchingQuality || _loading) return;
+    _refreshingSource = true;
+    final position = _player.state.position;
+    final wasPlaying = resumeAfterRefresh || _player.state.playing;
+    final selectedQuality = _selectedQuality;
+    try {
+      final source = await _fetchPlaybackSource();
+      final nextOption =
+          source.qualities
+              .where((q) => q.name == selectedQuality)
+              .firstOrNull ??
+          source.qualities.first;
+      if (!mounted) return;
+      setState(() {
+        _qualities = source.qualities;
+        _selectedQuality = nextOption.name;
+        _switchingQuality = true;
+      });
+      await _player.open(Media(nextOption.url), play: false);
+      await _player.setRate(_playbackRate);
+      await _waitForMediaReady();
+      if (position > Duration.zero) {
+        await _player.seek(position);
+      }
+      if (wasPlaying) {
+        await _resumePlayback();
+      }
+    } catch (_) {
+      // Keep the current playback alive; this timer is only renewing signed URLs.
+    } finally {
+      _refreshingSource = false;
+      if (mounted) setState(() => _switchingQuality = false);
+    }
+  }
+
+  Future<void> _recoverPlaybackAfterError() async {
+    if (_recoveringPlayback) return;
+    _recoveringPlayback = true;
+    try {
+      await _refreshPlaybackSource(resumeAfterRefresh: true);
+    } finally {
+      _recoveringPlayback = false;
+    }
+  }
+
+  Future<void> _toggleFullscreen() async {
+    if (_isFullscreen) {
+      await _exitFullscreen();
+    } else {
+      await _enterFullscreen();
+    }
+  }
+
+  Future<void> _enterFullscreen() async {
+    await SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    if (mounted) {
+      setState(() => _isFullscreen = true);
+    }
+  }
+
+  Future<void> _exitFullscreen() async {
+    await SystemChrome.setPreferredOrientations([
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+      DeviceOrientation.portraitUp,
+    ]);
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    if (mounted) {
+      setState(() => _isFullscreen = false);
+    }
+  }
+
+  Future<void> _restoreSystemUi() async {
+    await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (_isFullscreen) {
+      return PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, result) {
+          if (!didPop) {
+            unawaited(_exitFullscreen());
+          }
+        },
+        child: Scaffold(
+          backgroundColor: Colors.black,
+          body: Center(
+            child: AspectRatio(
+              aspectRatio: 16 / 9,
+              child: _loading
+                  ? const Center(
+                      child: CircularProgressIndicator(
+                        color: Color(0xFF25D0AB),
+                      ),
+                    )
+                  : _error != null
+                  ? _buildError()
+                  : _buildPlayer(),
+            ),
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(
@@ -348,9 +655,42 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
     return Stack(
       children: [
         Video(controller: _controller, controls: AdaptiveVideoControls),
+        _buildBufferingIndicator(),
         _buildCenterPlayButton(),
+        _buildCompletedOverlay(),
+        Positioned(left: 48, bottom: 4, child: _buildPlaybackTools()),
         Positioned(right: 48, bottom: 4, child: _buildQualityMenu()),
+        Positioned(right: 8, top: 8, child: _buildFullscreenButton()),
       ],
+    );
+  }
+
+  Widget _buildBufferingIndicator() {
+    return StreamBuilder<bool>(
+      stream: _player.stream.buffering,
+      initialData: _player.state.buffering,
+      builder: (context, snapshot) {
+        final buffering = snapshot.data ?? false;
+        if (!buffering || _switchingQuality) return const SizedBox.shrink();
+
+        return Positioned.fill(
+          child: IgnorePointer(
+            child: Container(
+              color: Colors.black26,
+              child: const Center(
+                child: SizedBox(
+                  width: 42,
+                  height: 42,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 3,
+                    color: Color(0xFF25D0AB),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -417,6 +757,106 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
     );
   }
 
+  Widget _buildCompletedOverlay() {
+    return StreamBuilder<bool>(
+      stream: _player.stream.completed,
+      initialData: _player.state.completed,
+      builder: (context, snapshot) {
+        final completed = snapshot.data ?? false;
+        if (!completed) return const SizedBox.shrink();
+
+        return Positioned.fill(
+          child: Container(
+            color: Colors.black45,
+            child: Center(
+              child: FilledButton.icon(
+                onPressed: _resumePlayback,
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFF25D0AB),
+                  foregroundColor: Colors.black,
+                ),
+                icon: const Icon(Icons.replay_rounded),
+                label: const Text('重播'),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildPlaybackTools() {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _glassIconButton(
+          tooltip: '后退10秒',
+          icon: Icons.replay_10_rounded,
+          onPressed: () =>
+              unawaited(_seekRelative(const Duration(seconds: -10))),
+        ),
+        const SizedBox(width: 8),
+        _buildSpeedMenu(),
+        const SizedBox(width: 8),
+        _glassIconButton(
+          tooltip: '前进10秒',
+          icon: Icons.forward_10_rounded,
+          onPressed: () =>
+              unawaited(_seekRelative(const Duration(seconds: 10))),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSpeedMenu() {
+    const rates = [0.75, 1.0, 1.25, 1.5, 2.0];
+    return PopupMenuButton<double>(
+      tooltip: '播放速度',
+      color: const Color(0xFF111827),
+      initialValue: _playbackRate,
+      onSelected: (rate) => unawaited(_changePlaybackRate(rate)),
+      itemBuilder: (context) => rates
+          .map(
+            (rate) => PopupMenuItem<double>(
+              value: rate,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: rate == _playbackRate
+                        ? const Icon(
+                            Icons.check,
+                            color: Color(0xFF25D0AB),
+                            size: 18,
+                          )
+                        : null,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    '${_formatRate(rate)}x',
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                ],
+              ),
+            ),
+          )
+          .toList(),
+      child: _glassChip('${_formatRate(_playbackRate)}x'),
+    );
+  }
+
+  Widget _buildFullscreenButton() {
+    return _glassIconButton(
+      tooltip: _isFullscreen ? '退出全屏' : '全屏',
+      icon: _isFullscreen
+          ? Icons.fullscreen_exit_rounded
+          : Icons.fullscreen_rounded,
+      onPressed: () => unawaited(_toggleFullscreen()),
+    );
+  }
+
   Widget _buildError() {
     return Center(
       child: Column(
@@ -430,9 +870,25 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 16),
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('返回', style: TextStyle(color: Color(0xFF25D0AB))),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextButton(
+                onPressed: _init,
+                child: const Text(
+                  '重试',
+                  style: TextStyle(color: Color(0xFF25D0AB)),
+                ),
+              ),
+              const SizedBox(width: 12),
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text(
+                  '返回',
+                  style: TextStyle(color: Color(0xFF25D0AB)),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -529,11 +985,79 @@ class _VideoPlayerPageState extends State<VideoPlayerPage> {
     );
   }
 
+  Widget _glassIconButton({
+    required String tooltip,
+    required IconData icon,
+    required VoidCallback onPressed,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: ClipOval(
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+          child: Material(
+            color: Colors.white.withValues(alpha: 0.14),
+            shape: CircleBorder(
+              side: BorderSide(color: Colors.white.withValues(alpha: 0.26)),
+            ),
+            child: InkWell(
+              customBorder: const CircleBorder(),
+              onTap: onPressed,
+              child: SizedBox(
+                width: 36,
+                height: 36,
+                child: Icon(icon, color: Colors.white, size: 20),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _glassChip(String label) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(18),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.14),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.26)),
+          ),
+          child: SizedBox(
+            height: 36,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              child: Center(
+                child: Text(
+                  label,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   String get _selectedQualityLabel {
     return _qualities
             .where((quality) => quality.name == _selectedQuality)
             .map((quality) => quality.label)
             .firstOrNull ??
         '自动';
+  }
+
+  String _formatRate(double rate) {
+    return rate == rate.roundToDouble()
+        ? rate.toInt().toString()
+        : rate.toStringAsFixed(2).replaceFirst(RegExp(r'0$'), '');
   }
 }
