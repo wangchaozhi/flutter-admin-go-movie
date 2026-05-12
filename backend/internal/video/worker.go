@@ -19,6 +19,21 @@ import (
 	"github.com/minio/minio-go/v7"
 )
 
+type sourceVideoSize struct {
+	width  int
+	height int
+}
+
+type transcodeQuality struct {
+	name      string
+	height    int
+	scale     string
+	videoBit  string
+	audioBit  string
+	bandwidth string
+	res       string
+}
+
 func HandleTranscodeTask(ctx context.Context, t *asynq.Task) error {
 	p, err := ParseTranscodePayload(t)
 	if err != nil {
@@ -77,18 +92,7 @@ func runTranscode(ctx context.Context, videoID int64) (int, error) {
 		return 0, fmt.Errorf("download source: %w", err)
 	}
 
-	qualities := []struct {
-		name      string
-		scale     string
-		videoBit  string
-		audioBit  string
-		bandwidth string
-		res       string
-	}{
-		{"360p", "-2:360", "800k", "96k", "800000", "640x360"},
-		{"720p", "-2:720", "2500k", "128k", "2500000", "1280x720"},
-		{"1080p", "-2:1080", "5000k", "128k", "5000000", "1920x1080"},
-	}
+	qualities := selectTranscodeQualities(probeSourceSize(srcPath))
 
 	for _, q := range qualities {
 		outDir := filepath.Join(tmpDir, q.name)
@@ -102,9 +106,14 @@ func runTranscode(ctx context.Context, videoID int64) (int, error) {
 			"-i", srcPath,
 			"-vf", "scale=" + q.scale,
 			"-c:v", "libx264", "-preset", "veryfast", "-b:v", q.videoBit,
+			"-g", "180",
+			"-keyint_min", "180",
+			"-force_key_frames", "expr:gte(t,n_forced*6)",
+			"-sc_threshold", "0",
 			"-c:a", "aac", "-b:a", q.audioBit,
 			"-hls_time", "6",
 			"-hls_playlist_type", "vod",
+			"-hls_flags", "independent_segments",
 			"-hls_segment_filename", segPattern,
 			m3u8Out,
 		}
@@ -140,6 +149,65 @@ func runTranscode(ctx context.Context, videoID int64) (int, error) {
 	return duration, nil
 }
 
+func selectTranscodeQualities(sourceSize sourceVideoSize) []transcodeQuality {
+	all := []transcodeQuality{
+		{"360p", 360, "-2:360", "800k", "96k", "1000000", "640x360"},
+		{"480p", 480, "-2:480", "1200k", "96k", "1400000", "854x480"},
+		{"720p", 720, "-2:720", "2500k", "128k", "2800000", "1280x720"},
+		{"1080p", 1080, "-2:1080", "5000k", "128k", "5500000", "1920x1080"},
+	}
+	if sourceSize.height <= 0 || sourceSize.width <= 0 {
+		return all
+	}
+
+	selected := make([]transcodeQuality, 0, len(all))
+	for _, q := range all {
+		if q.height <= sourceSize.height+16 {
+			selected = append(selected, withResolution(q, sourceSize))
+		}
+	}
+	if len(selected) > 0 {
+		return selected
+	}
+
+	lowest := all[0]
+	targetHeight := evenHeight(sourceSize.height)
+	lowest.name = fmt.Sprintf("%dp", targetHeight)
+	lowest.height = targetHeight
+	lowest.scale = fmt.Sprintf("-2:%d", targetHeight)
+	lowest = withResolution(lowest, sourceSize)
+	return []transcodeQuality{lowest}
+}
+
+func withResolution(q transcodeQuality, sourceSize sourceVideoSize) transcodeQuality {
+	width := evenWidth(sourceSize.width * q.height / sourceSize.height)
+	if width < 2 {
+		width = 2
+	}
+	q.res = fmt.Sprintf("%dx%d", width, q.height)
+	return q
+}
+
+func evenWidth(width int) int {
+	if width < 2 {
+		return 2
+	}
+	if width%2 == 1 {
+		return width + 1
+	}
+	return width
+}
+
+func evenHeight(height int) int {
+	if height < 2 {
+		return 2
+	}
+	if height%2 == 1 {
+		return height - 1
+	}
+	return height
+}
+
 // probeDuration returns video duration in seconds using ffprobe.
 func probeDuration(srcPath string) int {
 	out, err := exec.Command("ffprobe",
@@ -156,6 +224,32 @@ func probeDuration(srcPath string) int {
 		return 0
 	}
 	return int(f)
+}
+
+func probeSourceSize(srcPath string) sourceVideoSize {
+	out, err := exec.Command("ffprobe",
+		"-v", "error",
+		"-select_streams", "v:0",
+		"-show_entries", "stream=width,height",
+		"-of", "csv=s=x:p=0",
+		srcPath,
+	).Output()
+	if err != nil {
+		return sourceVideoSize{}
+	}
+	parts := strings.Split(strings.TrimSpace(string(out)), "x")
+	if len(parts) != 2 {
+		return sourceVideoSize{}
+	}
+	width, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return sourceVideoSize{}
+	}
+	height, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return sourceVideoSize{}
+	}
+	return sourceVideoSize{width: width, height: height}
 }
 
 // extractAndUploadCover grabs a frame at 5 s and uploads it to MinIO.

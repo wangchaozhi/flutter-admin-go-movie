@@ -25,6 +25,8 @@ type HLSQualityOption struct {
 	URL        string `json:"url"`
 }
 
+const hlsSignedURLTTLSeconds = 6 * 60 * 60
+
 // GET /api/hls/{videoId}/master.m3u8?expires=xxx&sign=xxx
 func HLSMasterHandler(w http.ResponseWriter, r *http.Request) {
 	videoID, path, ok := parseHLSRequest(r, w)
@@ -51,7 +53,7 @@ func HLSMasterHandler(w http.ResponseWriter, r *http.Request) {
 			quality = strings.TrimSuffix(quality, "index.m3u8")
 			quality = strings.Trim(quality, "/")
 			subPath := fmt.Sprintf("/api/hls/%d/%s/index.m3u8", videoID, quality)
-			signed := SignPath(subPath, 1800)
+			signed := SignPath(subPath, hlsSignedURLTTLSeconds)
 			buf.WriteString(signed + "\n")
 		} else {
 			buf.WriteString(line + "\n")
@@ -60,6 +62,7 @@ func HLSMasterHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
 	w.Write(buf.Bytes())
 }
@@ -94,7 +97,7 @@ func HLSIndexHandler(w http.ResponseWriter, r *http.Request) {
 		line := scanner.Text()
 		if strings.HasSuffix(line, ".ts") && !strings.HasPrefix(line, "#") {
 			tsPath := fmt.Sprintf("/hls/%d/%s/%s", videoID, quality, line)
-			signed := SignPath(tsPath, 1800)
+			signed := SignPath(tsPath, hlsSignedURLTTLSeconds)
 			buf.WriteString(videoBaseURL(r) + signed + "\n")
 		} else {
 			buf.WriteString(line + "\n")
@@ -103,6 +106,7 @@ func HLSIndexHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
 	w.Write(buf.Bytes())
 }
@@ -139,7 +143,7 @@ func AppPlayHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	masterPath := fmt.Sprintf("/api/hls/%d/master.m3u8", id)
-	signedPath := SignPath(masterPath, 1800)
+	signedPath := SignPath(masterPath, hlsSignedURLTTLSeconds)
 	qualities := signedHLSQualities(r.Context(), id)
 
 	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: map[string]interface{}{
@@ -181,7 +185,7 @@ func signedHLSQualities(ctx context.Context, videoID int64) []HLSQualityOption {
 			Name:       name,
 			Label:      qualityLabel(name, resolution),
 			Resolution: resolution,
-			URL:        SignPath(subPath, 1800),
+			URL:        SignPath(subPath, hlsSignedURLTTLSeconds),
 		})
 		resolution = ""
 	}
@@ -419,6 +423,15 @@ func AppProgressHandler(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "invalid body"})
 			return
+		}
+		if req.Position < 0 {
+			req.Position = 0
+		}
+		if req.Duration < 0 {
+			req.Duration = 0
+		}
+		if req.Duration > 0 && req.Position > req.Duration {
+			req.Position = req.Duration
 		}
 		var rec store.VideoPlayRecord
 		store.DB().Where("user_id = ? AND video_id = ?", userID, videoID).First(&rec)
