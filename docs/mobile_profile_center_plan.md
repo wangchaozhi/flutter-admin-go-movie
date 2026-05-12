@@ -54,12 +54,26 @@
    - 支持 `limit` 参数，默认 20，最大 50。
    - 预加载 `Product`，方便移动端展示商品名称。
 
+3. `GET /api/mobile/watch-history`
+   - 需要移动端 Bearer Token。
+   - 返回当前用户最近播放记录，包含视频信息、播放位置、进度百分比。
+
+4. `GET /api/mobile/favorites`
+   - 需要移动端 Bearer Token。
+   - 返回当前用户收藏的视频列表。
+
+5. `POST /api/mobile/favorites/{video_id}` 与 `DELETE /api/mobile/favorites/{video_id}`
+   - 收藏或取消收藏单个视频。
+
+6. `GET /api/mobile/settings` 与 `PUT /api/mobile/settings`
+   - 读取和保存用户播放偏好。
+   - 第一版包含 `auto_play`、`wifi_only`、`preferred_quality`。
+
 ### 后续接口
 
-- `GET /api/mobile/watch-history`：观看记录列表，关联视频信息。
-- `POST/DELETE /api/mobile/favorites/{video_id}`：收藏/取消收藏。
-- `GET /api/mobile/favorites`：收藏列表。
-- `GET /api/mobile/settings` 与 `PUT /api/mobile/settings`：用户偏好。
+- `GET /api/mobile/downloads`：离线缓存列表。
+- `DELETE /api/mobile/watch-history/{video_id}`：删除单条观看记录。
+- `DELETE /api/mobile/watch-history`：清空观看记录。
 
 ## Flutter 实现
 
@@ -74,6 +88,7 @@
 
 - 首页视频列表仍由首页 Tab 使用。
 - “我的”Tab 独立加载 profile 与 orders。
+- 观看记录、收藏、设置通过底部弹窗展示。
 - 加载失败时保留页面骨架，并展示轻量错误文案。
 
 ### 交互

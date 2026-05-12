@@ -254,6 +254,18 @@ type AppVideoItem struct {
 	CategoryName string `json:"category_name"`
 }
 
+type AppWatchHistoryItem struct {
+	AppVideoItem
+	Position  int       `json:"position"`
+	Progress  int       `json:"progress"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type AppFavoriteItem struct {
+	AppVideoItem
+	FavoritedAt time.Time `json:"favorited_at"`
+}
+
 func coverURL(v store.Video) string {
 	if v.CoverKey == "" {
 		return ""
@@ -314,6 +326,212 @@ func AppListVideosHandler(w http.ResponseWriter, r *http.Request) {
 		"per_page": perPage,
 		"items":    items,
 	}})
+}
+
+// GET /api/mobile/watch-history?limit=20
+func AppWatchHistoryHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		common.WriteJSON(w, http.StatusMethodNotAllowed, common.APIResponse{Code: 405, Msg: "method not allowed"})
+		return
+	}
+	userID, ok := parseMobileAuth(r)
+	if !ok {
+		common.WriteJSON(w, http.StatusUnauthorized, common.APIResponse{Code: 401, Msg: "unauthorized"})
+		return
+	}
+	limit := mobileLimit(r, 20, 50)
+	var records []store.VideoPlayRecord
+	if err := store.DB().
+		Where("user_id = ?", userID).
+		Order("updated_at desc").
+		Limit(limit).
+		Find(&records).Error; err != nil {
+		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
+		return
+	}
+	videoIDs := make([]int64, 0, len(records))
+	for _, rec := range records {
+		videoIDs = append(videoIDs, rec.VideoID)
+	}
+	videoItems := appVideoItemsByID(videoIDs)
+	items := make([]AppWatchHistoryItem, 0, len(records))
+	for _, rec := range records {
+		video, ok := videoItems[rec.VideoID]
+		if !ok {
+			continue
+		}
+		progress := 0
+		if rec.Duration > 0 {
+			progress = rec.Position * 100 / rec.Duration
+			if progress > 100 {
+				progress = 100
+			}
+		}
+		items = append(items, AppWatchHistoryItem{
+			AppVideoItem: video,
+			Position:     rec.Position,
+			Progress:     progress,
+			UpdatedAt:    rec.UpdatedAt,
+		})
+	}
+	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: items})
+}
+
+// GET /api/mobile/favorites
+func AppFavoritesHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		common.WriteJSON(w, http.StatusMethodNotAllowed, common.APIResponse{Code: 405, Msg: "method not allowed"})
+		return
+	}
+	userID, ok := parseMobileAuth(r)
+	if !ok {
+		common.WriteJSON(w, http.StatusUnauthorized, common.APIResponse{Code: 401, Msg: "unauthorized"})
+		return
+	}
+	limit := mobileLimit(r, 20, 50)
+	var favorites []store.VideoFavorite
+	if err := store.DB().
+		Where("user_id = ?", userID).
+		Order("id desc").
+		Limit(limit).
+		Find(&favorites).Error; err != nil {
+		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
+		return
+	}
+	videoIDs := make([]int64, 0, len(favorites))
+	for _, fav := range favorites {
+		videoIDs = append(videoIDs, fav.VideoID)
+	}
+	videoItems := appVideoItemsByID(videoIDs)
+	items := make([]AppFavoriteItem, 0, len(favorites))
+	for _, fav := range favorites {
+		video, ok := videoItems[fav.VideoID]
+		if !ok {
+			continue
+		}
+		items = append(items, AppFavoriteItem{
+			AppVideoItem: video,
+			FavoritedAt:  fav.CreatedAt,
+		})
+	}
+	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: items})
+}
+
+// POST/DELETE /api/mobile/favorites/{video_id}
+func AppFavoriteByVideoHandler(w http.ResponseWriter, r *http.Request) {
+	userID, ok := parseMobileAuth(r)
+	if !ok {
+		common.WriteJSON(w, http.StatusUnauthorized, common.APIResponse{Code: 401, Msg: "unauthorized"})
+		return
+	}
+	videoID, err := strconv.ParseInt(strings.TrimPrefix(r.URL.Path, "/api/mobile/favorites/"), 10, 64)
+	if err != nil || videoID <= 0 {
+		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "invalid video id"})
+		return
+	}
+	switch r.Method {
+	case http.MethodPost:
+		fav := store.VideoFavorite{UserID: int64(userID), VideoID: videoID, CreatedAt: time.Now()}
+		store.DB().Where("user_id = ? AND video_id = ?", userID, videoID).FirstOrCreate(&fav)
+		common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok"})
+	case http.MethodDelete:
+		store.DB().Where("user_id = ? AND video_id = ?", userID, videoID).Delete(&store.VideoFavorite{})
+		common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok"})
+	default:
+		common.WriteJSON(w, http.StatusMethodNotAllowed, common.APIResponse{Code: 405, Msg: "method not allowed"})
+	}
+}
+
+func AppMobileSettingsHandler(w http.ResponseWriter, r *http.Request) {
+	userID, ok := parseMobileAuth(r)
+	if !ok {
+		common.WriteJSON(w, http.StatusUnauthorized, common.APIResponse{Code: 401, Msg: "unauthorized"})
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		setting := loadMobileSetting(userID)
+		common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: setting})
+	case http.MethodPut:
+		var req struct {
+			AutoPlay         bool   `json:"auto_play"`
+			WifiOnly         bool   `json:"wifi_only"`
+			PreferredQuality string `json:"preferred_quality"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "invalid body"})
+			return
+		}
+		if req.PreferredQuality == "" {
+			req.PreferredQuality = "auto"
+		}
+		setting := store.MobileUserSetting{
+			UserID:     int64(userID),
+			AutoPlay:   req.AutoPlay,
+			WifiOnly:   req.WifiOnly,
+			PreferredQ: req.PreferredQuality,
+			UpdatedAt:  time.Now(),
+		}
+		if err := store.DB().Save(&setting).Error; err != nil {
+			common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
+			return
+		}
+		common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: setting})
+	default:
+		common.WriteJSON(w, http.StatusMethodNotAllowed, common.APIResponse{Code: 405, Msg: "method not allowed"})
+	}
+}
+
+func mobileLimit(r *http.Request, fallback, max int) int {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit < 1 {
+		limit = fallback
+	}
+	if limit > max {
+		limit = max
+	}
+	return limit
+}
+
+func appVideoItemsByID(videoIDs []int64) map[int64]AppVideoItem {
+	if len(videoIDs) == 0 {
+		return map[int64]AppVideoItem{}
+	}
+	var videos []store.Video
+	store.DB().Where("id IN ?", videoIDs).Find(&videos)
+	catNames := map[int]string{}
+	if len(videos) > 0 {
+		var cats []store.Category
+		store.DB().Find(&cats)
+		for _, c := range cats {
+			catNames[c.ID] = c.Name
+		}
+	}
+	items := map[int64]AppVideoItem{}
+	for _, v := range videos {
+		items[v.ID] = AppVideoItem{
+			Video:        v,
+			CoverURL:     coverURL(v),
+			CategoryName: catNames[v.CategoryID],
+		}
+	}
+	return items
+}
+
+func loadMobileSetting(userID int) store.MobileUserSetting {
+	var setting store.MobileUserSetting
+	if err := store.DB().First(&setting, "user_id = ?", userID).Error; err == nil {
+		return setting
+	}
+	setting = store.MobileUserSetting{
+		UserID:     int64(userID),
+		AutoPlay:   true,
+		WifiOnly:   false,
+		PreferredQ: "auto",
+		UpdatedAt:  time.Now(),
+	}
+	store.DB().Create(&setting)
+	return setting
 }
 
 // GET /api/videos/{id}

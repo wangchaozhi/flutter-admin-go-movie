@@ -44,3 +44,22 @@ type VideoPlayRecord struct {
 }
 
 func (VideoPlayRecord) TableName() string { return "video_play_records" }
+
+type VideoFavorite struct {
+	ID        int64     `gorm:"primaryKey;column:id" json:"id"`
+	UserID    int64     `gorm:"column:user_id"        json:"user_id"`
+	VideoID   int64     `gorm:"column:video_id"       json:"video_id"`
+	CreatedAt time.Time `gorm:"column:created_at"     json:"created_at"`
+}
+
+func (VideoFavorite) TableName() string { return "video_favorites" }
+
+type MobileUserSetting struct {
+	UserID     int64     `gorm:"primaryKey;column:user_id" json:"user_id"`
+	AutoPlay   bool      `gorm:"column:auto_play"          json:"auto_play"`
+	WifiOnly   bool      `gorm:"column:wifi_only"          json:"wifi_only"`
+	PreferredQ string    `gorm:"column:preferred_quality"  json:"preferred_quality"`
+	UpdatedAt  time.Time `gorm:"column:updated_at"         json:"updated_at"`
+}
+
+func (MobileUserSetting) TableName() string { return "mobile_user_settings" }

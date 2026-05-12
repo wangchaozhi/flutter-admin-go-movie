@@ -18,13 +18,18 @@ class _MobileHomePageState extends State<MobileHomePage> {
   List<Category> _categories = [];
   List<Video> _videos = [];
   List<_OrderSummary> _orders = [];
+  List<_HistoryEntry> _history = [];
+  List<_FavoriteEntry> _favorites = [];
   bool _loadingCategories = true;
   bool _loadingVideos = false;
   bool _loadingProfile = false;
   bool _loadingOrders = false;
+  bool _loadingHistory = false;
+  bool _loadingFavorites = false;
   bool _profileLoaded = false;
   String? _username;
   _MobileProfile? _profile;
+  _MobileSetting? _setting;
   String _profileError = '';
 
   @override
@@ -104,7 +109,13 @@ class _MobileHomePageState extends State<MobileHomePage> {
       _loadingOrders = true;
       _profileError = '';
     });
-    await Future.wait([_loadProfile(), _loadOrders()]);
+    await Future.wait([
+      _loadProfile(),
+      _loadOrders(),
+      _loadHistory(),
+      _loadFavorites(),
+      _loadSetting(),
+    ]);
     if (mounted) {
       setState(() => _profileLoaded = true);
     }
@@ -156,6 +167,128 @@ class _MobileHomePageState extends State<MobileHomePage> {
     }
   }
 
+  Future<void> _loadHistory() async {
+    if (!mounted) return;
+    setState(() => _loadingHistory = true);
+    try {
+      final resp = await ApiClient().getAuth(
+        '/api/mobile/watch-history?limit=20',
+      );
+      if (!mounted) return;
+      if (resp['code'] == 0) {
+        final list = (resp['data'] as List<dynamic>? ?? [])
+            .map((item) => _HistoryEntry.fromJson(item as Map<String, dynamic>))
+            .toList();
+        setState(() => _history = list);
+      }
+    } catch (_) {
+      // keep existing history
+    } finally {
+      if (mounted) setState(() => _loadingHistory = false);
+    }
+  }
+
+  Future<void> _loadFavorites() async {
+    if (!mounted) return;
+    setState(() => _loadingFavorites = true);
+    try {
+      final resp = await ApiClient().getAuth('/api/mobile/favorites?limit=20');
+      if (!mounted) return;
+      if (resp['code'] == 0) {
+        final list = (resp['data'] as List<dynamic>? ?? [])
+            .map(
+              (item) => _FavoriteEntry.fromJson(item as Map<String, dynamic>),
+            )
+            .toList();
+        setState(() => _favorites = list);
+      }
+    } catch (_) {
+      // keep existing favorites
+    } finally {
+      if (mounted) setState(() => _loadingFavorites = false);
+    }
+  }
+
+  Future<void> _loadSetting() async {
+    try {
+      final resp = await ApiClient().getAuth('/api/mobile/settings');
+      if (!mounted) return;
+      if (resp['code'] == 0) {
+        final data = resp['data'] as Map<String, dynamic>? ?? {};
+        setState(() => _setting = _MobileSetting.fromJson(data));
+      }
+    } catch (_) {
+      // settings are optional for this screen
+    }
+  }
+
+  Future<void> _saveSetting(_MobileSetting setting) async {
+    final resp = await ApiClient().putAuth(
+      '/api/mobile/settings',
+      setting.toJson(),
+    );
+    if (!mounted) return;
+    if (resp['code'] == 0) {
+      final data = resp['data'] as Map<String, dynamic>? ?? {};
+      setState(() => _setting = _MobileSetting.fromJson(data));
+    }
+  }
+
+  Future<void> _removeFavorite(Video video) async {
+    await ApiClient().deleteAuth('/api/mobile/favorites/${video.id}');
+    await _loadFavorites();
+  }
+
+  void _showHistorySheet() {
+    _loadHistory();
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF171B24),
+      showDragHandle: true,
+      builder: (_) => _HistorySheet(
+        items: _history,
+        loading: _loadingHistory,
+        onOpenVideo: _openVideo,
+      ),
+    );
+  }
+
+  void _showFavoritesSheet() {
+    _loadFavorites();
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF171B24),
+      showDragHandle: true,
+      builder: (_) => _FavoritesSheet(
+        items: _favorites,
+        loading: _loadingFavorites,
+        onOpenVideo: _openVideo,
+        onRemove: _removeFavorite,
+      ),
+    );
+  }
+
+  void _showOrdersSheet() {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF171B24),
+      showDragHandle: true,
+      builder: (_) => _OrdersSheet(orders: _orders, loading: _loadingOrders),
+    );
+  }
+
+  void _showSettingsSheet() {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF171B24),
+      showDragHandle: true,
+      builder: (_) => _SettingsSheet(
+        setting: _setting ?? _MobileSetting.defaults(),
+        onSave: _saveSetting,
+      ),
+    );
+  }
+
   void _onNavSelected(int index) {
     setState(() => _selectedNav = index);
     if (index == 3) {
@@ -177,7 +310,13 @@ class _MobileHomePageState extends State<MobileHomePage> {
             loadingOrders: _loadingOrders,
             error: _profileError,
             videos: _videos,
+            historyCount: _history.length,
+            favoriteCount: _favorites.length,
             onOpenVip: () => Navigator.pushNamed(context, '/vip'),
+            onOpenHistory: _showHistorySheet,
+            onOpenFavorites: _showFavoritesSheet,
+            onOpenOrders: _showOrdersSheet,
+            onOpenSettings: _showSettingsSheet,
             onRefresh: () => _loadProfileCenter(force: true),
             onLogout: _logout,
           )
@@ -575,7 +714,13 @@ class _ProfileCenter extends StatelessWidget {
     required this.loadingOrders,
     required this.error,
     required this.videos,
+    required this.historyCount,
+    required this.favoriteCount,
     required this.onOpenVip,
+    required this.onOpenHistory,
+    required this.onOpenFavorites,
+    required this.onOpenOrders,
+    required this.onOpenSettings,
     required this.onRefresh,
     required this.onLogout,
   });
@@ -587,7 +732,13 @@ class _ProfileCenter extends StatelessWidget {
   final bool loadingOrders;
   final String error;
   final List<Video> videos;
+  final int historyCount;
+  final int favoriteCount;
   final VoidCallback onOpenVip;
+  final VoidCallback onOpenHistory;
+  final VoidCallback onOpenFavorites;
+  final VoidCallback onOpenOrders;
+  final VoidCallback onOpenSettings;
   final Future<void> Function() onRefresh;
   final VoidCallback onLogout;
 
@@ -644,14 +795,30 @@ class _ProfileCenter extends StatelessWidget {
           const SizedBox(height: 14),
           _ShortcutGrid(
             items: [
-              _ShortcutItem(Icons.history_rounded, '观看记录', '$readyCount 部可观看'),
-              _ShortcutItem(Icons.bookmark_rounded, '我的收藏', '稍后接入'),
+              _ShortcutItem(
+                Icons.history_rounded,
+                '观看记录',
+                historyCount > 0 ? '$historyCount 条记录' : '$readyCount 部可观看',
+                onOpenHistory,
+              ),
+              _ShortcutItem(
+                Icons.bookmark_rounded,
+                '我的收藏',
+                favoriteCount > 0 ? '$favoriteCount 部影片' : '暂无收藏',
+                onOpenFavorites,
+              ),
               _ShortcutItem(
                 Icons.receipt_long_rounded,
                 '订单记录',
                 '${orders.length} 条最近订单',
+                onOpenOrders,
               ),
-              _ShortcutItem(Icons.settings_rounded, '设置', '偏好与缓存'),
+              _ShortcutItem(
+                Icons.settings_rounded,
+                '设置',
+                '偏好与缓存',
+                onOpenSettings,
+              ),
             ],
           ),
           const SizedBox(height: 14),
@@ -835,43 +1002,367 @@ class _ShortcutTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFF171B24),
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFF2B3140)),
-      ),
-      child: Row(
-        children: [
-          Icon(item.icon, color: const Color(0xFF25D0AB)),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  item.title,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  item.subtitle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFF9CA3AF),
-                    fontSize: 12,
-                  ),
-                ),
-              ],
-            ),
+        onTap: item.onTap,
+        child: Ink(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: const Color(0xFF171B24),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: const Color(0xFF2B3140)),
           ),
-        ],
+          child: Row(
+            children: [
+              Icon(item.icon, color: const Color(0xFF25D0AB)),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      item.title,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      item.subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Color(0xFF9CA3AF),
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: Color(0xFF6B7280),
+                size: 18,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ContentSheet extends StatelessWidget {
+  const _ContentSheet({
+    required this.title,
+    required this.loading,
+    required this.emptyText,
+    required this.children,
+  });
+
+  final String title;
+  final bool loading;
+  final String emptyText;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 20,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            const SizedBox(height: 12),
+            if (loading)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 24),
+                child: Center(
+                  child: CircularProgressIndicator(color: Color(0xFF25D0AB)),
+                ),
+              )
+            else if (children.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 18),
+                child: Text(
+                  emptyText,
+                  style: const TextStyle(color: Color(0xFF9CA3AF)),
+                ),
+              )
+            else
+              Flexible(child: ListView(shrinkWrap: true, children: children)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _HistorySheet extends StatelessWidget {
+  const _HistorySheet({
+    required this.items,
+    required this.loading,
+    required this.onOpenVideo,
+  });
+
+  final List<_HistoryEntry> items;
+  final bool loading;
+  final ValueChanged<Video> onOpenVideo;
+
+  @override
+  Widget build(BuildContext context) {
+    return _ContentSheet(
+      title: '观看记录',
+      loading: loading,
+      emptyText: '暂无观看记录',
+      children: [
+        for (final item in items)
+          _VideoActionRow(
+            video: item.video,
+            subtitle: '已观看 ${item.progress}%',
+            trailing: item.video.durationLabel,
+            onTap: () {
+              Navigator.pop(context);
+              onOpenVideo(item.video);
+            },
+          ),
+      ],
+    );
+  }
+}
+
+class _FavoritesSheet extends StatelessWidget {
+  const _FavoritesSheet({
+    required this.items,
+    required this.loading,
+    required this.onOpenVideo,
+    required this.onRemove,
+  });
+
+  final List<_FavoriteEntry> items;
+  final bool loading;
+  final ValueChanged<Video> onOpenVideo;
+  final ValueChanged<Video> onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return _ContentSheet(
+      title: '我的收藏',
+      loading: loading,
+      emptyText: '暂无收藏影片',
+      children: [
+        for (final item in items)
+          _VideoActionRow(
+            video: item.video,
+            subtitle: item.video.categoryName.isEmpty
+                ? '已收藏'
+                : item.video.categoryName,
+            trailing: '移除',
+            onTap: () {
+              Navigator.pop(context);
+              onOpenVideo(item.video);
+            },
+            onTrailingTap: () => onRemove(item.video),
+          ),
+      ],
+    );
+  }
+}
+
+class _OrdersSheet extends StatelessWidget {
+  const _OrdersSheet({required this.orders, required this.loading});
+
+  final List<_OrderSummary> orders;
+  final bool loading;
+
+  @override
+  Widget build(BuildContext context) {
+    return _ContentSheet(
+      title: '订单记录',
+      loading: loading,
+      emptyText: '暂无订单',
+      children: [for (final order in orders) _OrderRow(order: order)],
+    );
+  }
+}
+
+class _SettingsSheet extends StatefulWidget {
+  const _SettingsSheet({required this.setting, required this.onSave});
+
+  final _MobileSetting setting;
+  final Future<void> Function(_MobileSetting setting) onSave;
+
+  @override
+  State<_SettingsSheet> createState() => _SettingsSheetState();
+}
+
+class _SettingsSheetState extends State<_SettingsSheet> {
+  late _MobileSetting _setting = widget.setting;
+  bool _saving = false;
+
+  Future<void> _save(_MobileSetting setting) async {
+    setState(() {
+      _setting = setting;
+      _saving = true;
+    });
+    await widget.onSave(setting);
+    if (mounted) setState(() => _saving = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              '设置',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 20,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            const SizedBox(height: 12),
+            SwitchListTile.adaptive(
+              value: _setting.autoPlay,
+              activeThumbColor: const Color(0xFF25D0AB),
+              contentPadding: EdgeInsets.zero,
+              title: const Text('自动播放', style: TextStyle(color: Colors.white)),
+              subtitle: const Text(
+                '进入播放页后自动继续',
+                style: TextStyle(color: Color(0xFF9CA3AF)),
+              ),
+              onChanged: _saving
+                  ? null
+                  : (value) => _save(_setting.copyWith(autoPlay: value)),
+            ),
+            SwitchListTile.adaptive(
+              value: _setting.wifiOnly,
+              activeThumbColor: const Color(0xFF25D0AB),
+              contentPadding: EdgeInsets.zero,
+              title: const Text(
+                '仅 Wi-Fi 播放',
+                style: TextStyle(color: Colors.white),
+              ),
+              subtitle: const Text(
+                '移动网络下减少误播放',
+                style: TextStyle(color: Color(0xFF9CA3AF)),
+              ),
+              onChanged: _saving
+                  ? null
+                  : (value) => _save(_setting.copyWith(wifiOnly: value)),
+            ),
+            const SizedBox(height: 8),
+            DropdownButtonFormField<String>(
+              initialValue: _setting.preferredQuality,
+              dropdownColor: const Color(0xFF171B24),
+              decoration: const InputDecoration(
+                labelText: '默认清晰度',
+                labelStyle: TextStyle(color: Color(0xFF9CA3AF)),
+                enabledBorder: OutlineInputBorder(
+                  borderSide: BorderSide(color: Color(0xFF2B3140)),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderSide: BorderSide(color: Color(0xFF25D0AB)),
+                ),
+              ),
+              style: const TextStyle(color: Colors.white),
+              items: const [
+                DropdownMenuItem(value: 'auto', child: Text('自动')),
+                DropdownMenuItem(value: '720p', child: Text('720p')),
+                DropdownMenuItem(value: '1080p', child: Text('1080p')),
+              ],
+              onChanged: _saving || _setting.preferredQuality.isEmpty
+                  ? null
+                  : (value) => _save(
+                      _setting.copyWith(preferredQuality: value ?? 'auto'),
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _VideoActionRow extends StatelessWidget {
+  const _VideoActionRow({
+    required this.video,
+    required this.subtitle,
+    required this.trailing,
+    required this.onTap,
+    this.onTrailingTap,
+  });
+
+  final Video video;
+  final String subtitle;
+  final String trailing;
+  final VoidCallback onTap;
+  final VoidCallback? onTrailingTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      onTap: onTap,
+      leading: ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: SizedBox(
+          width: 58,
+          height: 42,
+          child: video.fullCoverUrl.isEmpty
+              ? const ColoredBox(color: Color(0xFF202532))
+              : Image.network(
+                  video.fullCoverUrl,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, _, _) =>
+                      const ColoredBox(color: Color(0xFF202532)),
+                ),
+        ),
+      ),
+      title: Text(
+        video.title,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+      subtitle: Text(
+        subtitle,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(color: Color(0xFF9CA3AF)),
+      ),
+      trailing: TextButton(
+        onPressed: onTrailingTap,
+        child: Text(
+          trailing,
+          style: const TextStyle(
+            color: Color(0xFFF7C948),
+            fontWeight: FontWeight.w800,
+          ),
+        ),
       ),
     );
   }
@@ -1170,11 +1661,73 @@ class _MetricBox extends StatelessWidget {
 }
 
 class _ShortcutItem {
-  const _ShortcutItem(this.icon, this.title, this.subtitle);
+  const _ShortcutItem(this.icon, this.title, this.subtitle, this.onTap);
 
   final IconData icon;
   final String title;
   final String subtitle;
+  final VoidCallback onTap;
+}
+
+class _HistoryEntry {
+  const _HistoryEntry({required this.video, required this.progress});
+
+  factory _HistoryEntry.fromJson(Map<String, dynamic> json) => _HistoryEntry(
+    video: Video.fromJson(json),
+    progress: json['progress'] as int? ?? 0,
+  );
+
+  final Video video;
+  final int progress;
+}
+
+class _FavoriteEntry {
+  const _FavoriteEntry({required this.video});
+
+  factory _FavoriteEntry.fromJson(Map<String, dynamic> json) =>
+      _FavoriteEntry(video: Video.fromJson(json));
+
+  final Video video;
+}
+
+class _MobileSetting {
+  const _MobileSetting({
+    required this.autoPlay,
+    required this.wifiOnly,
+    required this.preferredQuality,
+  });
+
+  factory _MobileSetting.defaults() => const _MobileSetting(
+    autoPlay: true,
+    wifiOnly: false,
+    preferredQuality: 'auto',
+  );
+
+  factory _MobileSetting.fromJson(Map<String, dynamic> json) => _MobileSetting(
+    autoPlay: json['auto_play'] as bool? ?? true,
+    wifiOnly: json['wifi_only'] as bool? ?? false,
+    preferredQuality: json['preferred_quality'] as String? ?? 'auto',
+  );
+
+  final bool autoPlay;
+  final bool wifiOnly;
+  final String preferredQuality;
+
+  _MobileSetting copyWith({
+    bool? autoPlay,
+    bool? wifiOnly,
+    String? preferredQuality,
+  }) => _MobileSetting(
+    autoPlay: autoPlay ?? this.autoPlay,
+    wifiOnly: wifiOnly ?? this.wifiOnly,
+    preferredQuality: preferredQuality ?? this.preferredQuality,
+  );
+
+  Map<String, dynamic> toJson() => {
+    'auto_play': autoPlay,
+    'wifi_only': wifiOnly,
+    'preferred_quality': preferredQuality,
+  };
 }
 
 class _MobileProfile {

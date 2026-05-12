@@ -17,6 +17,10 @@ func NewRouter() http.Handler {
 	mux.HandleFunc("/api/admin/login", auth.AdminLoginHandler)
 	mux.HandleFunc("/api/mobile/login", auth.MobileLoginHandler)
 	mux.HandleFunc("/api/mobile/profile", auth.MobileProfileHandler)
+	mux.HandleFunc("/api/mobile/watch-history", video.AppWatchHistoryHandler)
+	mux.HandleFunc("/api/mobile/favorites", video.AppFavoritesHandler)
+	mux.HandleFunc("/api/mobile/favorites/", video.AppFavoriteByVideoHandler)
+	mux.HandleFunc("/api/mobile/settings", video.AppMobileSettingsHandler)
 
 	mux.HandleFunc("/api/admin/profile", admin.ProfileHandler)
 	mux.HandleFunc("/api/admin/profile/theme", admin.ProfileThemeHandler)
