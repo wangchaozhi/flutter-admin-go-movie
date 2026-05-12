@@ -15,10 +15,10 @@ class MobileLoginPage extends StatefulWidget {
 class _MobileLoginPageState extends State<MobileLoginPage> {
   final _storage = LoginStorage();
   final _usernameController = TextEditingController(text: 'user');
-  final _passwordController = TextEditingController();
+  final _passwordController = TextEditingController(text: '123456');
 
   bool _loading = false;
-  bool _remember = false;
+  bool _remember = true;
   bool _ready = false;
   String _usernameError = '';
   String _passwordError = '';
@@ -85,7 +85,9 @@ class _MobileLoginPageState extends State<MobileLoginPage> {
   }
 
   bool _validate() {
-    final usernameError = _usernameController.text.trim().isEmpty ? '请输入用户名' : '';
+    final usernameError = _usernameController.text.trim().isEmpty
+        ? '请输入用户名'
+        : '';
     final passwordError = _passwordController.text.isEmpty ? '请输入密码' : '';
     setState(() {
       _usernameError = usernameError;
@@ -96,10 +98,7 @@ class _MobileLoginPageState extends State<MobileLoginPage> {
 
   void _showMessage(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        behavior: SnackBarBehavior.floating,
-      ),
+      SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
     );
   }
 
@@ -110,6 +109,7 @@ class _MobileLoginPageState extends State<MobileLoginPage> {
     }
 
     return Scaffold(
+      backgroundColor: const Color(0xFF08111F),
       body: Stack(
         children: [
           const _LoginBackground(),
@@ -126,7 +126,8 @@ class _MobileLoginPageState extends State<MobileLoginPage> {
                     passwordError: _passwordError,
                     remember: _remember,
                     loading: _loading,
-                    onRememberChanged: (value) => setState(() => _remember = value),
+                    onRememberChanged: (value) =>
+                        setState(() => _remember = value),
                     onLogin: _login,
                   ),
                 ),
@@ -144,44 +145,14 @@ class _LoginBackground extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: const BoxDecoration(
+    return const DecoratedBox(
+      decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [Color(0xFFF8FAFC), Color(0xFFEFF6FF), Color(0xFFF0FDFA)],
-          begin: Alignment.topLeft,
+          colors: [Color(0xFF08111F), Color(0xFF102238), Color(0xFF0B2F2C)],
+          begin: Alignment.topCenter,
           end: Alignment.bottomRight,
         ),
       ),
-      child: Stack(
-        children: [
-          Positioned(
-            top: -90,
-            right: -80,
-            child: _BlurCircle(color: const Color(0x332563EB), size: 220),
-          ),
-          Positioned(
-            bottom: -70,
-            left: -70,
-            child: _BlurCircle(color: const Color(0x3314B8A6), size: 190),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _BlurCircle extends StatelessWidget {
-  const _BlurCircle({required this.color, required this.size});
-
-  final Color color;
-  final double size;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(shape: BoxShape.circle, color: color),
     );
   }
 }
@@ -210,10 +181,10 @@ class _LoginCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: Colors.white.withValues(alpha: 0.94),
-      elevation: 18,
-      shadowColor: const Color(0x1F0F172A),
-      borderRadius: BorderRadius.circular(28),
+      color: const Color(0xFFF8FAFC),
+      elevation: 22,
+      shadowColor: const Color(0x66000000),
+      borderRadius: BorderRadius.circular(24),
       child: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
@@ -221,7 +192,7 @@ class _LoginCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             const LoginHeader(),
-            const SizedBox(height: 26),
+            const SizedBox(height: 24),
             TextField(
               controller: usernameController,
               textInputAction: TextInputAction.next,
@@ -248,12 +219,58 @@ class _LoginCard extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 16),
-            SwitchListTile.adaptive(
-              value: remember,
-              contentPadding: EdgeInsets.zero,
-              title: const Text('记住密码'),
-              subtitle: const Text('下次打开自动回填账号和密码'),
-              onChanged: loading ? null : onRememberChanged,
+            InkWell(
+              borderRadius: BorderRadius.circular(14),
+              onTap: loading ? null : () => onRememberChanged(!remember),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: const Color(0xFFE5E7EB)),
+                ),
+                child: Row(
+                  children: [
+                    Checkbox(
+                      value: remember,
+                      onChanged: loading
+                          ? null
+                          : (value) => onRememberChanged(value ?? false),
+                      activeColor: const Color(0xFF25D0AB),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(5),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '记住密码',
+                            style: TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                          SizedBox(height: 2),
+                          Text(
+                            '下次打开自动回填账号和密码',
+                            style: TextStyle(
+                              color: Color(0xFF6B7280),
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const Icon(
+                      Icons.verified_user_outlined,
+                      color: Color(0xFF25D0AB),
+                    ),
+                  ],
+                ),
+              ),
             ),
             const SizedBox(height: 18),
             FilledButton.icon(
@@ -267,9 +284,12 @@ class _LoginCard extends StatelessWidget {
                   : const Icon(Icons.arrow_forward_rounded),
               label: Text(loading ? '登录中...' : '登录'),
               style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFF25D0AB),
+                foregroundColor: const Color(0xFF07110F),
                 minimumSize: const Size.fromHeight(52),
+                textStyle: const TextStyle(fontWeight: FontWeight.w900),
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: BorderRadius.circular(14),
                 ),
               ),
             ),
@@ -291,14 +311,18 @@ class _LoginCard extends StatelessWidget {
       errorText: error.isEmpty ? null : error,
       prefixIcon: Icon(icon),
       filled: true,
-      fillColor: const Color(0xFFF8FAFC),
+      fillColor: Colors.white,
       border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(14),
         borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
       ),
       enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(14),
         borderSide: const BorderSide(color: Color(0xFFE5E7EB)),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(color: Color(0xFF25D0AB), width: 1.4),
       ),
     );
   }

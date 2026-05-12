@@ -4,6 +4,7 @@ import 'package:forui/forui.dart';
 import '../core/session.dart';
 import '../features/auth/mobile_login_page.dart';
 import '../features/home/mobile_home_page.dart';
+import '../features/payment/vip_page.dart';
 import '../features/video/video_player_page.dart';
 import '../models/video.dart' as model;
 
@@ -31,6 +32,7 @@ class MobileApp extends StatelessWidget {
       routes: {
         '/login': (_) => const MobileLoginPage(),
         '/home': (_) => const MobileHomePage(),
+        '/vip': (_) => const VipPage(),
       },
       onGenerateRoute: (settings) {
         if (settings.name == '/player') {

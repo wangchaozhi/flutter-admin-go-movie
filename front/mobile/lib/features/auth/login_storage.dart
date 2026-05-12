@@ -19,11 +19,11 @@ class LoginStorage {
 
   Future<SavedLogin> load() async {
     final prefs = await SharedPreferences.getInstance();
-    final remember = prefs.getBool(_rememberKey) ?? false;
+    final remember = prefs.getBool(_rememberKey) ?? true;
 
     return SavedLogin(
       username: prefs.getString(_usernameKey) ?? 'user',
-      password: remember ? prefs.getString(_passwordKey) ?? '' : '',
+      password: remember ? prefs.getString(_passwordKey) ?? '123456' : '123456',
       remember: remember,
     );
   }

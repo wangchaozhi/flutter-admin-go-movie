@@ -7,6 +7,7 @@ import (
 	"flutter-admin-go/internal/admin"
 	"flutter-admin-go/internal/auth"
 	"flutter-admin-go/internal/common"
+	"flutter-admin-go/internal/payment"
 	"flutter-admin-go/internal/video"
 )
 
@@ -15,6 +16,7 @@ func NewRouter() http.Handler {
 
 	mux.HandleFunc("/api/admin/login", auth.AdminLoginHandler)
 	mux.HandleFunc("/api/mobile/login", auth.MobileLoginHandler)
+	mux.HandleFunc("/api/mobile/profile", auth.MobileProfileHandler)
 
 	mux.HandleFunc("/api/admin/profile", admin.ProfileHandler)
 	mux.HandleFunc("/api/admin/profile/theme", admin.ProfileThemeHandler)
@@ -30,6 +32,9 @@ func NewRouter() http.Handler {
 	// app user management (requires admin auth)
 	mux.Handle("/api/admin/app-users", requireAdminAuth(http.HandlerFunc(admin.AppUsersHandler)))
 	mux.Handle("/api/admin/app-users/", requireAdminAuth(http.HandlerFunc(admin.AppUserByIDHandler)))
+	mux.Handle("/api/admin/products", requireAdminAuth(http.HandlerFunc(payment.AdminProductsHandler)))
+	mux.Handle("/api/admin/products/", requireAdminAuth(http.HandlerFunc(payment.AdminProductByIDHandler)))
+	mux.Handle("/api/admin/orders", requireAdminAuth(http.HandlerFunc(payment.AdminOrdersHandler)))
 
 	// admin video management (requires admin auth)
 	mux.Handle("/api/admin/videos", requireAdminAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -71,6 +76,9 @@ func NewRouter() http.Handler {
 
 	// app: categories + video list / detail / play / cover / progress
 	mux.HandleFunc("/api/categories", video.AppListCategoriesHandler)
+	mux.HandleFunc("/api/products", payment.ProductsHandler)
+	mux.HandleFunc("/api/orders", payment.OrdersHandler)
+	mux.HandleFunc("/api/orders/", payment.OrderByNoHandler)
 	mux.HandleFunc("/api/videos", video.AppListVideosHandler)
 	mux.HandleFunc("/api/videos/", func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -99,6 +107,8 @@ func NewRouter() http.Handler {
 	mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
 		common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: map[string]string{"status": "up"}})
 	})
+	mux.HandleFunc("/api/webhooks/stripe", payment.StripeWebhookHandler)
+	mux.HandleFunc("/api/webhooks/paypal", payment.PayPalWebhookHandler)
 
 	return withCORS(mux)
 }

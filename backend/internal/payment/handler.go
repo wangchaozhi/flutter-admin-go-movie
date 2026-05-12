@@ -1,0 +1,408 @@
+package payment
+
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"flutter-admin-go/internal/admin"
+	"flutter-admin-go/internal/common"
+	"flutter-admin-go/internal/store"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+)
+
+type createOrderRequest struct {
+	ProductCode string `json:"product_code"`
+	Provider    string `json:"provider"`
+}
+
+type productPayload struct {
+	Code         string `json:"code"`
+	Name         string `json:"name"`
+	Description  string `json:"description"`
+	Kind         string `json:"kind"`
+	PriceCents   int    `json:"price_cents"`
+	Currency     string `json:"currency"`
+	DurationDays int    `json:"duration_days"`
+	Status       string `json:"status"`
+}
+
+func ProductsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		common.WriteJSON(w, http.StatusMethodNotAllowed, common.APIResponse{Code: 405, Msg: "method not allowed"})
+		return
+	}
+	var products []store.Product
+	if err := store.DB().Where("status = ?", "active").Order("id asc").Find(&products).Error; err != nil {
+		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
+		return
+	}
+	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: products})
+}
+
+func OrdersHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		listMobileOrders(w, r)
+		return
+	}
+	if r.Method != http.MethodPost {
+		common.WriteJSON(w, http.StatusMethodNotAllowed, common.APIResponse{Code: 405, Msg: "method not allowed"})
+		return
+	}
+	userID, ok := currentMobileUserID(r)
+	if !ok {
+		common.WriteJSON(w, http.StatusUnauthorized, common.APIResponse{Code: 401, Msg: "unauthorized"})
+		return
+	}
+
+	var req createOrderRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "invalid body"})
+		return
+	}
+	req.ProductCode = strings.TrimSpace(req.ProductCode)
+	req.Provider = strings.ToLower(strings.TrimSpace(req.Provider))
+	if req.ProductCode == "" || req.Provider == "" {
+		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "product_code and provider required"})
+		return
+	}
+
+	var product store.Product
+	if err := store.DB().Where("code = ? AND status = ?", req.ProductCode, "active").First(&product).Error; err != nil {
+		common.WriteJSON(w, http.StatusNotFound, common.APIResponse{Code: 404, Msg: "product not found"})
+		return
+	}
+	provider, err := providerFor(req.Provider, LoadConfig())
+	if err != nil {
+		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: err.Error()})
+		return
+	}
+
+	now := time.Now()
+	expiresAt := now.Add(30 * time.Minute)
+	order := store.Order{
+		OrderNo:     newOrderNo(now),
+		UserID:      userID,
+		ProductID:   product.ID,
+		Provider:    provider.Name(),
+		Status:      "pending",
+		AmountCents: product.PriceCents,
+		Currency:    product.Currency,
+		ExpiresAt:   &expiresAt,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	if err := store.DB().Create(&order).Error; err != nil {
+		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
+		return
+	}
+
+	session, err := provider.CreateCheckout(r.Context(), order, product)
+	if err != nil {
+		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: err.Error()})
+		return
+	}
+	updates := map[string]interface{}{
+		"status":            "paying",
+		"provider_order_id": session.ProviderOrderID,
+		"checkout_url":      session.CheckoutURL,
+		"updated_at":        time.Now(),
+	}
+	if err := store.DB().Model(&store.Order{}).Where("id = ?", order.ID).Updates(updates).Error; err != nil {
+		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
+		return
+	}
+	order.Status = "paying"
+	order.ProviderOrderID = session.ProviderOrderID
+	order.CheckoutURL = session.CheckoutURL
+	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: order})
+}
+
+func listMobileOrders(w http.ResponseWriter, r *http.Request) {
+	userID, ok := currentMobileUserID(r)
+	if !ok {
+		common.WriteJSON(w, http.StatusUnauthorized, common.APIResponse{Code: 401, Msg: "unauthorized"})
+		return
+	}
+	limit := 20
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	if limit > 50 {
+		limit = 50
+	}
+	var orders []store.Order
+	if err := store.DB().
+		Preload("Product").
+		Where("user_id = ?", userID).
+		Order("id desc").
+		Limit(limit).
+		Find(&orders).Error; err != nil {
+		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
+		return
+	}
+	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: orders})
+}
+
+func OrderByNoHandler(w http.ResponseWriter, r *http.Request) {
+	orderNo, action := parseOrderPath(r.URL.Path)
+	switch action {
+	case "":
+		if r.Method != http.MethodGet {
+			common.WriteJSON(w, http.StatusMethodNotAllowed, common.APIResponse{Code: 405, Msg: "method not allowed"})
+			return
+		}
+		showMobileOrder(w, r, orderNo)
+	case "mock-complete":
+		completeMockOrder(w, r, orderNo)
+	default:
+		common.WriteJSON(w, http.StatusNotFound, common.APIResponse{Code: 404, Msg: "not found"})
+	}
+}
+
+func AdminProductsHandler(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		var products []store.Product
+		if err := store.DB().Order("id asc").Find(&products).Error; err != nil {
+			common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
+			return
+		}
+		common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: products})
+	case http.MethodPost:
+		saveProduct(w, r, 0)
+	default:
+		common.WriteJSON(w, http.StatusMethodNotAllowed, common.APIResponse{Code: 405, Msg: "method not allowed"})
+	}
+}
+
+func AdminProductByIDHandler(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(strings.TrimPrefix(r.URL.Path, "/api/admin/products/"))
+	if err != nil {
+		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "invalid id"})
+		return
+	}
+	switch r.Method {
+	case http.MethodPut:
+		saveProduct(w, r, id)
+	default:
+		common.WriteJSON(w, http.StatusMethodNotAllowed, common.APIResponse{Code: 405, Msg: "method not allowed"})
+	}
+}
+
+func AdminOrdersHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		common.WriteJSON(w, http.StatusMethodNotAllowed, common.APIResponse{Code: 405, Msg: "method not allowed"})
+		return
+	}
+	var orders []store.Order
+	query := store.DB().Preload("Product").Order("id desc").Limit(200)
+	if status := strings.TrimSpace(r.URL.Query().Get("status")); status != "" {
+		query = query.Where("status = ?", status)
+	}
+	if err := query.Find(&orders).Error; err != nil {
+		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
+		return
+	}
+	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: orders})
+}
+
+func StripeWebhookHandler(w http.ResponseWriter, r *http.Request) {
+	raw, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "read body failed"})
+		return
+	}
+	if LoadConfig().StripeWebhookKey == "" {
+		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "STRIPE_WEBHOOK_SECRET is not configured"})
+		return
+	}
+	_ = raw
+	common.WriteJSON(w, http.StatusNotImplemented, common.APIResponse{Code: 501, Msg: "stripe webhook verification is not implemented yet"})
+}
+
+func PayPalWebhookHandler(w http.ResponseWriter, r *http.Request) {
+	raw, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "read body failed"})
+		return
+	}
+	if LoadConfig().PayPalWebhookID == "" {
+		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "PAYPAL_WEBHOOK_ID is not configured"})
+		return
+	}
+	_ = raw
+	common.WriteJSON(w, http.StatusNotImplemented, common.APIResponse{Code: 501, Msg: "paypal webhook verification is not implemented yet"})
+}
+
+func saveProduct(w http.ResponseWriter, r *http.Request, id int) {
+	var req productPayload
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "invalid body"})
+		return
+	}
+	req.Code = strings.TrimSpace(req.Code)
+	req.Name = strings.TrimSpace(req.Name)
+	req.Kind = strings.TrimSpace(req.Kind)
+	req.Currency = strings.ToUpper(strings.TrimSpace(req.Currency))
+	req.Status = strings.TrimSpace(req.Status)
+	if req.Code == "" || req.Name == "" || req.PriceCents <= 0 {
+		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "code, name and positive price required"})
+		return
+	}
+	if req.Kind == "" {
+		req.Kind = "vip"
+	}
+	if req.Currency == "" {
+		req.Currency = LoadConfig().DefaultCurrency
+	}
+	if req.Status == "" {
+		req.Status = "active"
+	}
+	product := store.Product{
+		Code:         req.Code,
+		Name:         req.Name,
+		Description:  req.Description,
+		Kind:         req.Kind,
+		PriceCents:   req.PriceCents,
+		Currency:     req.Currency,
+		DurationDays: req.DurationDays,
+		Status:       req.Status,
+		UpdatedAt:    time.Now(),
+	}
+	if id == 0 {
+		product.CreatedAt = time.Now()
+		if err := store.DB().Create(&product).Error; err != nil {
+			common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
+			return
+		}
+		common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: product})
+		return
+	}
+	if err := store.DB().Model(&store.Product{}).Where("id = ?", id).Updates(product).Error; err != nil {
+		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
+		return
+	}
+	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok"})
+}
+
+func showMobileOrder(w http.ResponseWriter, r *http.Request, orderNo string) {
+	userID, ok := currentMobileUserID(r)
+	if !ok {
+		common.WriteJSON(w, http.StatusUnauthorized, common.APIResponse{Code: 401, Msg: "unauthorized"})
+		return
+	}
+	var order store.Order
+	err := store.DB().Preload("Product").Where("order_no = ? AND user_id = ?", orderNo, userID).First(&order).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		common.WriteJSON(w, http.StatusNotFound, common.APIResponse{Code: 404, Msg: "not found"})
+		return
+	}
+	if err != nil {
+		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
+		return
+	}
+	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: order})
+}
+
+func completeMockOrder(w http.ResponseWriter, r *http.Request, orderNo string) {
+	if !LoadConfig().MockEnabled {
+		common.WriteJSON(w, http.StatusNotFound, common.APIResponse{Code: 404, Msg: "not found"})
+		return
+	}
+	if err := markOrderPaid(orderNo, "mock_payment_"+orderNo); err != nil {
+		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: err.Error()})
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("<!doctype html><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Payment Complete</title><body><h1>Payment Complete</h1><p>You can return to the app.</p></body>"))
+}
+
+func markOrderPaid(orderNo string, paymentID string) error {
+	return store.DB().Transaction(func(tx *gorm.DB) error {
+		var order store.Order
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("order_no = ?", orderNo).First(&order).Error; err != nil {
+			return err
+		}
+		if order.Status == "paid" {
+			return nil
+		}
+		if order.Status != "paying" && order.Status != "pending" {
+			return fmt.Errorf("order cannot be paid from status %s", order.Status)
+		}
+		var product store.Product
+		if err := tx.First(&product, order.ProductID).Error; err != nil {
+			return err
+		}
+		now := time.Now()
+		if err := tx.Model(&store.Order{}).Where("id = ?", order.ID).Updates(map[string]interface{}{
+			"status":              "paid",
+			"provider_payment_id": paymentID,
+			"paid_at":             now,
+			"updated_at":          now,
+		}).Error; err != nil {
+			return err
+		}
+		if product.Kind == "vip" && product.DurationDays > 0 {
+			var user store.MobileUser
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&user, order.UserID).Error; err != nil {
+				return err
+			}
+			base := now
+			if user.VIPUntil != nil && user.VIPUntil.After(now) {
+				base = *user.VIPUntil
+			}
+			vipUntil := base.AddDate(0, 0, product.DurationDays)
+			if err := tx.Model(&store.MobileUser{}).Where("id = ?", user.ID).Updates(map[string]interface{}{
+				"vip_until":  vipUntil,
+				"updated_at": now,
+			}).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func currentMobileUserID(r *http.Request) (int, bool) {
+	raw := strings.TrimSpace(r.Header.Get("Authorization"))
+	raw = strings.TrimPrefix(raw, "Bearer ")
+	if raw == "" {
+		return 0, false
+	}
+	claims, err := admin.ParseMobileToken(raw)
+	if err != nil {
+		return 0, false
+	}
+	return claims.UserID, true
+}
+
+func parseOrderPath(path string) (string, string) {
+	trimmed := strings.Trim(strings.TrimPrefix(path, "/api/orders/"), "/")
+	parts := strings.Split(trimmed, "/")
+	if len(parts) == 0 {
+		return "", ""
+	}
+	if len(parts) == 1 {
+		return parts[0], ""
+	}
+	return parts[0], parts[1]
+}
+
+func newOrderNo(now time.Time) string {
+	var b [4]byte
+	_, _ = rand.Read(b[:])
+	return "ORD" + now.Format("20060102150405") + strings.ToUpper(hex.EncodeToString(b[:]))
+}

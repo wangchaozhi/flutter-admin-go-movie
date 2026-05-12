@@ -1,4 +1,4 @@
-export type Entity = 'users' | 'roles' | 'menus' | 'videos' | 'categories' | 'app-users'
+export type Entity = 'users' | 'roles' | 'menus' | 'videos' | 'categories' | 'app-users' | 'payments'
 
 export type VideoStatus = 'uploading' | 'uploaded' | 'transcoding' | 'ready' | 'failed' | 'offline'
 
@@ -119,6 +119,34 @@ export type AppUserForm = {
   nickname: string
   email: string
   status: 'active' | 'banned'
+}
+
+export type Product = {
+  id: number
+  code: string
+  name: string
+  description: string
+  kind: 'vip' | 'video'
+  price_cents: number
+  currency: string
+  duration_days: number
+  status: 'active' | 'inactive'
+}
+
+export type Order = {
+  id: number
+  order_no: string
+  user_id: number
+  provider: 'stripe' | 'paypal' | 'mock'
+  status: 'pending' | 'paying' | 'paid' | 'failed' | 'cancelled' | 'refunded'
+  amount_cents: number
+  currency: string
+  provider_order_id: string
+  provider_payment_id: string
+  checkout_url: string
+  paid_at: string | null
+  created_at: string
+  product?: Product
 }
 
 export type UserForm = Omit<User, 'id'> & { id?: number; password: string }

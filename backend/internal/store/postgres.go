@@ -109,14 +109,15 @@ func (AdminMenu) TableName() string {
 }
 
 type MobileUser struct {
-	ID        int       `gorm:"primaryKey;column:id"   json:"id"`
-	Username  string    `gorm:"column:username"        json:"username"`
-	Password  string    `gorm:"column:password"        json:"-"`
-	Nickname  string    `gorm:"column:nickname"        json:"nickname"`
-	Email     string    `gorm:"column:email"           json:"email"`
-	Status    string    `gorm:"column:status"          json:"status"`
-	CreatedAt time.Time `gorm:"column:created_at"      json:"created_at"`
-	UpdatedAt time.Time `gorm:"column:updated_at"      json:"updated_at"`
+	ID        int        `gorm:"primaryKey;column:id"   json:"id"`
+	Username  string     `gorm:"column:username"        json:"username"`
+	Password  string     `gorm:"column:password"        json:"-"`
+	Nickname  string     `gorm:"column:nickname"        json:"nickname"`
+	Email     string     `gorm:"column:email"           json:"email"`
+	Status    string     `gorm:"column:status"          json:"status"`
+	VIPUntil  *time.Time `gorm:"column:vip_until"       json:"vip_until"`
+	CreatedAt time.Time  `gorm:"column:created_at"      json:"created_at"`
+	UpdatedAt time.Time  `gorm:"column:updated_at"      json:"updated_at"`
 }
 
 func (MobileUser) TableName() string {

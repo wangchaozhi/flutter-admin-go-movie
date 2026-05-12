@@ -12,6 +12,7 @@ dependencies:
   cupertino_icons: ^1.0.8
   http: ^1.2.2
   shared_preferences: ^2.3.3
+  url_launcher: ^6.3.1
   forui: ^0.21.3
   media_kit: ^1.1.11
   media_kit_video: ^1.2.4

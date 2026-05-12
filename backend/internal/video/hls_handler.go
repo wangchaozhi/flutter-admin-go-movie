@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"flutter-admin-go/internal/admin"
 	"flutter-admin-go/internal/common"
@@ -136,7 +137,13 @@ func AppPlayHandler(w http.ResponseWriter, r *http.Request) {
 
 	// VIP-only videos require a valid mobile token
 	if v.IsVip && !v.IsFree {
-		if _, ok := parseMobileAuth(r); !ok {
+		userID, ok := parseMobileAuth(r)
+		if !ok {
+			common.WriteJSON(w, http.StatusForbidden, common.APIResponse{Code: 403, Msg: "vip required"})
+			return
+		}
+		var user store.MobileUser
+		if err := store.DB().First(&user, userID).Error; err != nil || user.VIPUntil == nil || user.VIPUntil.Before(time.Now()) {
 			common.WriteJSON(w, http.StatusForbidden, common.APIResponse{Code: 403, Msg: "vip required"})
 			return
 		}

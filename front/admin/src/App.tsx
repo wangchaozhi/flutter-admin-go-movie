@@ -4,6 +4,7 @@ import {
   BadgeCheck,
   ChevronRight,
   Clapperboard,
+  CreditCard,
   FolderOpen,
   KeyRound,
   LogOut,
@@ -39,6 +40,7 @@ import { ConfirmDialog } from './components/confirm'
 import { AppUserManagementSection } from './features/appUsers'
 import { CategoryManagementSection } from './features/categories'
 import { MenuManagementSection, buildMenuTree } from './features/menus'
+import { PaymentManagementSection } from './features/payments'
 import { RoleManagementSection } from './features/roles'
 import { UserManagementSection } from './features/users'
 import { VideoManagementSection } from './features/videos'
@@ -71,6 +73,7 @@ const tabs: Array<{ key: Entity; label: string; icon: typeof Users }> = [
   { key: 'app-users', label: 'App 用户', icon: Smartphone },
   { key: 'categories', label: '类别', icon: FolderOpen },
   { key: 'videos', label: '视频', icon: Clapperboard },
+  { key: 'payments', label: '支付', icon: CreditCard },
 ]
 
 const adminRememberKey = 'admin.remember'
@@ -356,7 +359,8 @@ function AdminDashboard({
         .filter((tab) => tab.key !== 'menus' || menuPaths.has('/system/menu'))
         .filter((tab) => tab.key !== 'app-users' || menuPaths.has('/app-users') || menuPaths.size === 0)
         .filter((tab) => tab.key !== 'categories' || menuPaths.has('/categories') || menuPaths.size === 0)
-        .filter((tab) => tab.key !== 'videos' || menuPaths.has('/videos') || menuPaths.size === 0),
+        .filter((tab) => tab.key !== 'videos' || menuPaths.has('/videos') || menuPaths.size === 0)
+        .filter((tab) => tab.key !== 'payments' || menuPaths.has('/payments') || menuPaths.size === 0),
     [menuPaths],
   )
   const can = (permission: string) => permissions.has(permission)
@@ -723,6 +727,10 @@ function AdminDashboard({
 
         {active === 'videos' && (
           <VideoManagementSection token={session.token} can={can} />
+        )}
+
+        {active === 'payments' && (
+          <PaymentManagementSection token={session.token} can={can} />
         )}
       </section>
 
