@@ -2,3 +2,6 @@
 .vscode/
 .DS_Store
 data/
+
+# Go / Delve / IDE：调试时在包目录下生成的临时可执行文件
+**/__debug_bin*
