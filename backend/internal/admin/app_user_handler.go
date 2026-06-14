@@ -35,9 +35,14 @@ func AppUsersHandler(w http.ResponseWriter, r *http.Request) {
 			common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "username and password required"})
 			return
 		}
+		hashed, err := HashPassword(req.Password)
+		if err != nil {
+			common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: "hash password failed"})
+			return
+		}
 		u := &store.MobileUser{
 			Username: req.Username,
-			Password: req.Password,
+			Password: hashed,
 			Nickname: req.Nickname,
 			Email:    req.Email,
 			Status:   "active",
@@ -83,7 +88,12 @@ func AppUserByIDHandler(w http.ResponseWriter, r *http.Request) {
 			updates["email"] = *req.Email
 		}
 		if req.Password != nil && *req.Password != "" {
-			updates["password"] = *req.Password
+			hashed, err := HashPassword(*req.Password)
+			if err != nil {
+				common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: "hash password failed"})
+				return
+			}
+			updates["password"] = hashed
 		}
 		if req.Status != nil {
 			updates["status"] = *req.Status

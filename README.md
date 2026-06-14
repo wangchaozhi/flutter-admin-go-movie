@@ -151,28 +151,86 @@ flutter run
 user / 123456
 ```
 
+## 认证与安全
+
+- 管理端和移动端登录均返回 **签名 JWT**，请求时通过 `Authorization: Bearer <token>` 携带。管理端 token 12 小时过期，移动端 30 天。
+- 密码使用 **bcrypt** 哈希存储；登录时按哈希比对（同时兼容尚未迁移的旧明文行，迁移 `012_hash_passwords.sql` 会把种子密码转为哈希）。
+- 生产环境务必设置 `JWT_SECRET` 与 `HLS_SECRET`。
+- CORS 默认在 `local`/`dev` 放开（`allowed_origins: ["*"]`），生产环境应在 `config/prod.yml` 的 `allowed_origins` 或环境变量 `CORS_ALLOWED_ORIGINS`（逗号分隔）中配置白名单。
+
 ## 后端接口
 
+认证相关：
+
 ```text
-POST   /api/admin/login
+POST   /api/admin/login                 # 管理端登录，返回 JWT
+POST   /api/mobile/login                # 移动端登录，返回 JWT
+GET    /api/health                      # 健康检查
+```
+
+管理端 - 个人资料（需管理员 JWT）：
+
+```text
 GET    /api/admin/profile
 PUT    /api/admin/profile/theme
 POST   /api/admin/profile/avatar
-GET    /api/admin/profile/assets/avatar
-GET    /api/admin/profile/assets/thumbnail
-POST   /api/mobile/login
-GET    /api/admin/users
-POST   /api/admin/users
-PUT    /api/admin/users/{id}
-DELETE /api/admin/users/{id}
-GET    /api/admin/roles
-POST   /api/admin/roles
-PUT    /api/admin/roles/{id}
-DELETE /api/admin/roles/{id}
-GET    /api/admin/menus
-POST   /api/admin/menus
-PUT    /api/admin/menus/{id}
-DELETE /api/admin/menus/{id}
+GET    /api/admin/profile/assets/{avatar|thumbnail}
+```
+
+管理端 - RBAC（按按钮权限校验）：
+
+```text
+GET|POST          /api/admin/users
+PUT|DELETE        /api/admin/users/{id}
+GET|POST          /api/admin/roles
+PUT|DELETE        /api/admin/roles/{id}
+GET|POST          /api/admin/menus
+PUT|DELETE        /api/admin/menus/{id}
+```
+
+管理端 - 业务管理（需管理员 JWT）：
+
+```text
+GET|POST          /api/admin/app-users
+PUT|DELETE        /api/admin/app-users/{id}
+GET|POST          /api/admin/products
+PUT|DELETE        /api/admin/products/{id}
+GET               /api/admin/orders
+GET|POST          /api/admin/videos
+GET|PUT|DELETE    /api/admin/videos/{id}
+POST              /api/admin/videos/{id}/upload
+POST              /api/admin/videos/{id}/cover
+GET|POST          /api/admin/videos/{id}/transcode
+GET|POST          /api/admin/categories
+PUT|DELETE        /api/admin/categories/{id}
+```
+
+移动端（需移动端 JWT）：
+
+```text
+GET               /api/mobile/profile
+GET|POST          /api/mobile/watch-history
+GET|POST          /api/mobile/favorites
+DELETE            /api/mobile/favorites/{videoId}
+GET|PUT           /api/mobile/settings
+```
+
+App 公开 / 播放：
+
+```text
+GET    /api/categories
+GET    /api/products
+POST   /api/orders
+GET    /api/orders/{orderNo}
+GET    /api/videos
+GET    /api/videos/{id}
+GET    /api/videos/{id}/play
+GET    /api/videos/{id}/cover
+POST   /api/videos/{id}/progress
+GET    /api/hls/{...}/master.m3u8
+GET    /api/hls/{...}/index.m3u8
+POST   /api/webhooks/stripe
+POST   /api/webhooks/paypal
 ```
 
 统一响应格式：

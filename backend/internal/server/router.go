@@ -7,6 +7,7 @@ import (
 	"flutter-admin-go/internal/admin"
 	"flutter-admin-go/internal/auth"
 	"flutter-admin-go/internal/common"
+	"flutter-admin-go/internal/config"
 	"flutter-admin-go/internal/payment"
 	"flutter-admin-go/internal/video"
 )
@@ -128,8 +129,22 @@ func requireAdminAuth(next http.Handler) http.Handler {
 }
 
 func withCORS(next http.Handler) http.Handler {
+	allowed := config.Load().AllowedOrigins
+	allowAll := false
+	for _, o := range allowed {
+		if o == "*" {
+			allowAll = true
+			break
+		}
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		origin := r.Header.Get("Origin")
+		if allowAll {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		} else if origin != "" && originAllowed(origin, allowed) {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Add("Vary", "Origin")
+		}
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		if r.Method == http.MethodOptions {
@@ -138,4 +153,13 @@ func withCORS(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func originAllowed(origin string, allowed []string) bool {
+	for _, o := range allowed {
+		if o == origin {
+			return true
+		}
+	}
+	return false
 }
