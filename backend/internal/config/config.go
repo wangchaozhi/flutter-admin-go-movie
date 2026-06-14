@@ -20,15 +20,16 @@ const (
 )
 
 type Config struct {
-	Env      Env            `yaml:"env"`
-	HTTPAddr string         `yaml:"http_addr"`
-	Database DatabaseConfig `yaml:"database"`
-	Redis    RedisConfig    `yaml:"redis"`
-	MinIO    MinIOConfig    `yaml:"minio"`
-	Video    VideoConfig    `yaml:"video"`
-	Auth     AuthConfig     `yaml:"auth"`
-	Payment  PaymentConfig  `yaml:"payment"`
-	Worker   WorkerConfig   `yaml:"worker"`
+	Env            Env            `yaml:"env"`
+	HTTPAddr       string         `yaml:"http_addr"`
+	AllowedOrigins []string       `yaml:"allowed_origins"`
+	Database       DatabaseConfig `yaml:"database"`
+	Redis          RedisConfig    `yaml:"redis"`
+	MinIO          MinIOConfig    `yaml:"minio"`
+	Video          VideoConfig    `yaml:"video"`
+	Auth           AuthConfig     `yaml:"auth"`
+	Payment        PaymentConfig  `yaml:"payment"`
+	Worker         WorkerConfig   `yaml:"worker"`
 }
 
 type DatabaseConfig struct {
@@ -157,8 +158,9 @@ func findConfigFile(env Env) (string, bool) {
 
 func localDefaults() Config {
 	return Config{
-		Env:      EnvLocal,
-		HTTPAddr: ":8080",
+		Env:            EnvLocal,
+		HTTPAddr:       ":8080",
+		AllowedOrigins: []string{"*"},
 		Database: DatabaseConfig{
 			DSN: "host=localhost port=5432 user=admin_go password=admin_go_password dbname=flutter_admin_go sslmode=disable TimeZone=Asia/Shanghai",
 		},
@@ -192,6 +194,9 @@ func localDefaults() Config {
 
 func applyEnvOverrides(cfg *Config) {
 	cfg.HTTPAddr = envOr("HTTP_ADDR", cfg.HTTPAddr)
+	if origins := envList("CORS_ALLOWED_ORIGINS"); len(origins) > 0 {
+		cfg.AllowedOrigins = origins
+	}
 	cfg.Database.DSN = envOr("DATABASE_DSN", cfg.Database.DSN)
 	cfg.Redis.Addr = envOr("REDIS_ADDR", cfg.Redis.Addr)
 
@@ -229,6 +234,22 @@ func envOr(key, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+// envList parses a comma-separated environment variable into a trimmed slice.
+func envList(key string) []string {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if v := strings.TrimSpace(part); v != "" {
+			result = append(result, v)
+		}
+	}
+	return result
 }
 
 func envBool(key string, fallback bool) bool {

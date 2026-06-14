@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (Go)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache: true
+          cache-dependency-path: backend/go.sum
+
+      - name: Verify go.mod is tidy
+        working-directory: backend
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
+      - name: Vet
+        working-directory: backend
+        run: go vet ./...
+
+      - name: Test
+        working-directory: backend
+        run: go test ./...
+
+      - name: Build
+        working-directory: backend
+        run: go build ./...
+
+  admin-web:
+    name: Admin web (React)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: front/admin/package-lock.json
+
+      - name: Install dependencies
+        working-directory: front/admin
+        run: npm ci
+
+      - name: Build
+        working-directory: front/admin
+        run: npm run build
+
+  mobile:
+    name: Mobile (Flutter)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        working-directory: front/mobile
+        run: flutter pub get
+
+      - name: Analyze
+        working-directory: front/mobile
+        run: flutter analyze
+
+      - name: Test
+        working-directory: front/mobile
+        run: flutter test

@@ -61,8 +61,13 @@ func AdminLoginHandler(w http.ResponseWriter, r *http.Request) {
 		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
 		return
 	}
+	token, err := admin.BuildAdminToken(req.Username)
+	if err != nil {
+		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: "token generation failed"})
+		return
+	}
 	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: LoginResponse{
-		Token:        admin.BuildAdminToken(req.Username),
+		Token:        token,
 		Username:     req.Username,
 		Client:       "admin",
 		MenuPaths:    profile.MenuPaths,
