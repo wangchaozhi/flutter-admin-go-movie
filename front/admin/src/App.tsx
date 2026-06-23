@@ -76,6 +76,44 @@ const tabs: Array<{ key: Entity; label: string; icon: typeof Users }> = [
   { key: 'payments', label: '支付', icon: CreditCard },
 ]
 
+const pageHeaders: Record<Entity, { eyebrow: string; title: string; subtitle: string }> = {
+  users: {
+    eyebrow: '权限中心',
+    title: '管理员',
+    subtitle: '维护后台登录账号、昵称和角色分配。',
+  },
+  roles: {
+    eyebrow: '权限中心',
+    title: '角色',
+    subtitle: '配置角色可访问的菜单和按钮权限。',
+  },
+  menus: {
+    eyebrow: '权限中心',
+    title: '菜单',
+    subtitle: '维护后台导航结构、路由和权限标识。',
+  },
+  'app-users': {
+    eyebrow: '用户中心',
+    title: 'App 用户',
+    subtitle: '管理移动端用户资料、状态和登录密码。',
+  },
+  categories: {
+    eyebrow: '内容中心',
+    title: '类别',
+    subtitle: '整理视频分类和前台内容筛选入口。',
+  },
+  videos: {
+    eyebrow: '内容中心',
+    title: '视频',
+    subtitle: '管理视频资料、封面、上传和转码状态。',
+  },
+  payments: {
+    eyebrow: '商业中心',
+    title: '支付',
+    subtitle: '查看套餐、订单和支付处理状态。',
+  },
+}
+
 const adminRememberKey = 'admin.remember'
 const adminUsernameKey = 'admin.username'
 const adminPasswordKey = 'admin.password'
@@ -363,6 +401,7 @@ function AdminDashboard({
         .filter((tab) => tab.key !== 'payments' || menuPaths.has('/payments') || menuPaths.size === 0),
     [menuPaths],
   )
+  const activeHeader = pageHeaders[active]
   const can = (permission: string) => permissions.has(permission)
 
   async function loadAll() {
@@ -620,9 +659,9 @@ function AdminDashboard({
       <section className="workspace">
         <header className="toolbar">
           <div>
-            <p className="eyebrow">权限中心</p>
-            <h1>用户、菜单、角色管理</h1>
-            <p className="toolbar-subtitle">PostgreSQL + GORM 驱动的后台权限面板。</p>
+            <p className="eyebrow">{activeHeader.eyebrow}</p>
+            <h1>{activeHeader.title}</h1>
+            <p className="toolbar-subtitle">{activeHeader.subtitle}</p>
           </div>
           <div className="toolbar-actions">
             <button className="ghost-button" type="button" onClick={loadAll}>
