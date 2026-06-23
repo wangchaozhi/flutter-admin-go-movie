@@ -1,8 +1,13 @@
 package video
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/minio/minio-go/v7"
 )
 
 func TestBuildTranscodeArgsLibx264(t *testing.T) {
@@ -179,6 +184,57 @@ func TestParseAvailableTranscodeQualityNames(t *testing.T) {
 	got := parseAvailableTranscodeQualityNames("selected transcode qualities are not available for source; available: 360p, 480p, 720p")
 	if strings.Join(got, ",") != "360p,480p,720p" {
 		t.Fatalf("available qualities = %#v", got)
+	}
+}
+
+func TestSourceCacheFileNameUsesSafeETag(t *testing.T) {
+	got := sourceCacheFileName(minio.ObjectInfo{ETag: `"abc/def:ghi"`})
+	if got != "abc_def_ghi.mp4" {
+		t.Fatalf("cache filename = %q, want abc_def_ghi.mp4", got)
+	}
+}
+
+func TestSourceCacheFileNameFallsBackWhenETagMissing(t *testing.T) {
+	got := sourceCacheFileName(minio.ObjectInfo{
+		Size:         42,
+		LastModified: time.Unix(123, 456),
+	})
+	if got != "42_123000000456.mp4" {
+		t.Fatalf("cache filename = %q, want 42_123000000456.mp4", got)
+	}
+}
+
+func TestSourceCacheFileUsableChecksSize(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "source.mp4")
+	if err := os.WriteFile(path, []byte("abc"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if !sourceCacheFileUsable(path, 3) {
+		t.Fatal("expected cache file to be usable with matching size")
+	}
+	if sourceCacheFileUsable(path, 4) {
+		t.Fatal("expected cache file to be rejected with mismatched size")
+	}
+}
+
+func TestPruneSourceCacheKeepsCurrentFile(t *testing.T) {
+	dir := t.TempDir()
+	keep := filepath.Join(dir, "keep.mp4")
+	stale := filepath.Join(dir, "stale.mp4")
+	if err := os.WriteFile(keep, []byte("keep"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stale, []byte("stale"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	pruneSourceCache(dir, "keep.mp4")
+
+	if _, err := os.Stat(keep); err != nil {
+		t.Fatalf("expected current cache file to remain: %v", err)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("expected stale cache file to be removed, got err=%v", err)
 	}
 }
 

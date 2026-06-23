@@ -53,6 +53,8 @@ type masterPlaylistEntry struct {
 var (
 	transcodeEncoderOnce sync.Once
 	cachedEncoder        transcodeEncoder
+	videoTranscodeLocks  sync.Map
+	sourceCacheLocks     sync.Map
 )
 
 func HandleTranscodeTask(ctx context.Context, t *asynq.Task) error {
@@ -76,7 +78,7 @@ func HandleTranscodeTask(ctx context.Context, t *asynq.Task) error {
 		mergeMaster = true
 	}
 
-	duration, err := runTranscode(ctx, p.VideoID, requestedQualities, mergeMaster)
+	duration, err := runTranscodeForTask(ctx, p.VideoID, p.TaskID, requestedQualities, mergeMaster)
 	if err != nil {
 		errMsg := err.Error()
 		fin := time.Now()
@@ -104,6 +106,21 @@ func HandleTranscodeTask(ctx context.Context, t *asynq.Task) error {
 	})
 	finalizeTranscodeBatch(p.VideoID, p.TaskID, p.PreviousStatus)
 	return nil
+}
+
+func runTranscodeForTask(ctx context.Context, videoID, taskID int64, requestedQualities []string, mergeExisting bool) (int, error) {
+	lock := videoTranscodeLock(videoID)
+	log.Printf("transcode video lock wait: video_id=%d task_id=%d", videoID, taskID)
+	lock.Lock()
+	defer lock.Unlock()
+
+	log.Printf("transcode video lock acquired: video_id=%d task_id=%d", videoID, taskID)
+	return runTranscode(ctx, videoID, requestedQualities, mergeExisting)
+}
+
+func videoTranscodeLock(videoID int64) *sync.Mutex {
+	lock, _ := videoTranscodeLocks.LoadOrStore(videoID, &sync.Mutex{})
+	return lock.(*sync.Mutex)
 }
 
 func finalizeTranscodeBatch(videoID, taskID int64, previousStatus string) {
@@ -158,10 +175,10 @@ func runTranscode(ctx context.Context, videoID int64, requestedQualities []strin
 	}
 	defer os.RemoveAll(tmpDir)
 
-	srcPath := filepath.Join(tmpDir, "source.mp4")
 	srcKey := fmt.Sprintf("originals/%d/source.mp4", videoID)
-	if err := downloadFromMinio(ctx, srcKey, srcPath); err != nil {
-		return 0, fmt.Errorf("download source: %w", err)
+	srcPath, err := cachedSourcePath(ctx, videoID, srcKey, tmpRoot)
+	if err != nil {
+		return 0, err
 	}
 
 	qualities, err := selectRequestedTranscodeQualities(probeSourceSize(srcPath), requestedQualities)
@@ -209,6 +226,113 @@ func runTranscode(ctx context.Context, videoID int64, requestedQualities []strin
 
 	log.Printf("transcode done: video_id=%d duration=%ds", videoID, duration)
 	return duration, nil
+}
+
+func cachedSourcePath(ctx context.Context, videoID int64, srcKey, tmpRoot string) (string, error) {
+	info, err := store.ObjectClient().StatObject(ctx, store.VideoBucket(), srcKey, minio.StatObjectOptions{})
+	if err != nil {
+		return "", fmt.Errorf("stat source: %w", err)
+	}
+
+	cacheRoot := sourceCacheRoot(tmpRoot)
+	videoCacheDir := filepath.Join(cacheRoot, strconv.FormatInt(videoID, 10))
+	cachePath := filepath.Join(videoCacheDir, sourceCacheFileName(info))
+	lock := sourceCacheLock(cachePath)
+	lock.Lock()
+	defer lock.Unlock()
+
+	if sourceCacheFileUsable(cachePath, info.Size) {
+		log.Printf("transcode source cache hit: video_id=%d path=%s", videoID, cachePath)
+		return cachePath, nil
+	}
+
+	if err := os.MkdirAll(videoCacheDir, 0755); err != nil {
+		return "", fmt.Errorf("create source cache dir: %w", err)
+	}
+	tmp, err := os.CreateTemp(videoCacheDir, ".source_*.mp4")
+	if err != nil {
+		return "", fmt.Errorf("create source cache temp: %w", err)
+	}
+	tmpPath := tmp.Name()
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return "", fmt.Errorf("close source cache temp: %w", err)
+	}
+	defer os.Remove(tmpPath)
+
+	if err := downloadFromMinio(ctx, srcKey, tmpPath); err != nil {
+		return "", fmt.Errorf("download source: %w", err)
+	}
+	if !sourceCacheFileUsable(tmpPath, info.Size) {
+		return "", fmt.Errorf("downloaded source cache size mismatch")
+	}
+	if err := os.Remove(cachePath); err != nil && !os.IsNotExist(err) {
+		return "", fmt.Errorf("replace source cache: %w", err)
+	}
+	if err := os.Rename(tmpPath, cachePath); err != nil {
+		return "", fmt.Errorf("move source cache: %w", err)
+	}
+	pruneSourceCache(videoCacheDir, filepath.Base(cachePath))
+	log.Printf("transcode source cached: video_id=%d path=%s", videoID, cachePath)
+	return cachePath, nil
+}
+
+func sourceCacheRoot(tmpRoot string) string {
+	tmpRoot = strings.TrimSpace(tmpRoot)
+	if tmpRoot != "" {
+		return filepath.Join(tmpRoot, "source-cache")
+	}
+	return filepath.Join(os.TempDir(), "flutter-admin-go-transcode-source-cache")
+}
+
+func sourceCacheLock(cachePath string) *sync.Mutex {
+	lock, _ := sourceCacheLocks.LoadOrStore(cachePath, &sync.Mutex{})
+	return lock.(*sync.Mutex)
+}
+
+func sourceCacheFileName(info minio.ObjectInfo) string {
+	token := strings.Trim(info.ETag, `"`)
+	if token == "" {
+		token = fmt.Sprintf("%d_%d", info.Size, info.LastModified.UnixNano())
+	}
+	return sanitizeCacheToken(token) + ".mp4"
+}
+
+func sanitizeCacheToken(token string) string {
+	var b strings.Builder
+	for _, r := range token {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('_')
+		}
+	}
+	value := strings.Trim(b.String(), "_")
+	if value == "" {
+		return "source"
+	}
+	return value
+}
+
+func sourceCacheFileUsable(path string, wantSize int64) bool {
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return false
+	}
+	return wantSize <= 0 || info.Size() == wantSize
+}
+
+func pruneSourceCache(videoCacheDir, keepName string) {
+	entries, err := os.ReadDir(videoCacheDir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || entry.Name() == keepName {
+			continue
+		}
+		_ = os.Remove(filepath.Join(videoCacheDir, entry.Name()))
+	}
 }
 
 func persistCompletedMaster(ctx context.Context, videoID int64, qualities []transcodeQuality, mergeExisting bool) {
