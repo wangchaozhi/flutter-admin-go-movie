@@ -4,9 +4,15 @@ import '../../../models/video.dart';
 import '../models/home_models.dart';
 
 class HomeTopBar extends StatelessWidget {
-  const HomeTopBar({super.key, required this.username, required this.onLogout});
+  const HomeTopBar({
+    super.key,
+    required this.username,
+    required this.onOpenVip,
+    required this.onLogout,
+  });
 
   final String username;
+  final VoidCallback onOpenVip;
   final VoidCallback onLogout;
 
   void _openProfile(BuildContext context) {
@@ -56,7 +62,7 @@ class HomeTopBar extends StatelessWidget {
                 case _UserMenuAction.profile:
                   _openProfile(context);
                 case _UserMenuAction.vip:
-                  Navigator.pushNamed(context, '/vip');
+                  onOpenVip();
                 case _UserMenuAction.logout:
                   onLogout();
               }

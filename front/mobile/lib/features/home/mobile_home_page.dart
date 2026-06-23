@@ -105,6 +105,15 @@ class _MobileHomePageState extends State<MobileHomePage> {
     Navigator.pushNamed(context, '/player', arguments: video);
   }
 
+  Future<void> _openVipAndRefreshProfile() async {
+    await Navigator.pushNamed(context, '/vip');
+    if (!mounted) return;
+    await _loadProfile();
+    if (_profileLoaded) {
+      await _loadOrders();
+    }
+  }
+
   Future<void> _loadProfileCenter({bool force = false}) async {
     if (_profileLoaded && !force) return;
     if (!mounted) return;
@@ -317,10 +326,11 @@ class _MobileHomePageState extends State<MobileHomePage> {
     switch (index) {
       case 1:
         if (!_favoritesLoaded) _loadFavorites();
+        if (_profile == null) _loadProfile();
       case 2:
         _loadLibrary();
       case 3:
-        _loadProfileCenter();
+        _loadProfileCenter(force: true);
     }
   }
 
@@ -340,7 +350,10 @@ class _MobileHomePageState extends State<MobileHomePage> {
         onToggleFavorite: (video) => favoriteVideoIds.contains(video.id)
             ? _removeFavorite(video)
             : _addFavorite(video),
-        onOpenVip: () => Navigator.pushNamed(context, '/vip'),
+        isVip: _profile?.isVip ?? false,
+        onOpenVip: () {
+          _openVipAndRefreshProfile();
+        },
       ),
       2 => PlaylistView(
         favorites: _favorites,
@@ -365,7 +378,9 @@ class _MobileHomePageState extends State<MobileHomePage> {
         videos: _videos,
         historyCount: _history.length,
         favoriteCount: _favorites.length,
-        onOpenVip: () => Navigator.pushNamed(context, '/vip'),
+        onOpenVip: () {
+          _openVipAndRefreshProfile();
+        },
         onOpenHistory: _showHistorySheet,
         onOpenFavorites: _showFavoritesSheet,
         onOpenOrders: _showOrdersSheet,
@@ -376,7 +391,13 @@ class _MobileHomePageState extends State<MobileHomePage> {
       _ => CustomScrollView(
         slivers: [
           SliverToBoxAdapter(
-            child: HomeTopBar(username: _username ?? '', onLogout: _logout),
+            child: HomeTopBar(
+              username: _username ?? '',
+              onOpenVip: () {
+                _openVipAndRefreshProfile();
+              },
+              onLogout: _logout,
+            ),
           ),
           SliverToBoxAdapter(
             child: _loadingCategories

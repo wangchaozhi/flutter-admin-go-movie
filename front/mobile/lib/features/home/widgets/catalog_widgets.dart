@@ -314,6 +314,7 @@ class DiscoverView extends StatelessWidget {
     required this.favoriteVideoIds,
     required this.onOpenVideo,
     required this.onToggleFavorite,
+    required this.isVip,
     required this.onOpenVip,
   });
 
@@ -323,6 +324,7 @@ class DiscoverView extends StatelessWidget {
   final Set<int> favoriteVideoIds;
   final ValueChanged<Video> onOpenVideo;
   final Future<void> Function(Video video) onToggleFavorite;
+  final bool isVip;
   final VoidCallback onOpenVip;
 
   @override
@@ -356,8 +358,10 @@ class DiscoverView extends StatelessWidget {
           categoryCount: categories.length,
           vipCount: vipVideos.length,
         ),
-        const SizedBox(height: 14),
-        _VipDiscoveryBand(count: vipVideos.length, onTap: onOpenVip),
+        if (!isVip) ...[
+          const SizedBox(height: 14),
+          _VipDiscoveryBand(count: vipVideos.length, onTap: onOpenVip),
+        ],
         const SizedBox(height: 18),
         if (loading)
           const _InlineLoading()

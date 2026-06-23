@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/api_client.dart';
@@ -10,19 +11,34 @@ class VipPage extends StatefulWidget {
   State<VipPage> createState() => _VipPageState();
 }
 
-class _VipPageState extends State<VipPage> {
+class _VipPageState extends State<VipPage> with WidgetsBindingObserver {
   final _api = ApiClient();
   final _providers = const ['mock', 'stripe', 'paypal'];
   var _provider = 'mock';
   var _loading = true;
   var _paying = false;
   var _message = '';
+  String? _pendingOrderNo;
   List<_Product> _products = [];
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadProducts();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _refreshPendingOrder();
+    }
   }
 
   Future<void> _loadProducts() async {
@@ -59,17 +75,27 @@ class _VipPageState extends State<VipPage> {
         'product_code': product.code,
         'provider': _provider,
       });
+      _checkApiResponse(resp);
       final data = resp['data'] as Map<String, dynamic>? ?? {};
       final checkoutUrl = data['checkout_url'] as String? ?? '';
       if (checkoutUrl.isEmpty) {
         throw Exception('支付地址为空');
       }
+      final orderNo = data['order_no'] as String? ?? '';
       final uri = Uri.parse(checkoutUrl);
+      if (_provider == 'mock') {
+        await _completeMockCheckout(_mockCheckoutUri(orderNo, uri));
+        if (!mounted) return;
+        setState(() => _message = '支付成功，VIP 权益已更新。');
+        await _showPaymentSuccessDialog(product.name);
+        return;
+      }
+      _pendingOrderNo = orderNo.isEmpty ? null : orderNo;
       final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
       if (!opened) {
         throw Exception('无法打开支付页');
       }
-      if (mounted) setState(() => _message = '支付页已打开，完成后返回应用刷新播放。');
+      if (mounted) setState(() => _message = '支付页已打开，返回应用后会自动确认支付状态。');
     } catch (err) {
       if (mounted) {
         setState(
@@ -81,6 +107,66 @@ class _VipPageState extends State<VipPage> {
     } finally {
       if (mounted) setState(() => _paying = false);
     }
+  }
+
+  void _checkApiResponse(Map<String, dynamic> resp) {
+    final code = resp['code'];
+    if (code == null || code == 0) return;
+    throw Exception(resp['msg'] as String? ?? '请求失败');
+  }
+
+  Uri _mockCheckoutUri(String orderNo, Uri fallbackUri) {
+    if (orderNo.isEmpty) return fallbackUri;
+    return Uri.parse(
+      '${ApiClient.baseUrl}/api/orders/${Uri.encodeComponent(orderNo)}/mock-complete',
+    );
+  }
+
+  Future<void> _completeMockCheckout(Uri uri) async {
+    final response = await http.get(uri);
+    if (response.statusCode >= 400) {
+      throw Exception('模拟支付完成失败 (${response.statusCode})');
+    }
+  }
+
+  Future<void> _refreshPendingOrder() async {
+    final orderNo = _pendingOrderNo;
+    if (orderNo == null || orderNo.isEmpty) return;
+    try {
+      final resp = await _api.getAuth('/api/orders/$orderNo');
+      _checkApiResponse(resp);
+      final data = resp['data'] as Map<String, dynamic>? ?? {};
+      final status = data['status'] as String? ?? '';
+      if (!mounted) return;
+      if (status == 'paid') {
+        _pendingOrderNo = null;
+        setState(() => _message = '支付成功，VIP 权益已更新。');
+        await _showPaymentSuccessDialog('VIP 会员');
+      } else if (status == 'failed' ||
+          status == 'cancelled' ||
+          status == 'refunded') {
+        _pendingOrderNo = null;
+        setState(() => _message = '支付未完成，请重新购买。');
+      }
+    } catch (_) {
+      // Keep the pending order so the next app resume can retry confirmation.
+    }
+  }
+
+  Future<void> _showPaymentSuccessDialog(String productName) {
+    return showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('支付成功'),
+        content: Text('$productName 已开通，可以继续观看会员内容。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('知道了'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override

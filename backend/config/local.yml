@@ -24,7 +24,7 @@ auth:
   jwt_secret: "dev_jwt_secret_change_in_prod"
 
 payment:
-  mock_enabled: false
+  mock_enabled: true
   public_base_url: "http://localhost:8080"
   default_currency: "USD"
   stripe_secret_key: ""
