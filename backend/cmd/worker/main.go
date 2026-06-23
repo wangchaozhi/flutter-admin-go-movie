@@ -24,7 +24,7 @@ func main() {
 	mux := asynq.NewServeMux()
 	mux.HandleFunc(video.TypeTranscode, video.HandleTranscodeTask)
 
-	log.Printf("worker started, env=%s redis=%s concurrency=%d", cfg.Env, cfg.Redis.Addr, cfg.Worker.TranscodeConcurrency)
+	log.Printf("worker started, env=%s redis=%s concurrency=%d encoder=%s temp_dir=%s", cfg.Env, cfg.Redis.Addr, cfg.Worker.TranscodeConcurrency, cfg.Worker.TranscodeVideoEncoder, cfg.Worker.TranscodeTempDir)
 	if err := srv.Run(mux); err != nil {
 		log.Fatal(err)
 	}

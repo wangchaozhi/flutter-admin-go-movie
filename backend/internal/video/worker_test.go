@@ -2,6 +2,45 @@ package video
 
 import "testing"
 
+func TestBuildTranscodeArgsLibx264(t *testing.T) {
+	args := buildTranscodeArgs(testEncoder("libx264"), testQuality(), "source.mp4", "seg_%03d.ts", "index.m3u8")
+
+	assertHasArgSequence(t, args, "-c:v", "libx264")
+	assertHasArgSequence(t, args, "-map", "0:v:0")
+	assertHasArgSequence(t, args, "-map", "0:a:0?")
+	assertHasArgSequence(t, args, "-sn")
+	assertHasArgSequence(t, args, "-vf", "scale=-2:720,format=yuv420p")
+	assertHasArgSequence(t, args, "-preset", "veryfast")
+	assertHasArgSequence(t, args, "-keyint_min", "180")
+	assertHasArgSequence(t, args, "-sc_threshold", "0")
+	assertHasArgSequence(t, args, "-c:a", "aac", "-ac", "2", "-ar", "48000", "-b:a", "128k")
+	assertHasArgSequence(t, args, "-hls_flags", "independent_segments")
+}
+
+func TestBuildTranscodeArgsNVENC(t *testing.T) {
+	args := buildTranscodeArgs(testEncoder("h264_nvenc"), testQuality(), "source.mp4", "seg_%03d.ts", "index.m3u8")
+
+	assertHasArgSequence(t, args, "-c:v", "h264_nvenc")
+	assertHasArgSequence(t, args, "-preset", "fast")
+	assertHasArgSequence(t, args, "-force_key_frames", "expr:gte(t,n_forced*6)")
+	assertMissingArg(t, args, "-keyint_min")
+	assertMissingArg(t, args, "-sc_threshold")
+}
+
+func TestBuildTranscodeArgsVAAPI(t *testing.T) {
+	args := buildTranscodeArgs(
+		transcodeEncoder{name: "h264_vaapi", vaapiDevice: "/dev/dri/renderD128"},
+		testQuality(),
+		"source.mp4",
+		"seg_%03d.ts",
+		"index.m3u8",
+	)
+
+	assertHasArgSequence(t, args, "-vaapi_device", "/dev/dri/renderD128")
+	assertHasArgSequence(t, args, "-vf", "scale=-2:720,format=nv12,hwupload")
+	assertHasArgSequence(t, args, "-c:v", "h264_vaapi")
+}
+
 func TestSelectTranscodeQualitiesLandscape(t *testing.T) {
 	qualities := selectTranscodeQualities(sourceVideoSize{width: 1920, height: 1080})
 	want := []struct {
@@ -41,6 +80,51 @@ func TestSelectTranscodeQualitiesBelow360p(t *testing.T) {
 	assertQualities(t, qualities, want)
 }
 
+func TestSelectRequestedTranscodeQualities(t *testing.T) {
+	qualities, err := selectRequestedTranscodeQualities(
+		sourceVideoSize{width: 1920, height: 1080},
+		[]string{"720p", "1080p"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []struct {
+		name string
+		res  string
+	}{
+		{"720p", "1280x720"},
+		{"1080p", "1920x1080"},
+	}
+	assertQualities(t, qualities, want)
+}
+
+func TestSelectRequestedTranscodeQualitiesRejectsUnavailable(t *testing.T) {
+	_, err := selectRequestedTranscodeQualities(
+		sourceVideoSize{width: 1280, height: 720},
+		[]string{"1080p"},
+	)
+	if err == nil {
+		t.Fatal("expected unavailable quality error")
+	}
+}
+
+func TestNormalizeTranscodeQualityNamesAllMeansAuto(t *testing.T) {
+	qualities, err := normalizeTranscodeQualityNames([]string{"360p", "480p", "720p", "1080p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if qualities != nil {
+		t.Fatalf("qualities = %v, want nil auto mode", qualities)
+	}
+}
+
+func TestNormalizeTranscodeQualityNamesRejectsUnknown(t *testing.T) {
+	_, err := normalizeTranscodeQualityNames([]string{"4k"})
+	if err == nil {
+		t.Fatal("expected unknown quality error")
+	}
+}
+
 func assertQualities(t *testing.T, got []transcodeQuality, want []struct {
 	name string
 	res  string
@@ -52,6 +136,46 @@ func assertQualities(t *testing.T, got []transcodeQuality, want []struct {
 	for i, q := range got {
 		if q.name != want[i].name || q.res != want[i].res {
 			t.Fatalf("quality[%d] = %s %s, want %s %s", i, q.name, q.res, want[i].name, want[i].res)
+		}
+	}
+}
+
+func testEncoder(name string) transcodeEncoder {
+	return transcodeEncoder{name: name}
+}
+
+func testQuality() transcodeQuality {
+	return transcodeQuality{
+		name:     "720p",
+		height:   720,
+		scale:    "-2:720",
+		videoBit: "2500k",
+		audioBit: "128k",
+	}
+}
+
+func assertHasArgSequence(t *testing.T, args []string, want ...string) {
+	t.Helper()
+	for i := 0; i <= len(args)-len(want); i++ {
+		found := true
+		for j, item := range want {
+			if args[i+j] != item {
+				found = false
+				break
+			}
+		}
+		if found {
+			return
+		}
+	}
+	t.Fatalf("args missing sequence %v in %v", want, args)
+}
+
+func assertMissingArg(t *testing.T, args []string, want string) {
+	t.Helper()
+	for _, arg := range args {
+		if arg == want {
+			t.Fatalf("args should not include %q: %v", want, args)
 		}
 	}
 }

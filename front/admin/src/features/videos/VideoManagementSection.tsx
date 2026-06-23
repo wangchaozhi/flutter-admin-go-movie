@@ -40,6 +40,8 @@ const STATUS_CLASS: Record<string, string> = {
   offline: 'status-offline',
 }
 
+const TRANSCODE_QUALITIES = ['360p', '480p', '720p', '1080p']
+
 function formatBytes(bytes: number) {
   if (bytes === 0) return '-'
   const gb = bytes / (1024 * 1024 * 1024)
@@ -62,6 +64,10 @@ export function VideoManagementSection({
   const [saving, setSaving] = useState(false)
   const [uploadProgress, setUploadProgress] = useState<number | null>(null)
   const [transcoding, setTranscoding] = useState(false)
+  const [transcodeDialog, setTranscodeDialog] = useState<{
+    video: Video
+    selected: string[]
+  } | null>(null)
   const [taskStatus, setTaskStatus] = useState<Record<number, TranscodeTask>>({})
   const [playUrl, setPlayUrl] = useState<string | null>(null)
   const [activeVideoId, setActiveVideoId] = useState<number | null>(null)
@@ -200,14 +206,31 @@ export function VideoManagementSection({
     }
   }
 
-  async function handleTranscode(videoId: number) {
+  function openTranscodeDialog(video: Video) {
+    setTranscodeDialog({ video, selected: TRANSCODE_QUALITIES })
+  }
+
+  function toggleTranscodeQuality(quality: string) {
+    setTranscodeDialog(prev => {
+      if (!prev) return prev
+      const selected = prev.selected.includes(quality)
+        ? prev.selected.filter(item => item !== quality)
+        : [...prev.selected, quality]
+      return { ...prev, selected }
+    })
+  }
+
+  async function handleTranscode(videoId: number, qualities: string[]) {
     setTranscoding(true)
     try {
       const res = await fetch(`/api/admin/videos/${videoId}/transcode`, {
-        method: 'POST', headers: jsonHeaders,
+        method: 'POST',
+        headers: jsonHeaders,
+        body: JSON.stringify({ qualities }),
       })
       const json = await res.json()
       if (json.code !== 0) { alert('转码提交失败：' + json.msg); return }
+      setTranscodeDialog(null)
       loadVideos()
       pollTaskStatus(videoId)
     } finally {
@@ -293,12 +316,12 @@ export function VideoManagementSection({
                           </button>
                         )}
                         {canEdit && v.status === 'uploaded' && (
-                          <button type="button" onClick={() => handleTranscode(v.id)} disabled={transcoding}>
+                          <button type="button" onClick={() => openTranscodeDialog(v)} disabled={transcoding}>
                             <RefreshCw size={13} /> 转码
                           </button>
                         )}
                         {canEdit && v.status === 'failed' && (
-                          <button type="button" onClick={() => handleTranscode(v.id)} disabled={transcoding}>
+                          <button type="button" onClick={() => openTranscodeDialog(v)} disabled={transcoding}>
                             <RefreshCw size={13} /> 重试
                           </button>
                         )}
@@ -437,6 +460,48 @@ export function VideoManagementSection({
           </>
         )}
       </div>
+
+      {transcodeDialog && (
+        <div className="confirm-backdrop">
+          <div className="confirm-dialog" role="dialog" aria-modal="true" aria-label="选择转码分辨率">
+            <div>
+              <h3>选择转码分辨率</h3>
+              <p>{transcodeDialog.video.title}</p>
+            </div>
+            <div className="transcode-quality-grid">
+              {TRANSCODE_QUALITIES.map(quality => (
+                <label key={quality} className="transcode-quality-option">
+                  <input
+                    type="checkbox"
+                    checked={transcodeDialog.selected.includes(quality)}
+                    onChange={() => toggleTranscodeQuality(quality)}
+                  />
+                  <span>{quality}</span>
+                </label>
+              ))}
+            </div>
+            <div className="confirm-actions">
+              <button
+                className="ghost-button"
+                disabled={transcoding}
+                type="button"
+                onClick={() => setTranscodeDialog(null)}
+              >
+                取消
+              </button>
+              <button
+                className="primary-button"
+                disabled={transcoding || transcodeDialog.selected.length === 0}
+                type="button"
+                onClick={() => handleTranscode(transcodeDialog.video.id, transcodeDialog.selected)}
+              >
+                {transcoding && <Loader size={14} className="spin" />}
+                提交转码
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   )
 }

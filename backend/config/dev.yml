@@ -38,3 +38,5 @@ payment:
 
 worker:
   transcode_concurrency: 2
+  transcode_video_encoder: "auto"
+  transcode_temp_dir: ""

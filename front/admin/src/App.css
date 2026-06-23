@@ -770,6 +770,37 @@ td {
   gap: 8px;
 }
 
+.transcode-quality-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.transcode-quality-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--surface-muted);
+  font-weight: 700;
+}
+
+.transcode-quality-option:has(input:checked) {
+  border-color: var(--primary);
+  background: var(--surface-subtle);
+}
+
+.transcode-quality-option input {
+  width: 15px;
+  min-height: 15px;
+  padding: 0;
+  accent-color: var(--primary);
+}
+
 .danger-confirm {
   background: var(--danger-text);
   border-color: var(--danger-text);

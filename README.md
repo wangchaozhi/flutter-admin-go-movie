@@ -98,6 +98,7 @@ APP_ENV=prod go run ./cmd/server  # 生产环境，需通过环境变量补齐�
 ```
 
 配置仍可用环境变量覆盖，例如 `HTTP_ADDR`、`DATABASE_DSN`、`REDIS_ADDR`、`MINIO_ENDPOINT`、`JWT_SECRET`、`HLS_SECRET`。
+转码 worker 默认 `TRANSCODE_VIDEO_ENCODER=auto`，会按系统候选和实际可用性选择 GPU 编码器，不可用时回退 `libx264`。也可以显式设置 `TRANSCODE_VIDEO_ENCODER=libx264` 强制使用 CPU；可选值包括 `h264_nvenc`、`h264_qsv`、`h264_vaapi`、`h264_videotoolbox`、`h264_amf`。
 
 首次启动会自动执行 `backend/internal/store/migrations/*.sql`。已执行版本记录在 `schema_migrations` 表中。
 后端也会自动创建头像 bucket。用户主题、头像对象 key 和缩略图对象 key 由迁移文件写入 `admin_users` 扩展字段。

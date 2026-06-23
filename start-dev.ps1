@@ -20,11 +20,25 @@ $RunRoot = Join-Path $Root ".codex-run"
 $Stamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $RunDir = Join-Path $RunRoot $Stamp
 $PidFile = Join-Path $RunRoot "pids.json"
+$TranscodeTempDir = Join-Path $RunRoot "transcode-tmp"
 $ComposeNetwork = "$(Split-Path -Leaf $Root)_app-network"
 $ApiBaseURL = "http://$HostName`:8080"
 $VideoBaseURL = "http://$HostName`:8081"
+$DefaultFFmpegBin = "E:\dev\ffmpeg-6.0-full_build\bin"
 
 New-Item -ItemType Directory -Force -Path $RunDir | Out-Null
+New-Item -ItemType Directory -Force -Path $TranscodeTempDir | Out-Null
+
+$ffmpegBin = if (-not [string]::IsNullOrWhiteSpace($env:FFMPEG_BIN_DIR)) {
+  $env:FFMPEG_BIN_DIR
+} elseif (Test-Path (Join-Path $DefaultFFmpegBin "ffmpeg.exe")) {
+  $DefaultFFmpegBin
+} else {
+  ""
+}
+if (-not [string]::IsNullOrWhiteSpace($ffmpegBin) -and (Test-Path (Join-Path $ffmpegBin "ffmpeg.exe"))) {
+  $env:PATH = "$ffmpegBin;$env:PATH"
+}
 
 function Write-Step {
   param([string]$Message)
@@ -382,6 +396,9 @@ Require-Command "cmd.exe"
 if (-not $NoDocker) {
   Require-Command "docker"
 }
+if (Get-Command "ffmpeg" -ErrorAction SilentlyContinue) {
+  Write-Host "  FFmpeg: $((Get-Command "ffmpeg").Source)"
+}
 if (-not $NoMobile) {
   Require-Command "flutter"
 }
@@ -400,6 +417,9 @@ if ([string]::IsNullOrWhiteSpace($env:VIDEO_BASE_URL)) {
 }
 if ([string]::IsNullOrWhiteSpace($env:APP_PUBLIC_BASE_URL)) {
   $env:APP_PUBLIC_BASE_URL = $ApiBaseURL
+}
+if ([string]::IsNullOrWhiteSpace($env:TRANSCODE_TEMP_DIR)) {
+  $env:TRANSCODE_TEMP_DIR = $TranscodeTempDir
 }
 
 if ($Restart) {

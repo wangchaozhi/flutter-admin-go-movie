@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"strconv"
@@ -15,6 +16,10 @@ import (
 
 	"github.com/minio/minio-go/v7"
 )
+
+type transcodeRequest struct {
+	Qualities []string `json:"qualities"`
+}
 
 // POST /api/admin/videos
 func AdminCreateVideoHandler(w http.ResponseWriter, r *http.Request) {
@@ -187,6 +192,16 @@ func AdminTranscodeHandler(w http.ResponseWriter, r *http.Request) {
 		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "video not uploaded yet"})
 		return
 	}
+	var req transcodeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "invalid body"})
+		return
+	}
+	qualities, err := normalizeTranscodeQualityNames(req.Qualities)
+	if err != nil {
+		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: err.Error()})
+		return
+	}
 
 	task := &store.VideoTranscodeTask{
 		VideoID: videoID,
@@ -199,7 +214,7 @@ func AdminTranscodeHandler(w http.ResponseWriter, r *http.Request) {
 
 	store.DB().Model(&v).Updates(map[string]interface{}{"status": "transcoding", "updated_at": time.Now()})
 
-	if err := EnqueueTranscode(r.Context(), videoID, task.ID); err != nil {
+	if err := EnqueueTranscode(r.Context(), videoID, task.ID, qualities); err != nil {
 		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: "enqueue failed: " + err.Error()})
 		return
 	}
@@ -208,6 +223,34 @@ func AdminTranscodeHandler(w http.ResponseWriter, r *http.Request) {
 		"task_id": task.ID,
 		"status":  "pending",
 	}})
+}
+
+func normalizeTranscodeQualityNames(input []string) ([]string, error) {
+	allowed := map[string]bool{
+		"360p":  true,
+		"480p":  true,
+		"720p":  true,
+		"1080p": true,
+	}
+	result := make([]string, 0, len(input))
+	seen := map[string]bool{}
+	for _, raw := range input {
+		name := strings.ToLower(strings.TrimSpace(raw))
+		if name == "" {
+			continue
+		}
+		if !allowed[name] {
+			return nil, fmt.Errorf("unsupported transcode quality %s", raw)
+		}
+		if !seen[name] {
+			result = append(result, name)
+			seen[name] = true
+		}
+	}
+	if len(result) == len(allowed) {
+		return nil, nil
+	}
+	return result, nil
 }
 
 // GET /api/admin/videos/{id}/transcode

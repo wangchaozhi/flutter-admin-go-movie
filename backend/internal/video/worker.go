@@ -9,10 +9,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"flutter-admin-go/internal/config"
 	"flutter-admin-go/internal/store"
 
 	"github.com/hibiken/asynq"
@@ -34,6 +37,16 @@ type transcodeQuality struct {
 	res       string
 }
 
+type transcodeEncoder struct {
+	name        string
+	vaapiDevice string
+}
+
+var (
+	transcodeEncoderOnce sync.Once
+	cachedEncoder        transcodeEncoder
+)
+
 func HandleTranscodeTask(ctx context.Context, t *asynq.Task) error {
 	p, err := ParseTranscodePayload(t)
 	if err != nil {
@@ -42,11 +55,13 @@ func HandleTranscodeTask(ctx context.Context, t *asynq.Task) error {
 
 	now := time.Now()
 	store.DB().Model(&store.VideoTranscodeTask{}).Where("id = ?", p.TaskID).Updates(map[string]interface{}{
-		"status":     "processing",
-		"started_at": now,
+		"status":        "processing",
+		"error_message": "",
+		"started_at":    now,
+		"finished_at":   nil,
 	})
 
-	duration, err := runTranscode(ctx, p.VideoID)
+	duration, err := runTranscode(ctx, p.VideoID, p.Qualities)
 	if err != nil {
 		errMsg := err.Error()
 		fin := time.Now()
@@ -79,8 +94,14 @@ func HandleTranscodeTask(ctx context.Context, t *asynq.Task) error {
 	return nil
 }
 
-func runTranscode(ctx context.Context, videoID int64) (int, error) {
-	tmpDir, err := os.MkdirTemp("", fmt.Sprintf("transcode_%d_", videoID))
+func runTranscode(ctx context.Context, videoID int64, requestedQualities []string) (int, error) {
+	tmpRoot := strings.TrimSpace(config.Load().Worker.TranscodeTempDir)
+	if tmpRoot != "" {
+		if err := os.MkdirAll(tmpRoot, 0755); err != nil {
+			return 0, fmt.Errorf("create transcode temp root: %w", err)
+		}
+	}
+	tmpDir, err := os.MkdirTemp(tmpRoot, fmt.Sprintf("transcode_%d_", videoID))
 	if err != nil {
 		return 0, fmt.Errorf("create temp dir: %w", err)
 	}
@@ -92,7 +113,12 @@ func runTranscode(ctx context.Context, videoID int64) (int, error) {
 		return 0, fmt.Errorf("download source: %w", err)
 	}
 
-	qualities := selectTranscodeQualities(probeSourceSize(srcPath))
+	qualities, err := selectRequestedTranscodeQualities(probeSourceSize(srcPath), requestedQualities)
+	if err != nil {
+		return 0, err
+	}
+	encoder := selectedTranscodeEncoder(ctx)
+	log.Printf("transcode encoder selected: %s", encoder.name)
 
 	for _, q := range qualities {
 		outDir := filepath.Join(tmpDir, q.name)
@@ -102,21 +128,7 @@ func runTranscode(ctx context.Context, videoID int64) (int, error) {
 		segPattern := filepath.Join(outDir, "seg_%03d.ts")
 		m3u8Out := filepath.Join(outDir, "index.m3u8")
 
-		args := []string{
-			"-i", srcPath,
-			"-vf", "scale=" + q.scale,
-			"-c:v", "libx264", "-preset", "veryfast", "-b:v", q.videoBit,
-			"-g", "180",
-			"-keyint_min", "180",
-			"-force_key_frames", "expr:gte(t,n_forced*6)",
-			"-sc_threshold", "0",
-			"-c:a", "aac", "-b:a", q.audioBit,
-			"-hls_time", "6",
-			"-hls_playlist_type", "vod",
-			"-hls_flags", "independent_segments",
-			"-hls_segment_filename", segPattern,
-			m3u8Out,
-		}
+		args := buildTranscodeArgs(encoder, q, srcPath, segPattern, m3u8Out)
 		cmd := exec.CommandContext(ctx, "ffmpeg", args...)
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
@@ -147,6 +159,213 @@ func runTranscode(ctx context.Context, videoID int64) (int, error) {
 
 	log.Printf("transcode done: video_id=%d duration=%ds", videoID, duration)
 	return duration, nil
+}
+
+func selectRequestedTranscodeQualities(sourceSize sourceVideoSize, requested []string) ([]transcodeQuality, error) {
+	available := selectTranscodeQualities(sourceSize)
+	if len(requested) == 0 {
+		return available, nil
+	}
+	requestedSet := make(map[string]bool, len(requested))
+	for _, name := range requested {
+		requestedSet[strings.ToLower(strings.TrimSpace(name))] = true
+	}
+	selected := make([]transcodeQuality, 0, len(available))
+	for _, q := range available {
+		if requestedSet[q.name] {
+			selected = append(selected, q)
+		}
+	}
+	if len(selected) == 0 {
+		availableNames := make([]string, 0, len(available))
+		for _, q := range available {
+			availableNames = append(availableNames, q.name)
+		}
+		return nil, fmt.Errorf("selected transcode qualities are not available for source; available: %s", strings.Join(availableNames, ", "))
+	}
+	return selected, nil
+}
+
+func selectedTranscodeEncoder(ctx context.Context) transcodeEncoder {
+	transcodeEncoderOnce.Do(func() {
+		requested := strings.ToLower(strings.TrimSpace(config.Load().Worker.TranscodeVideoEncoder))
+		if requested == "" {
+			requested = "auto"
+		}
+		cachedEncoder = chooseTranscodeEncoder(ctx, requested)
+	})
+	return cachedEncoder
+}
+
+func chooseTranscodeEncoder(ctx context.Context, requested string) transcodeEncoder {
+	supported, err := ffmpegEncoders(ctx)
+	if err != nil {
+		log.Printf("ffmpeg encoder detection failed, falling back to libx264: %v", err)
+		return transcodeEncoder{name: "libx264"}
+	}
+
+	if requested != "auto" {
+		encoder := newTranscodeEncoder(requested)
+		if encoder.name == "" {
+			log.Printf("unknown transcode encoder %q, falling back to libx264", requested)
+			return transcodeEncoder{name: "libx264"}
+		}
+		if isUsableTranscodeEncoder(ctx, encoder, supported) {
+			return encoder
+		}
+		log.Printf("configured transcode encoder %q is not usable, falling back to libx264", requested)
+		return transcodeEncoder{name: "libx264"}
+	}
+
+	for _, candidate := range autoTranscodeEncoderCandidates() {
+		encoder := newTranscodeEncoder(candidate)
+		if isUsableTranscodeEncoder(ctx, encoder, supported) {
+			return encoder
+		}
+	}
+	return transcodeEncoder{name: "libx264"}
+}
+
+func ffmpegEncoders(ctx context.Context) (map[string]bool, error) {
+	cmd := exec.CommandContext(ctx, "ffmpeg", "-hide_banner", "-encoders")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("%w\n%s", err, string(out))
+	}
+	supported := map[string]bool{}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 {
+			supported[fields[1]] = true
+		}
+	}
+	return supported, nil
+}
+
+func autoTranscodeEncoderCandidates() []string {
+	switch runtime.GOOS {
+	case "darwin":
+		return []string{"h264_videotoolbox", "libx264"}
+	case "windows":
+		return []string{"h264_nvenc", "h264_qsv", "h264_amf", "libx264"}
+	default:
+		return []string{"h264_nvenc", "h264_qsv", "h264_vaapi", "h264_amf", "libx264"}
+	}
+}
+
+func newTranscodeEncoder(name string) transcodeEncoder {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "libx264", "h264_nvenc", "h264_qsv", "h264_videotoolbox", "h264_amf":
+		return transcodeEncoder{name: strings.ToLower(strings.TrimSpace(name))}
+	case "h264_vaapi":
+		return transcodeEncoder{name: "h264_vaapi", vaapiDevice: detectVAAPIDevice()}
+	default:
+		return transcodeEncoder{}
+	}
+}
+
+func detectVAAPIDevice() string {
+	for _, device := range []string{"/dev/dri/renderD128", "/dev/dri/card0"} {
+		if _, err := os.Stat(device); err == nil {
+			return device
+		}
+	}
+	return ""
+}
+
+func isUsableTranscodeEncoder(ctx context.Context, encoder transcodeEncoder, supported map[string]bool) bool {
+	if encoder.name == "" || !supported[encoder.name] {
+		return false
+	}
+	args := buildEncoderProbeArgs(encoder)
+	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		log.Printf("transcode encoder %s probe failed: %v\n%s", encoder.name, err, stderr.String())
+		return false
+	}
+	return true
+}
+
+func buildEncoderProbeArgs(encoder transcodeEncoder) []string {
+	args := []string{"-hide_banner", "-loglevel", "error"}
+	args = append(args, encoderDeviceArgs(encoder)...)
+	args = append(args,
+		"-f", "lavfi",
+		"-i", "testsrc2=size=256x144:rate=1",
+		"-t", "1",
+		"-vf", encoderScaleFilter(encoder, "256:144"),
+	)
+	args = append(args, encoderVideoArgs(encoder, "500k")...)
+	args = append(args, encoderGOPArgs(encoder)...)
+	args = append(args, "-an", "-f", "null", "-")
+	return args
+}
+
+func buildTranscodeArgs(encoder transcodeEncoder, q transcodeQuality, srcPath, segPattern, m3u8Out string) []string {
+	args := []string{}
+	args = append(args, encoderDeviceArgs(encoder)...)
+	args = append(args,
+		"-i", srcPath,
+		"-map", "0:v:0",
+		"-map", "0:a:0?",
+		"-sn",
+		"-vf", encoderScaleFilter(encoder, q.scale),
+	)
+	args = append(args, encoderVideoArgs(encoder, q.videoBit)...)
+	args = append(args, encoderGOPArgs(encoder)...)
+	args = append(args,
+		"-c:a", "aac", "-ac", "2", "-ar", "48000", "-b:a", q.audioBit,
+		"-hls_time", "6",
+		"-hls_playlist_type", "vod",
+		"-hls_flags", "independent_segments",
+		"-hls_segment_filename", segPattern,
+		m3u8Out,
+	)
+	return args
+}
+
+func encoderDeviceArgs(encoder transcodeEncoder) []string {
+	if encoder.name == "h264_vaapi" && encoder.vaapiDevice != "" {
+		return []string{"-vaapi_device", encoder.vaapiDevice}
+	}
+	return nil
+}
+
+func encoderScaleFilter(encoder transcodeEncoder, scale string) string {
+	if encoder.name == "h264_vaapi" {
+		return "scale=" + scale + ",format=nv12,hwupload"
+	}
+	return "scale=" + scale + ",format=yuv420p"
+}
+
+func encoderGOPArgs(encoder transcodeEncoder) []string {
+	args := []string{
+		"-g", "180",
+		"-force_key_frames", "expr:gte(t,n_forced*6)",
+	}
+	if encoder.name == "libx264" {
+		args = append(args, "-keyint_min", "180", "-sc_threshold", "0")
+	}
+	return args
+}
+
+func encoderVideoArgs(encoder transcodeEncoder, bitrate string) []string {
+	switch encoder.name {
+	case "h264_nvenc":
+		return []string{"-c:v", "h264_nvenc", "-preset", "fast", "-b:v", bitrate}
+	case "h264_qsv":
+		return []string{"-c:v", "h264_qsv", "-preset", "veryfast", "-b:v", bitrate}
+	case "h264_vaapi":
+		return []string{"-c:v", "h264_vaapi", "-b:v", bitrate}
+	case "h264_videotoolbox":
+		return []string{"-c:v", "h264_videotoolbox", "-b:v", bitrate}
+	case "h264_amf":
+		return []string{"-c:v", "h264_amf", "-quality", "speed", "-b:v", bitrate}
+	default:
+		return []string{"-c:v", "libx264", "-preset", "veryfast", "-b:v", bitrate}
+	}
 }
 
 func selectTranscodeQualities(sourceSize sourceVideoSize) []transcodeQuality {

@@ -74,7 +74,9 @@ type PaymentConfig struct {
 }
 
 type WorkerConfig struct {
-	TranscodeConcurrency int `yaml:"transcode_concurrency"`
+	TranscodeConcurrency  int    `yaml:"transcode_concurrency"`
+	TranscodeVideoEncoder string `yaml:"transcode_video_encoder"`
+	TranscodeTempDir      string `yaml:"transcode_temp_dir"`
 }
 
 var (
@@ -187,7 +189,8 @@ func localDefaults() Config {
 			PayPalBaseURL:   "https://api-m.sandbox.paypal.com",
 		},
 		Worker: WorkerConfig{
-			TranscodeConcurrency: 2,
+			TranscodeConcurrency:  2,
+			TranscodeVideoEncoder: "auto",
 		},
 	}
 }
@@ -226,6 +229,8 @@ func applyEnvOverrides(cfg *Config) {
 	cfg.Payment.PayPalBaseURL = envOr("PAYPAL_BASE_URL", cfg.Payment.PayPalBaseURL)
 
 	cfg.Worker.TranscodeConcurrency = envInt("TRANSCODE_CONCURRENCY", cfg.Worker.TranscodeConcurrency)
+	cfg.Worker.TranscodeVideoEncoder = envOr("TRANSCODE_VIDEO_ENCODER", cfg.Worker.TranscodeVideoEncoder)
+	cfg.Worker.TranscodeTempDir = envOr("TRANSCODE_TEMP_DIR", cfg.Worker.TranscodeTempDir)
 }
 
 func envOr(key, fallback string) string {

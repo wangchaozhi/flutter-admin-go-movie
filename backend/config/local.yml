@@ -37,4 +37,6 @@ payment:
   paypal_base_url: "https://api-m.sandbox.paypal.com"
 
 worker:
-  transcode_concurrency: 2
+  transcode_concurrency: 1
+  transcode_video_encoder: "auto"
+  transcode_temp_dir: ""
