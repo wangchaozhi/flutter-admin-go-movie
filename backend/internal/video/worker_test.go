@@ -1,6 +1,9 @@
 package video
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestBuildTranscodeArgsLibx264(t *testing.T) {
 	args := buildTranscodeArgs(testEncoder("libx264"), testQuality(), "source.mp4", "seg_%03d.ts", "index.m3u8")
@@ -125,6 +128,37 @@ func TestNormalizeTranscodeQualityNamesRejectsUnknown(t *testing.T) {
 	}
 }
 
+func TestBuildMasterPlaylistMergesExistingQualities(t *testing.T) {
+	existing := "#EXTM3U\n#EXT-X-VERSION:3\n\n" +
+		"#EXT-X-STREAM-INF:BANDWIDTH=2800000,RESOLUTION=1280x720\n" +
+		"720p/index.m3u8\n\n"
+
+	got := buildMasterPlaylist(existing, []transcodeQuality{
+		{name: "360p", bandwidth: "1000000", res: "640x360"},
+	})
+
+	assertContains(t, got, "360p/index.m3u8")
+	assertContains(t, got, "720p/index.m3u8")
+	if strings.Index(got, "360p/index.m3u8") > strings.Index(got, "720p/index.m3u8") {
+		t.Fatalf("master playlist should be sorted by quality height:\n%s", got)
+	}
+}
+
+func TestBuildMasterPlaylistOverridesExistingQuality(t *testing.T) {
+	existing := "#EXTM3U\n#EXT-X-VERSION:3\n\n" +
+		"#EXT-X-STREAM-INF:BANDWIDTH=1,RESOLUTION=1x1\n" +
+		"720p/index.m3u8\n\n"
+
+	got := buildMasterPlaylist(existing, []transcodeQuality{
+		{name: "720p", bandwidth: "2800000", res: "1280x720"},
+	})
+
+	assertContains(t, got, "BANDWIDTH=2800000,RESOLUTION=1280x720")
+	if strings.Contains(got, "BANDWIDTH=1,RESOLUTION=1x1") {
+		t.Fatalf("master playlist kept stale quality metadata:\n%s", got)
+	}
+}
+
 func assertQualities(t *testing.T, got []transcodeQuality, want []struct {
 	name string
 	res  string
@@ -177,5 +211,12 @@ func assertMissingArg(t *testing.T, args []string, want string) {
 		if arg == want {
 			t.Fatalf("args should not include %q: %v", want, args)
 		}
+	}
+}
+
+func assertContains(t *testing.T, got, want string) {
+	t.Helper()
+	if !strings.Contains(got, want) {
+		t.Fatalf("expected %q in:\n%s", want, got)
 	}
 }

@@ -207,7 +207,11 @@ export function VideoManagementSection({
   }
 
   function openTranscodeDialog(video: Video) {
-    setTranscodeDialog({ video, selected: TRANSCODE_QUALITIES })
+    const done = new Set(video.transcoded_qualities ?? [])
+    const selected = video.status === 'ready' || video.status === 'offline'
+      ? (done.size > 0 ? TRANSCODE_QUALITIES.filter(quality => !done.has(quality)) : [])
+      : TRANSCODE_QUALITIES
+    setTranscodeDialog({ video, selected })
   }
 
   function toggleTranscodeQuality(quality: string) {
@@ -323,6 +327,11 @@ export function VideoManagementSection({
                         {canEdit && v.status === 'failed' && (
                           <button type="button" onClick={() => openTranscodeDialog(v)} disabled={transcoding}>
                             <RefreshCw size={13} /> 重试
+                          </button>
+                        )}
+                        {canEdit && (v.status === 'ready' || v.status === 'offline') && (
+                          <button type="button" onClick={() => openTranscodeDialog(v)} disabled={transcoding}>
+                            <RefreshCw size={13} /> 继续转码
                           </button>
                         )}
                         {canEdit && v.status === 'ready' && (
@@ -469,16 +478,22 @@ export function VideoManagementSection({
               <p>{transcodeDialog.video.title}</p>
             </div>
             <div className="transcode-quality-grid">
-              {TRANSCODE_QUALITIES.map(quality => (
-                <label key={quality} className="transcode-quality-option">
-                  <input
-                    type="checkbox"
-                    checked={transcodeDialog.selected.includes(quality)}
-                    onChange={() => toggleTranscodeQuality(quality)}
-                  />
-                  <span>{quality}</span>
-                </label>
-              ))}
+              {TRANSCODE_QUALITIES.map(quality => {
+                const done = transcodeDialog.video.transcoded_qualities?.includes(quality) ?? false
+                return (
+                  <label key={quality} className={`transcode-quality-option ${done ? 'is-transcoded' : ''}`}>
+                    <input
+                      type="checkbox"
+                      checked={transcodeDialog.selected.includes(quality)}
+                      onChange={() => toggleTranscodeQuality(quality)}
+                    />
+                    <span className="transcode-quality-name">{quality}</span>
+                    <span className={`transcode-quality-state ${done ? 'done' : 'pending'}`}>
+                      {done ? '已转' : '待转'}
+                    </span>
+                  </label>
+                )
+              })}
             </div>
             <div className="confirm-actions">
               <button

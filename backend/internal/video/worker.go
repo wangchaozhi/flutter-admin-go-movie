@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -42,6 +43,13 @@ type transcodeEncoder struct {
 	vaapiDevice string
 }
 
+type masterPlaylistEntry struct {
+	name       string
+	bandwidth  string
+	resolution string
+	uri        string
+}
+
 var (
 	transcodeEncoderOnce sync.Once
 	cachedEncoder        transcodeEncoder
@@ -61,7 +69,7 @@ func HandleTranscodeTask(ctx context.Context, t *asynq.Task) error {
 		"finished_at":   nil,
 	})
 
-	duration, err := runTranscode(ctx, p.VideoID, p.Qualities)
+	duration, err := runTranscode(ctx, p.VideoID, p.Qualities, p.MergeExisting)
 	if err != nil {
 		errMsg := err.Error()
 		fin := time.Now()
@@ -70,8 +78,12 @@ func HandleTranscodeTask(ctx context.Context, t *asynq.Task) error {
 			"error_message": errMsg,
 			"finished_at":   fin,
 		})
+		status := "failed"
+		if p.MergeExisting && (p.PreviousStatus == "ready" || p.PreviousStatus == "offline") {
+			status = p.PreviousStatus
+		}
 		store.DB().Model(&store.Video{}).Where("id = ?", p.VideoID).Updates(map[string]interface{}{
-			"status":     "failed",
+			"status":     status,
 			"updated_at": fin,
 		})
 		return err
@@ -84,8 +96,12 @@ func HandleTranscodeTask(ctx context.Context, t *asynq.Task) error {
 		"status":      "success",
 		"finished_at": fin,
 	})
+	status := "ready"
+	if p.MergeExisting && p.PreviousStatus == "offline" {
+		status = "offline"
+	}
 	store.DB().Model(&store.Video{}).Where("id = ?", p.VideoID).Updates(map[string]interface{}{
-		"status":         "ready",
+		"status":         status,
 		"hls_master_key": masterKey,
 		"cover_key":      coverKey,
 		"duration":       duration,
@@ -94,7 +110,7 @@ func HandleTranscodeTask(ctx context.Context, t *asynq.Task) error {
 	return nil
 }
 
-func runTranscode(ctx context.Context, videoID int64, requestedQualities []string) (int, error) {
+func runTranscode(ctx context.Context, videoID int64, requestedQualities []string, mergeExisting bool) (int, error) {
 	tmpRoot := strings.TrimSpace(config.Load().Worker.TranscodeTempDir)
 	if tmpRoot != "" {
 		if err := os.MkdirAll(tmpRoot, 0755); err != nil {
@@ -141,11 +157,16 @@ func runTranscode(ctx context.Context, videoID int64, requestedQualities []strin
 		}
 	}
 
-	masterContent := "#EXTM3U\n#EXT-X-VERSION:3\n\n"
-	for _, q := range qualities {
-		masterContent += fmt.Sprintf("#EXT-X-STREAM-INF:BANDWIDTH=%s,RESOLUTION=%s\n%s/index.m3u8\n\n", q.bandwidth, q.res, q.name)
-	}
 	masterKey := fmt.Sprintf("hls/%d/master.m3u8", videoID)
+	existingMaster := ""
+	if mergeExisting {
+		if raw, err := readMinioText(ctx, masterKey); err == nil {
+			existingMaster = raw
+		} else {
+			log.Printf("read existing master playlist failed for video %d: %v", videoID, err)
+		}
+	}
+	masterContent := buildMasterPlaylist(existingMaster, qualities)
 	if err := putText(ctx, masterKey, masterContent, "application/vnd.apple.mpegurl"); err != nil {
 		return 0, fmt.Errorf("upload master.m3u8: %w", err)
 	}
@@ -159,6 +180,125 @@ func runTranscode(ctx context.Context, videoID int64, requestedQualities []strin
 
 	log.Printf("transcode done: video_id=%d duration=%ds", videoID, duration)
 	return duration, nil
+}
+
+func buildMasterPlaylist(existing string, qualities []transcodeQuality) string {
+	entriesByName := make(map[string]masterPlaylistEntry)
+	for _, entry := range parseMasterPlaylistEntries(existing) {
+		entriesByName[entry.name] = entry
+	}
+	for _, q := range qualities {
+		entriesByName[q.name] = masterPlaylistEntry{
+			name:       q.name,
+			bandwidth:  q.bandwidth,
+			resolution: q.res,
+			uri:        fmt.Sprintf("%s/index.m3u8", q.name),
+		}
+	}
+
+	entries := make([]masterPlaylistEntry, 0, len(entriesByName))
+	for _, entry := range entriesByName {
+		entries = append(entries, entry)
+	}
+	sort.SliceStable(entries, func(i, j int) bool {
+		left := qualityHeight(entries[i].name)
+		right := qualityHeight(entries[j].name)
+		if left == right {
+			return entries[i].name < entries[j].name
+		}
+		if left == 0 {
+			return false
+		}
+		if right == 0 {
+			return true
+		}
+		return left < right
+	})
+
+	var b strings.Builder
+	b.WriteString("#EXTM3U\n#EXT-X-VERSION:3\n\n")
+	for _, entry := range entries {
+		b.WriteString("#EXT-X-STREAM-INF")
+		attrs := make([]string, 0, 2)
+		if entry.bandwidth != "" {
+			attrs = append(attrs, "BANDWIDTH="+entry.bandwidth)
+		}
+		if entry.resolution != "" {
+			attrs = append(attrs, "RESOLUTION="+entry.resolution)
+		}
+		if len(attrs) > 0 {
+			b.WriteString(":")
+			b.WriteString(strings.Join(attrs, ","))
+		}
+		b.WriteString("\n")
+		b.WriteString(entry.uri)
+		b.WriteString("\n\n")
+	}
+	return b.String()
+}
+
+func parseMasterPlaylistEntries(raw string) []masterPlaylistEntry {
+	var entries []masterPlaylistEntry
+	bandwidth := ""
+	resolution := ""
+	for _, rawLine := range strings.Split(raw, "\n") {
+		line := strings.TrimSpace(rawLine)
+		if strings.HasPrefix(line, "#EXT-X-STREAM-INF:") {
+			bandwidth = parseMasterAttribute(line, "BANDWIDTH")
+			resolution = parseMasterAttribute(line, "RESOLUTION")
+			continue
+		}
+		if line == "" || strings.HasPrefix(line, "#") || !strings.HasSuffix(line, ".m3u8") {
+			continue
+		}
+		name := qualityNameFromMasterURI(line)
+		if name == "" {
+			bandwidth = ""
+			resolution = ""
+			continue
+		}
+		entries = append(entries, masterPlaylistEntry{
+			name:       name,
+			bandwidth:  bandwidth,
+			resolution: resolution,
+			uri:        line,
+		})
+		bandwidth = ""
+		resolution = ""
+	}
+	return entries
+}
+
+func parseMasterAttribute(line, key string) string {
+	_, attrs, ok := strings.Cut(line, ":")
+	if !ok {
+		return ""
+	}
+	prefix := key + "="
+	for _, part := range strings.Split(attrs, ",") {
+		part = strings.TrimSpace(part)
+		if strings.HasPrefix(part, prefix) {
+			return strings.TrimPrefix(part, prefix)
+		}
+	}
+	return ""
+}
+
+func qualityNameFromMasterURI(uri string) string {
+	name := strings.TrimSuffix(uri, "/index.m3u8")
+	name = strings.TrimSuffix(name, "index.m3u8")
+	return strings.Trim(name, "/")
+}
+
+func qualityHeight(name string) int {
+	if !strings.HasSuffix(name, "p") {
+		return 0
+	}
+	height, err := strconv.Atoi(strings.TrimSuffix(name, "p"))
+	if err != nil {
+		return 0
+	}
+	return height
 }
 
 func selectRequestedTranscodeQualities(sourceSize sourceVideoSize, requested []string) ([]transcodeQuality, error) {

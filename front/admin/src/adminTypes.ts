@@ -28,6 +28,7 @@ export type Video = {
   status: VideoStatus
   is_vip: boolean
   is_free: boolean
+  transcoded_qualities?: string[]
   created_at: string
   updated_at: string
 }

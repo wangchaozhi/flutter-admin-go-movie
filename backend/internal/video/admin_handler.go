@@ -202,6 +202,8 @@ func AdminTranscodeHandler(w http.ResponseWriter, r *http.Request) {
 		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: err.Error()})
 		return
 	}
+	previousStatus := v.Status
+	mergeExisting := v.Status == "ready" || v.Status == "offline"
 
 	task := &store.VideoTranscodeTask{
 		VideoID: videoID,
@@ -214,7 +216,7 @@ func AdminTranscodeHandler(w http.ResponseWriter, r *http.Request) {
 
 	store.DB().Model(&v).Updates(map[string]interface{}{"status": "transcoding", "updated_at": time.Now()})
 
-	if err := EnqueueTranscode(r.Context(), videoID, task.ID, qualities); err != nil {
+	if err := EnqueueTranscode(r.Context(), videoID, task.ID, qualities, mergeExisting, previousStatus); err != nil {
 		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: "enqueue failed: " + err.Error()})
 		return
 	}
@@ -281,6 +283,7 @@ func AdminListVideosHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	var videos []store.Video
 	store.DB().Order("id desc").Find(&videos)
+	attachTranscodedQualities(r.Context(), videos)
 	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: videos})
 }
 
@@ -301,7 +304,36 @@ func AdminGetVideoHandler(w http.ResponseWriter, r *http.Request) {
 		common.WriteJSON(w, http.StatusNotFound, common.APIResponse{Code: 404, Msg: "not found"})
 		return
 	}
+	v.TranscodedQualities = transcodedQualityNames(r.Context(), v)
 	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: v})
+}
+
+func attachTranscodedQualities(ctx context.Context, videos []store.Video) {
+	for i := range videos {
+		videos[i].TranscodedQualities = transcodedQualityNames(ctx, videos[i])
+	}
+}
+
+func transcodedQualityNames(ctx context.Context, v store.Video) []string {
+	key := strings.TrimSpace(v.HLSMasterKey)
+	if key == "" {
+		return nil
+	}
+	raw, err := readMinioText(ctx, key)
+	if err != nil {
+		return nil
+	}
+
+	names := make([]string, 0)
+	seen := make(map[string]bool)
+	for _, entry := range parseMasterPlaylistEntries(raw) {
+		if entry.name == "" || seen[entry.name] {
+			continue
+		}
+		names = append(names, entry.name)
+		seen[entry.name] = true
+	}
+	return names
 }
 
 // PUT /api/admin/videos/{id}

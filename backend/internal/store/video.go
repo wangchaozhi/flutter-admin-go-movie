@@ -17,6 +17,8 @@ type Video struct {
 	IsFree       bool      `gorm:"column:is_free"                 json:"is_free"`
 	CreatedAt    time.Time `gorm:"column:created_at"              json:"created_at"`
 	UpdatedAt    time.Time `gorm:"column:updated_at"              json:"updated_at"`
+
+	TranscodedQualities []string `gorm:"-" json:"transcoded_qualities,omitempty"`
 }
 
 func (Video) TableName() string { return "videos" }
