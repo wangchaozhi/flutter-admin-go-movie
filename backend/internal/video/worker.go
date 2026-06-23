@@ -3,6 +3,7 @@ package video
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -50,6 +51,18 @@ type masterPlaylistEntry struct {
 	uri        string
 }
 
+type nonRetryableTranscodeError struct {
+	err error
+}
+
+func (e nonRetryableTranscodeError) Error() string {
+	return e.err.Error()
+}
+
+func (e nonRetryableTranscodeError) Unwrap() error {
+	return e.err
+}
+
 var (
 	transcodeEncoderOnce sync.Once
 	cachedEncoder        transcodeEncoder
@@ -78,16 +91,25 @@ func HandleTranscodeTask(ctx context.Context, t *asynq.Task) error {
 		mergeMaster = true
 	}
 
-	if err := runTranscodeForTask(ctx, p.VideoID, p.TaskID, requestedQualities, mergeMaster); err != nil {
-		errMsg := err.Error()
+	if err := runTranscodeForTask(ctx, p.VideoID, p.TaskID, p.BatchID, requestedQualities, mergeMaster); err != nil {
+		returnErr := transcodeTaskReturnError(err)
+		errMsg := transcodeErrorMessage(err)
 		fin := time.Now()
+		if transcodeTaskWillRetry(ctx, returnErr) {
+			store.DB().Model(&store.VideoTranscodeTask{}).Where("id = ?", p.TaskID).Updates(map[string]interface{}{
+				"status":        "pending",
+				"error_message": errMsg,
+				"finished_at":   nil,
+			})
+			return returnErr
+		}
 		store.DB().Model(&store.VideoTranscodeTask{}).Where("id = ?", p.TaskID).Updates(map[string]interface{}{
 			"status":        "failed",
 			"error_message": errMsg,
 			"finished_at":   fin,
 		})
 		finalizeTranscodeBatch(ctx, p.VideoID, p.TaskID, p.PreviousStatus)
-		return err
+		return returnErr
 	}
 
 	fin := time.Now()
@@ -99,19 +121,93 @@ func HandleTranscodeTask(ctx context.Context, t *asynq.Task) error {
 	return nil
 }
 
-func runTranscodeForTask(ctx context.Context, videoID, taskID int64, requestedQualities []string, mergeExisting bool) error {
+func runTranscodeForTask(ctx context.Context, videoID, taskID, batchID int64, requestedQualities []string, mergeExisting bool) error {
 	lock := videoTranscodeLock(videoID)
 	log.Printf("transcode video lock wait: video_id=%d task_id=%d", videoID, taskID)
 	lock.Lock()
 	defer lock.Unlock()
 
 	log.Printf("transcode video lock acquired: video_id=%d task_id=%d", videoID, taskID)
-	return runTranscode(ctx, videoID, requestedQualities, mergeExisting)
+	return withVideoTranscodeAdvisoryLock(ctx, videoID, taskID, func() error {
+		return runTranscode(ctx, videoID, taskID, batchID, requestedQualities, mergeExisting)
+	})
 }
 
 func videoTranscodeLock(videoID int64) *sync.Mutex {
 	lock, _ := videoTranscodeLocks.LoadOrStore(videoID, &sync.Mutex{})
 	return lock.(*sync.Mutex)
+}
+
+func transcodeTaskReturnError(err error) error {
+	if isNonRetryableTranscodeError(err) {
+		return fmt.Errorf("%w: %w", asynq.SkipRetry, err)
+	}
+	return err
+}
+
+func transcodeTaskWillRetry(ctx context.Context, err error) bool {
+	if errors.Is(err, asynq.SkipRetry) {
+		return false
+	}
+	retried, ok := asynq.GetRetryCount(ctx)
+	if !ok {
+		return false
+	}
+	maxRetry, ok := asynq.GetMaxRetry(ctx)
+	if !ok {
+		return false
+	}
+	return retried < maxRetry
+}
+
+func transcodeErrorMessage(err error) string {
+	var nonRetryable nonRetryableTranscodeError
+	if errors.As(err, &nonRetryable) {
+		return nonRetryable.err.Error()
+	}
+	return err.Error()
+}
+
+func markNonRetryableTranscodeError(err error) error {
+	return nonRetryableTranscodeError{err: err}
+}
+
+func isNonRetryableTranscodeError(err error) bool {
+	var nonRetryable nonRetryableTranscodeError
+	return errors.As(err, &nonRetryable)
+}
+
+func withVideoTranscodeAdvisoryLock(ctx context.Context, videoID, taskID int64, fn func() error) error {
+	sqlDB, err := store.DB().DB()
+	if err != nil {
+		return fmt.Errorf("get postgres db: %w", err)
+	}
+	conn, err := sqlDB.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("get postgres conn: %w", err)
+	}
+	defer conn.Close()
+
+	key := videoTranscodeAdvisoryKey(videoID)
+	log.Printf("transcode db lock wait: video_id=%d task_id=%d key=%d", videoID, taskID, key)
+	if _, err := conn.ExecContext(ctx, "SELECT pg_advisory_lock($1)", key); err != nil {
+		return fmt.Errorf("acquire transcode db lock: %w", err)
+	}
+	defer func() {
+		unlockCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if _, err := conn.ExecContext(unlockCtx, "SELECT pg_advisory_unlock($1)", key); err != nil {
+			log.Printf("release transcode db lock failed: video_id=%d task_id=%d key=%d: %v", videoID, taskID, key, err)
+		}
+	}()
+
+	log.Printf("transcode db lock acquired: video_id=%d task_id=%d key=%d", videoID, taskID, key)
+	return fn()
+}
+
+func videoTranscodeAdvisoryKey(videoID int64) int64 {
+	const namespace int64 = 0x5452
+	return (namespace << 48) | (videoID & 0x0000ffffffffffff)
 }
 
 func finalizeTranscodeBatch(ctx context.Context, videoID, taskID int64, previousStatus string) {
@@ -158,7 +254,7 @@ func finalizeTranscodeBatch(ctx context.Context, videoID, taskID int64, previous
 	store.DB().Model(&store.Video{}).Where("id = ?", videoID).Updates(updates)
 }
 
-func runTranscode(ctx context.Context, videoID int64, requestedQualities []string, mergeExisting bool) error {
+func runTranscode(ctx context.Context, videoID, taskID, batchID int64, requestedQualities []string, mergeExisting bool) error {
 	tmpRoot := strings.TrimSpace(config.Load().Worker.TranscodeTempDir)
 	if tmpRoot != "" {
 		if err := os.MkdirAll(tmpRoot, 0755); err != nil {
@@ -184,6 +280,7 @@ func runTranscode(ctx context.Context, videoID int64, requestedQualities []strin
 	encoder := selectedTranscodeEncoder(ctx)
 	log.Printf("transcode encoder selected: %s", encoder.name)
 
+	outputVersion := transcodeOutputVersion(batchID, taskID)
 	completedQualities := make([]transcodeQuality, 0, len(qualities))
 	for _, q := range qualities {
 		outDir := filepath.Join(tmpDir, q.name)
@@ -198,18 +295,18 @@ func runTranscode(ctx context.Context, videoID int64, requestedQualities []strin
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 		if err := cmd.Run(); err != nil {
-			persistCompletedMaster(ctx, videoID, completedQualities, mergeExisting)
+			persistCompletedMaster(ctx, videoID, completedQualities, mergeExisting, outputVersion)
 			return fmt.Errorf("ffmpeg %s: %w\n%s", q.name, err, stderr.String())
 		}
 
-		if err := uploadDir(ctx, outDir, fmt.Sprintf("hls/%d/%s", videoID, q.name)); err != nil {
-			persistCompletedMaster(ctx, videoID, completedQualities, mergeExisting)
+		if err := uploadDir(ctx, outDir, transcodeQualityObjectPrefix(videoID, outputVersion, q.name)); err != nil {
+			persistCompletedMaster(ctx, videoID, completedQualities, mergeExisting, outputVersion)
 			return fmt.Errorf("upload %s hls: %w", q.name, err)
 		}
 		completedQualities = append(completedQualities, q)
 	}
 
-	if err := putMasterPlaylist(ctx, videoID, completedQualities, mergeExisting); err != nil {
+	if err := putMasterPlaylist(ctx, videoID, completedQualities, mergeExisting, outputVersion); err != nil {
 		return fmt.Errorf("upload master.m3u8: %w", err)
 	}
 
@@ -467,16 +564,16 @@ func pruneSourceCache(videoCacheDir, keepName string) {
 	}
 }
 
-func persistCompletedMaster(ctx context.Context, videoID int64, qualities []transcodeQuality, mergeExisting bool) {
+func persistCompletedMaster(ctx context.Context, videoID int64, qualities []transcodeQuality, mergeExisting bool, outputVersion string) {
 	if len(qualities) == 0 {
 		return
 	}
-	if err := putMasterPlaylist(ctx, videoID, qualities, mergeExisting); err != nil {
+	if err := putMasterPlaylist(ctx, videoID, qualities, mergeExisting, outputVersion); err != nil {
 		log.Printf("partial master playlist update failed for video %d: %v", videoID, err)
 	}
 }
 
-func putMasterPlaylist(ctx context.Context, videoID int64, qualities []transcodeQuality, mergeExisting bool) error {
+func putMasterPlaylist(ctx context.Context, videoID int64, qualities []transcodeQuality, mergeExisting bool, outputVersion string) error {
 	masterKey := fmt.Sprintf("hls/%d/master.m3u8", videoID)
 	existingMaster := ""
 	if mergeExisting {
@@ -486,11 +583,15 @@ func putMasterPlaylist(ctx context.Context, videoID int64, qualities []transcode
 			log.Printf("read existing master playlist failed for video %d: %v", videoID, err)
 		}
 	}
-	masterContent := buildMasterPlaylist(existingMaster, qualities)
+	masterContent := buildVersionedMasterPlaylist(existingMaster, qualities, outputVersion)
 	return putText(ctx, masterKey, masterContent, "application/vnd.apple.mpegurl")
 }
 
 func buildMasterPlaylist(existing string, qualities []transcodeQuality) string {
+	return buildVersionedMasterPlaylist(existing, qualities, "")
+}
+
+func buildVersionedMasterPlaylist(existing string, qualities []transcodeQuality, outputVersion string) string {
 	entriesByName := make(map[string]masterPlaylistEntry)
 	for _, entry := range parseMasterPlaylistEntries(existing) {
 		entriesByName[entry.name] = entry
@@ -500,7 +601,7 @@ func buildMasterPlaylist(existing string, qualities []transcodeQuality) string {
 			name:       q.name,
 			bandwidth:  q.bandwidth,
 			resolution: q.res,
-			uri:        fmt.Sprintf("%s/index.m3u8", q.name),
+			uri:        transcodeQualityMasterURI(outputVersion, q.name),
 		}
 	}
 
@@ -543,6 +644,30 @@ func buildMasterPlaylist(existing string, qualities []transcodeQuality) string {
 		b.WriteString("\n\n")
 	}
 	return b.String()
+}
+
+func transcodeOutputVersion(batchID, taskID int64) string {
+	if batchID > 0 {
+		return strconv.FormatInt(batchID, 10)
+	}
+	if taskID > 0 {
+		return "task-" + strconv.FormatInt(taskID, 10)
+	}
+	return strconv.FormatInt(time.Now().UnixNano(), 10)
+}
+
+func transcodeQualityObjectPrefix(videoID int64, outputVersion, quality string) string {
+	if strings.TrimSpace(outputVersion) == "" {
+		return fmt.Sprintf("hls/%d/%s", videoID, quality)
+	}
+	return fmt.Sprintf("hls/%d/versions/%s/%s", videoID, outputVersion, quality)
+}
+
+func transcodeQualityMasterURI(outputVersion, quality string) string {
+	if strings.TrimSpace(outputVersion) == "" {
+		return fmt.Sprintf("%s/index.m3u8", quality)
+	}
+	return fmt.Sprintf("versions/%s/%s/index.m3u8", outputVersion, quality)
 }
 
 func parseMasterPlaylistEntries(raw string) []masterPlaylistEntry {
@@ -656,7 +781,7 @@ func selectRequestedTranscodeQualities(sourceSize sourceVideoSize, requested []s
 }
 
 func unavailableTranscodeQualityError(available []transcodeQuality) error {
-	return fmt.Errorf("selected transcode qualities are not available for source; available: %s", strings.Join(transcodeQualityNames(available), ", "))
+	return markNonRetryableTranscodeError(fmt.Errorf("selected transcode qualities are not available for source; available: %s", strings.Join(transcodeQualityNames(available), ", ")))
 }
 
 func transcodeQualityNames(qualities []transcodeQuality) []string {

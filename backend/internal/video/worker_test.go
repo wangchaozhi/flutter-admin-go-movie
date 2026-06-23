@@ -1,6 +1,7 @@
 package video
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"flutter-admin-go/internal/store"
 
+	"github.com/hibiken/asynq"
 	"github.com/minio/minio-go/v7"
 )
 
@@ -176,6 +178,14 @@ func TestBuildMasterPlaylistOverridesExistingQuality(t *testing.T) {
 	}
 }
 
+func TestBuildVersionedMasterPlaylistUsesVersionedURI(t *testing.T) {
+	got := buildVersionedMasterPlaylist("", []transcodeQuality{
+		{name: "720p", bandwidth: "2800000", res: "1280x720"},
+	}, "batch-1")
+
+	assertContains(t, got, "versions/batch-1/720p/index.m3u8")
+}
+
 func TestParseMasterPlaylistEntriesHandlesSignedAbsoluteURIs(t *testing.T) {
 	raw := "#EXTM3U\n#EXT-X-VERSION:3\n\n" +
 		"#EXT-X-STREAM-INF:BANDWIDTH=1000000,RESOLUTION=640x360\n" +
@@ -189,6 +199,24 @@ func TestParseMasterPlaylistEntriesHandlesSignedAbsoluteURIs(t *testing.T) {
 	}
 	if entries[0].name != "360p" || entries[1].name != "720p" {
 		t.Fatalf("entries = %#v, want 360p and 720p", entries)
+	}
+}
+
+func TestHLSVersionedRelativePaths(t *testing.T) {
+	playlist := hlsPlaylistRelativePath("versions/123/720p/index.m3u8?old=1")
+	if playlist != "versions/123/720p/index.m3u8" {
+		t.Fatalf("playlist path = %q", playlist)
+	}
+
+	segment := hlsSegmentRelativePath(playlist, "seg_001.ts")
+	if segment != "versions/123/720p/seg_001.ts" {
+		t.Fatalf("segment path = %q", segment)
+	}
+}
+
+func TestHLSRelativePathRejectsTraversal(t *testing.T) {
+	if validHLSRelativePath("versions/../720p/index.m3u8") {
+		t.Fatal("expected path traversal to be rejected")
 	}
 }
 
@@ -206,6 +234,33 @@ func TestAvailableTranscodeQualityNamesUsesSourceMetadata(t *testing.T) {
 	})
 	if strings.Join(got, ",") != "360p,480p,720p" {
 		t.Fatalf("available qualities = %#v", got)
+	}
+}
+
+func TestNewTranscodeTaskIncludesBatchID(t *testing.T) {
+	task, err := NewTranscodeTask(1, 2, 3, "720p", true, "ready")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := ParseTranscodePayload(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if payload.BatchID != 3 {
+		t.Fatalf("batch id = %d, want 3", payload.BatchID)
+	}
+}
+
+func TestTranscodeTaskReturnErrorSkipsNonRetryable(t *testing.T) {
+	err := unavailableTranscodeQualityError([]transcodeQuality{{name: "720p"}})
+	if !errors.Is(transcodeTaskReturnError(err), asynq.SkipRetry) {
+		t.Fatal("expected non-retryable transcode error to skip asynq retry")
+	}
+}
+
+func TestVideoTranscodeAdvisoryKeyIncludesVideoID(t *testing.T) {
+	if videoTranscodeAdvisoryKey(1) == videoTranscodeAdvisoryKey(2) {
+		t.Fatal("expected advisory keys to differ by video id")
 	}
 }
 

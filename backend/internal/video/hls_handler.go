@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -49,11 +50,8 @@ func HLSMasterHandler(w http.ResponseWriter, r *http.Request) {
 	scanner := bufio.NewScanner(strings.NewReader(raw))
 	for scanner.Scan() {
 		line := scanner.Text()
-		if strings.HasSuffix(line, ".m3u8") && !strings.HasPrefix(line, "#") {
-			quality := strings.TrimSuffix(line, "/index.m3u8")
-			quality = strings.TrimSuffix(quality, "index.m3u8")
-			quality = strings.Trim(quality, "/")
-			subPath := fmt.Sprintf("/api/hls/%d/%s/index.m3u8", videoID, quality)
+		if relPath := hlsPlaylistRelativePath(line); relPath != "" {
+			subPath := fmt.Sprintf("/api/hls/%d/%s", videoID, relPath)
 			signed := SignPath(subPath, hlsSignedURLTTLSeconds)
 			buf.WriteString(signed + "\n")
 		} else {
@@ -78,14 +76,13 @@ func HLSIndexHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	parts := strings.Split(strings.TrimPrefix(r.URL.Path, fmt.Sprintf("/api/hls/%d/", videoID)), "/")
-	if len(parts) < 2 {
+	indexRelPath := strings.Trim(strings.TrimPrefix(r.URL.Path, fmt.Sprintf("/api/hls/%d/", videoID)), "/")
+	if !validHLSRelativePath(indexRelPath) || !strings.HasSuffix(indexRelPath, "index.m3u8") {
 		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "invalid path"})
 		return
 	}
-	quality := parts[0]
 
-	indexKey := fmt.Sprintf("hls/%d/%s/index.m3u8", videoID, quality)
+	indexKey := fmt.Sprintf("hls/%d/%s", videoID, indexRelPath)
 	raw, err := readMinioText(r.Context(), indexKey)
 	if err != nil {
 		common.WriteJSON(w, http.StatusNotFound, common.APIResponse{Code: 404, Msg: "not found"})
@@ -97,7 +94,12 @@ func HLSIndexHandler(w http.ResponseWriter, r *http.Request) {
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.HasSuffix(line, ".ts") && !strings.HasPrefix(line, "#") {
-			tsPath := fmt.Sprintf("/hls/%d/%s/%s", videoID, quality, line)
+			tsRelPath := hlsSegmentRelativePath(indexRelPath, line)
+			if tsRelPath == "" {
+				buf.WriteString(line + "\n")
+				continue
+			}
+			tsPath := fmt.Sprintf("/hls/%d/%s", videoID, tsRelPath)
 			signed := SignPath(tsPath, hlsSignedURLTTLSeconds)
 			buf.WriteString(videoBaseURL(r) + signed + "\n")
 		} else {
@@ -177,17 +179,16 @@ func signedHLSQualities(ctx context.Context, videoID int64) []HLSQualityOption {
 			resolution = parseStreamResolution(line)
 			continue
 		}
-		if strings.HasPrefix(line, "#") || !strings.HasSuffix(line, ".m3u8") {
+		relPath := hlsPlaylistRelativePath(line)
+		if relPath == "" {
 			continue
 		}
-		name := strings.TrimSuffix(line, "/index.m3u8")
-		name = strings.TrimSuffix(name, "index.m3u8")
-		name = strings.Trim(name, "/")
+		name := qualityNameFromMasterURI(relPath)
 		if name == "" {
 			resolution = ""
 			continue
 		}
-		subPath := fmt.Sprintf("/api/hls/%d/%s/index.m3u8", videoID, name)
+		subPath := fmt.Sprintf("/api/hls/%d/%s", videoID, relPath)
 		qualities = append(qualities, HLSQualityOption{
 			Name:       name,
 			Label:      qualityLabel(name, resolution),
@@ -197,6 +198,47 @@ func signedHLSQualities(ctx context.Context, videoID int64) []HLSQualityOption {
 		resolution = ""
 	}
 	return qualities
+}
+
+func hlsPlaylistRelativePath(line string) string {
+	line = strings.TrimSpace(line)
+	if line == "" || strings.HasPrefix(line, "#") {
+		return ""
+	}
+	uriPath := strings.Trim(masterURIPath(line), "/")
+	if !strings.HasSuffix(uriPath, ".m3u8") || strings.Contains(uriPath, "://") || !validHLSRelativePath(uriPath) {
+		return ""
+	}
+	return uriPath
+}
+
+func hlsSegmentRelativePath(indexRelPath, segmentLine string) string {
+	raw := strings.TrimSpace(segmentLine)
+	if raw == "" || path.IsAbs(raw) || strings.Contains(raw, "://") {
+		return ""
+	}
+	segmentPath := strings.Trim(masterURIPath(raw), "/")
+	if !validHLSRelativePath(segmentPath) {
+		return ""
+	}
+	joined := path.Clean(path.Join(path.Dir(indexRelPath), segmentPath))
+	if !validHLSRelativePath(joined) {
+		return ""
+	}
+	return joined
+}
+
+func validHLSRelativePath(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.HasPrefix(value, "/") || strings.Contains(value, "\\") {
+		return false
+	}
+	for _, part := range strings.Split(value, "/") {
+		if part == "" || part == "." || part == ".." {
+			return false
+		}
+	}
+	return true
 }
 
 func parseStreamResolution(line string) string {

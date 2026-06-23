@@ -240,6 +240,16 @@ func AdminTranscodeHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	requestedQualities = transcodeQualityNames(selectedQualities)
 
+	activeTasks, err := activeTranscodeTasks(videoID)
+	if err != nil {
+		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
+		return
+	}
+	if len(activeTasks) > 0 {
+		common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "transcode already running", Data: activeTranscodeResponse(activeTasks)})
+		return
+	}
+
 	batchID := time.Now().UnixNano()
 	tasks := make([]store.VideoTranscodeTask, 0, len(requestedQualities))
 	for _, quality := range requestedQualities {
@@ -260,7 +270,7 @@ func AdminTranscodeHandler(w http.ResponseWriter, r *http.Request) {
 	taskIDs := make([]int64, 0, len(tasks))
 	for _, task := range tasks {
 		taskIDs = append(taskIDs, task.ID)
-		if err := EnqueueTranscode(r.Context(), videoID, task.ID, task.Quality, mergeExisting, previousStatus); err != nil {
+		if err := EnqueueTranscode(r.Context(), videoID, task.ID, task.BatchID, task.Quality, mergeExisting, previousStatus); err != nil {
 			common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: "enqueue failed: " + err.Error()})
 			return
 		}
@@ -271,6 +281,40 @@ func AdminTranscodeHandler(w http.ResponseWriter, r *http.Request) {
 		"task_ids": taskIDs,
 		"status":   "pending",
 	}})
+}
+
+func activeTranscodeTasks(videoID int64) ([]store.VideoTranscodeTask, error) {
+	var tasks []store.VideoTranscodeTask
+	err := store.DB().
+		Where("video_id = ? AND status IN ?", videoID, []string{"pending", "processing"}).
+		Order("id asc").
+		Find(&tasks).Error
+	return tasks, err
+}
+
+func activeTranscodeResponse(tasks []store.VideoTranscodeTask) map[string]interface{} {
+	taskIDs := make([]int64, 0, len(tasks))
+	qualities := make([]string, 0, len(tasks))
+	status := "pending"
+	batchID := int64(0)
+	for _, task := range tasks {
+		taskIDs = append(taskIDs, task.ID)
+		if task.Quality != "" {
+			qualities = append(qualities, task.Quality)
+		}
+		if task.Status == "processing" {
+			status = "processing"
+		}
+		if batchID == 0 {
+			batchID = task.BatchID
+		}
+	}
+	return map[string]interface{}{
+		"batch_id":  batchID,
+		"task_ids":  taskIDs,
+		"qualities": qualities,
+		"status":    status,
+	}
 }
 
 func normalizeTranscodeQualityNames(input []string) ([]string, error) {

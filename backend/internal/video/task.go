@@ -11,20 +11,23 @@ import (
 const TypeTranscode = "video:transcode"
 
 const transcodeTaskTimeout = 6 * time.Hour
+const transcodeTaskMaxRetry = 2
 
 type TranscodePayload struct {
 	VideoID        int64    `json:"video_id"`
 	TaskID         int64    `json:"task_id"`
+	BatchID        int64    `json:"batch_id,omitempty"`
 	Quality        string   `json:"quality,omitempty"`
 	Qualities      []string `json:"qualities,omitempty"`
 	MergeExisting  bool     `json:"merge_existing,omitempty"`
 	PreviousStatus string   `json:"previous_status,omitempty"`
 }
 
-func NewTranscodeTask(videoID, taskID int64, quality string, mergeExisting bool, previousStatus string) (*asynq.Task, error) {
+func NewTranscodeTask(videoID, taskID, batchID int64, quality string, mergeExisting bool, previousStatus string) (*asynq.Task, error) {
 	payload, err := json.Marshal(TranscodePayload{
 		VideoID:        videoID,
 		TaskID:         taskID,
+		BatchID:        batchID,
 		Quality:        quality,
 		MergeExisting:  mergeExisting,
 		PreviousStatus: previousStatus,
@@ -47,13 +50,13 @@ func AsynqClient() *asynq.Client {
 	return asynq.NewClient(asynq.RedisClientOpt{Addr: redisAddr()})
 }
 
-func EnqueueTranscode(ctx context.Context, videoID, taskID int64, quality string, mergeExisting bool, previousStatus string) error {
-	task, err := NewTranscodeTask(videoID, taskID, quality, mergeExisting, previousStatus)
+func EnqueueTranscode(ctx context.Context, videoID, taskID, batchID int64, quality string, mergeExisting bool, previousStatus string) error {
+	task, err := NewTranscodeTask(videoID, taskID, batchID, quality, mergeExisting, previousStatus)
 	if err != nil {
 		return err
 	}
 	client := AsynqClient()
 	defer client.Close()
-	_, err = client.EnqueueContext(ctx, task, asynq.Timeout(transcodeTaskTimeout), asynq.MaxRetry(0))
+	_, err = client.EnqueueContext(ctx, task, asynq.Timeout(transcodeTaskTimeout), asynq.MaxRetry(transcodeTaskMaxRetry))
 	return err
 }
