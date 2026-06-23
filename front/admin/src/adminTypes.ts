@@ -29,6 +29,7 @@ export type Video = {
   is_vip: boolean
   is_free: boolean
   transcoded_qualities?: string[]
+  available_transcode_qualities?: string[]
   created_at: string
   updated_at: string
 }
@@ -45,8 +46,11 @@ export type VideoForm = {
 export type TranscodeTask = {
   id: number
   video_id: number
+  batch_id: number
+  quality: string
   status: 'pending' | 'processing' | 'success' | 'failed'
   error_message: string
+  quality_statuses?: Record<string, 'pending' | 'processing' | 'success' | 'failed'>
   started_at: string | null
   finished_at: string | null
   created_at: string

@@ -21,6 +21,11 @@ type transcodeRequest struct {
 	Qualities []string `json:"qualities"`
 }
 
+type transcodeStatusResponse struct {
+	store.VideoTranscodeTask
+	QualityStatuses map[string]string `json:"quality_statuses,omitempty"`
+}
+
 // POST /api/admin/videos
 func AdminCreateVideoHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -102,10 +107,12 @@ func AdminUploadVideoHandler(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now()
 	store.DB().Model(&v).Updates(map[string]interface{}{
-		"original_key": key,
-		"size":         header.Size,
-		"status":       "uploaded",
-		"updated_at":   now,
+		"original_key":   key,
+		"hls_master_key": "",
+		"duration":       0,
+		"size":           header.Size,
+		"status":         "uploaded",
+		"updated_at":     now,
 	})
 
 	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: map[string]interface{}{
@@ -205,26 +212,46 @@ func AdminTranscodeHandler(w http.ResponseWriter, r *http.Request) {
 	previousStatus := v.Status
 	mergeExisting := v.Status == "ready" || v.Status == "offline"
 
-	task := &store.VideoTranscodeTask{
-		VideoID: videoID,
-		Status:  "pending",
+	requestedQualities := qualities
+	if len(requestedQualities) == 0 {
+		requestedQualities = allTranscodeQualityNames()
 	}
-	if err := store.DB().Create(task).Error; err != nil {
+
+	batchID := time.Now().UnixNano()
+	tasks := make([]store.VideoTranscodeTask, 0, len(requestedQualities))
+	for _, quality := range requestedQualities {
+		tasks = append(tasks, store.VideoTranscodeTask{
+			VideoID: videoID,
+			BatchID: batchID,
+			Quality: quality,
+			Status:  "pending",
+		})
+	}
+	if err := store.DB().Create(&tasks).Error; err != nil {
 		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
 		return
 	}
 
 	store.DB().Model(&v).Updates(map[string]interface{}{"status": "transcoding", "updated_at": time.Now()})
 
-	if err := EnqueueTranscode(r.Context(), videoID, task.ID, qualities, mergeExisting, previousStatus); err != nil {
-		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: "enqueue failed: " + err.Error()})
-		return
+	taskIDs := make([]int64, 0, len(tasks))
+	for _, task := range tasks {
+		taskIDs = append(taskIDs, task.ID)
+		if err := EnqueueTranscode(r.Context(), videoID, task.ID, task.Quality, mergeExisting, previousStatus); err != nil {
+			common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: "enqueue failed: " + err.Error()})
+			return
+		}
 	}
 
 	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: map[string]interface{}{
-		"task_id": task.ID,
-		"status":  "pending",
+		"batch_id": batchID,
+		"task_ids": taskIDs,
+		"status":   "pending",
 	}})
+}
+
+func allTranscodeQualityNames() []string {
+	return []string{"360p", "480p", "720p", "1080p"}
 }
 
 func normalizeTranscodeQualityNames(input []string) ([]string, error) {
@@ -272,7 +299,64 @@ func AdminTranscodeStatusHandler(w http.ResponseWriter, r *http.Request) {
 		common.WriteJSON(w, http.StatusNotFound, common.APIResponse{Code: 404, Msg: "task not found"})
 		return
 	}
-	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: task})
+	if task.BatchID == 0 {
+		common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: task})
+		return
+	}
+
+	var tasks []store.VideoTranscodeTask
+	if err := store.DB().Where("video_id = ? AND batch_id = ?", videoID, task.BatchID).Order("id asc").Find(&tasks).Error; err != nil {
+		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
+		return
+	}
+	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: aggregateTranscodeStatus(task, tasks)})
+}
+
+func aggregateTranscodeStatus(base store.VideoTranscodeTask, tasks []store.VideoTranscodeTask) transcodeStatusResponse {
+	resp := transcodeStatusResponse{
+		VideoTranscodeTask: base,
+		QualityStatuses:    make(map[string]string, len(tasks)),
+	}
+	if len(tasks) == 0 {
+		return resp
+	}
+
+	hasProcessing := false
+	hasPending := false
+	hasFailed := false
+	resp.ErrorMessage = ""
+	for _, task := range tasks {
+		if task.Quality != "" {
+			resp.QualityStatuses[task.Quality] = task.Status
+		}
+		switch task.Status {
+		case "processing":
+			hasProcessing = true
+		case "pending":
+			hasPending = true
+		case "failed":
+			hasFailed = true
+			if resp.ErrorMessage == "" {
+				resp.ErrorMessage = task.ErrorMessage
+				if task.Quality != "" && resp.ErrorMessage != "" {
+					resp.ErrorMessage = task.Quality + ": " + resp.ErrorMessage
+				}
+			}
+		}
+	}
+
+	switch {
+	case hasProcessing:
+		resp.Status = "processing"
+	case hasPending:
+		resp.Status = "pending"
+	case hasFailed:
+		resp.Status = "failed"
+	default:
+		resp.Status = "success"
+	}
+	resp.BatchID = tasks[0].BatchID
+	return resp
 }
 
 // GET /api/admin/videos
@@ -283,7 +367,7 @@ func AdminListVideosHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	var videos []store.Video
 	store.DB().Order("id desc").Find(&videos)
-	attachTranscodedQualities(r.Context(), videos)
+	attachVideoTranscodeMetadata(r.Context(), videos)
 	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: videos})
 }
 
@@ -304,22 +388,28 @@ func AdminGetVideoHandler(w http.ResponseWriter, r *http.Request) {
 		common.WriteJSON(w, http.StatusNotFound, common.APIResponse{Code: 404, Msg: "not found"})
 		return
 	}
-	v.TranscodedQualities = transcodedQualityNames(r.Context(), v)
+	videos := []store.Video{v}
+	attachVideoTranscodeMetadata(r.Context(), videos)
+	v = videos[0]
 	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: v})
 }
 
-func attachTranscodedQualities(ctx context.Context, videos []store.Video) {
+func attachVideoTranscodeMetadata(ctx context.Context, videos []store.Video) {
 	for i := range videos {
 		videos[i].TranscodedQualities = transcodedQualityNames(ctx, videos[i])
+		videos[i].AvailableTranscodeQualities = availableTranscodeQualityNames(videos[i].ID)
 	}
 }
 
 func transcodedQualityNames(ctx context.Context, v store.Video) []string {
 	key := strings.TrimSpace(v.HLSMasterKey)
 	if key == "" {
-		return nil
+		key = fmt.Sprintf("hls/%d/master.m3u8", v.ID)
 	}
 	raw, err := readMinioText(ctx, key)
+	if err != nil && key != fmt.Sprintf("hls/%d/master.m3u8", v.ID) {
+		raw, err = readMinioText(ctx, fmt.Sprintf("hls/%d/master.m3u8", v.ID))
+	}
 	if err != nil {
 		return nil
 	}
@@ -332,6 +422,44 @@ func transcodedQualityNames(ctx context.Context, v store.Video) []string {
 		}
 		names = append(names, entry.name)
 		seen[entry.name] = true
+	}
+	return names
+}
+
+func availableTranscodeQualityNames(videoID int64) []string {
+	var task store.VideoTranscodeTask
+	err := store.DB().
+		Where("video_id = ? AND error_message LIKE ?", videoID, "selected transcode qualities are not available for source; available:%").
+		Order("id desc").
+		First(&task).Error
+	if err != nil {
+		return nil
+	}
+	return parseAvailableTranscodeQualityNames(task.ErrorMessage)
+}
+
+func parseAvailableTranscodeQualityNames(message string) []string {
+	const marker = "available:"
+	idx := strings.Index(message, marker)
+	if idx < 0 {
+		return nil
+	}
+	raw := message[idx+len(marker):]
+	allowed := map[string]bool{
+		"360p":  true,
+		"480p":  true,
+		"720p":  true,
+		"1080p": true,
+	}
+	names := make([]string, 0)
+	seen := make(map[string]bool)
+	for _, item := range strings.Split(raw, ",") {
+		name := strings.ToLower(strings.TrimSpace(item))
+		if !allowed[name] || seen[name] {
+			continue
+		}
+		names = append(names, name)
+		seen[name] = true
 	}
 	return names
 }

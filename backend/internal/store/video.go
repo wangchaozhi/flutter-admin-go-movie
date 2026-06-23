@@ -18,7 +18,8 @@ type Video struct {
 	CreatedAt    time.Time `gorm:"column:created_at"              json:"created_at"`
 	UpdatedAt    time.Time `gorm:"column:updated_at"              json:"updated_at"`
 
-	TranscodedQualities []string `gorm:"-" json:"transcoded_qualities,omitempty"`
+	TranscodedQualities         []string `gorm:"-" json:"transcoded_qualities,omitempty"`
+	AvailableTranscodeQualities []string `gorm:"-" json:"available_transcode_qualities,omitempty"`
 }
 
 func (Video) TableName() string { return "videos" }
@@ -26,6 +27,8 @@ func (Video) TableName() string { return "videos" }
 type VideoTranscodeTask struct {
 	ID           int64      `gorm:"primaryKey;column:id"    json:"id"`
 	VideoID      int64      `gorm:"column:video_id"         json:"video_id"`
+	BatchID      int64      `gorm:"column:batch_id"         json:"batch_id"`
+	Quality      string     `gorm:"column:quality"          json:"quality"`
 	Status       string     `gorm:"column:status"           json:"status"`
 	ErrorMessage string     `gorm:"column:error_message"    json:"error_message"`
 	StartedAt    *time.Time `gorm:"column:started_at"       json:"started_at"`

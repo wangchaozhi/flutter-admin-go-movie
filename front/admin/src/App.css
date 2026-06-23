@@ -794,6 +794,12 @@ td {
   background: var(--success-bg);
 }
 
+.transcode-quality-option.is-unsupported {
+  color: var(--text-faint);
+  background: var(--surface-muted);
+  opacity: 0.72;
+}
+
 .transcode-quality-option:has(input:checked) {
   border-color: var(--primary);
   background: var(--surface-subtle);
@@ -832,6 +838,10 @@ td {
 
 .transcode-quality-state.pending {
   color: var(--text-muted);
+}
+
+.transcode-quality-state.unsupported {
+  color: var(--text-faint);
 }
 
 .danger-confirm {

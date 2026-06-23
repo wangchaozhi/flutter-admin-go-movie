@@ -208,9 +208,11 @@ export function VideoManagementSection({
 
   function openTranscodeDialog(video: Video) {
     const done = new Set(video.transcoded_qualities ?? [])
+    const available = new Set(video.available_transcode_qualities ?? [])
+    const canSelectQuality = (quality: string) => available.size === 0 || available.has(quality)
     const selected = video.status === 'ready' || video.status === 'offline'
-      ? (done.size > 0 ? TRANSCODE_QUALITIES.filter(quality => !done.has(quality)) : [])
-      : TRANSCODE_QUALITIES
+      ? (done.size > 0 ? TRANSCODE_QUALITIES.filter(quality => !done.has(quality) && canSelectQuality(quality)) : [])
+      : TRANSCODE_QUALITIES.filter(canSelectQuality)
     setTranscodeDialog({ video, selected })
   }
 
@@ -250,7 +252,7 @@ export function VideoManagementSection({
       if (json.data.status === 'processing' || json.data.status === 'pending') {
         setTimeout(() => pollTaskStatus(videoId), 3000)
       } else {
-        loadVideos()
+        await loadVideos()
       }
     }
   }
@@ -480,16 +482,19 @@ export function VideoManagementSection({
             <div className="transcode-quality-grid">
               {TRANSCODE_QUALITIES.map(quality => {
                 const done = transcodeDialog.video.transcoded_qualities?.includes(quality) ?? false
+                const available = transcodeDialog.video.available_transcode_qualities
+                const supported = !available?.length || available.includes(quality)
                 return (
-                  <label key={quality} className={`transcode-quality-option ${done ? 'is-transcoded' : ''}`}>
+                  <label key={quality} className={`transcode-quality-option ${done ? 'is-transcoded' : ''} ${supported ? '' : 'is-unsupported'}`}>
                     <input
                       type="checkbox"
                       checked={transcodeDialog.selected.includes(quality)}
                       onChange={() => toggleTranscodeQuality(quality)}
+                      disabled={!supported}
                     />
                     <span className="transcode-quality-name">{quality}</span>
-                    <span className={`transcode-quality-state ${done ? 'done' : 'pending'}`}>
-                      {done ? '已转' : '待转'}
+                    <span className={`transcode-quality-state ${done ? 'done' : supported ? 'pending' : 'unsupported'}`}>
+                      {done ? '已转' : supported ? '待转' : '不支持'}
                     </span>
                   </label>
                 )

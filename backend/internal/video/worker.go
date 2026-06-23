@@ -69,7 +69,14 @@ func HandleTranscodeTask(ctx context.Context, t *asynq.Task) error {
 		"finished_at":   nil,
 	})
 
-	duration, err := runTranscode(ctx, p.VideoID, p.Qualities, p.MergeExisting)
+	requestedQualities := p.Qualities
+	mergeMaster := p.MergeExisting
+	if p.Quality != "" {
+		requestedQualities = []string{p.Quality}
+		mergeMaster = true
+	}
+
+	duration, err := runTranscode(ctx, p.VideoID, requestedQualities, mergeMaster)
 	if err != nil {
 		errMsg := err.Error()
 		fin := time.Now()
@@ -78,36 +85,64 @@ func HandleTranscodeTask(ctx context.Context, t *asynq.Task) error {
 			"error_message": errMsg,
 			"finished_at":   fin,
 		})
-		status := "failed"
-		if p.MergeExisting && (p.PreviousStatus == "ready" || p.PreviousStatus == "offline") {
-			status = p.PreviousStatus
-		}
-		store.DB().Model(&store.Video{}).Where("id = ?", p.VideoID).Updates(map[string]interface{}{
-			"status":     status,
-			"updated_at": fin,
-		})
+		finalizeTranscodeBatch(p.VideoID, p.TaskID, p.PreviousStatus)
 		return err
 	}
 
 	masterKey := fmt.Sprintf("hls/%d/master.m3u8", p.VideoID)
 	coverKey := fmt.Sprintf("covers/%d/cover.jpg", p.VideoID)
 	fin := time.Now()
-	store.DB().Model(&store.VideoTranscodeTask{}).Where("id = ?", p.TaskID).Updates(map[string]interface{}{
-		"status":      "success",
-		"finished_at": fin,
-	})
-	status := "ready"
-	if p.MergeExisting && p.PreviousStatus == "offline" {
-		status = "offline"
-	}
 	store.DB().Model(&store.Video{}).Where("id = ?", p.VideoID).Updates(map[string]interface{}{
-		"status":         status,
 		"hls_master_key": masterKey,
 		"cover_key":      coverKey,
 		"duration":       duration,
 		"updated_at":     fin,
 	})
+	store.DB().Model(&store.VideoTranscodeTask{}).Where("id = ?", p.TaskID).Updates(map[string]interface{}{
+		"status":      "success",
+		"finished_at": fin,
+	})
+	finalizeTranscodeBatch(p.VideoID, p.TaskID, p.PreviousStatus)
 	return nil
+}
+
+func finalizeTranscodeBatch(videoID, taskID int64, previousStatus string) {
+	var current store.VideoTranscodeTask
+	if err := store.DB().First(&current, taskID).Error; err != nil {
+		return
+	}
+
+	tasks := []store.VideoTranscodeTask{current}
+	if current.BatchID != 0 {
+		if err := store.DB().Where("video_id = ? AND batch_id = ?", videoID, current.BatchID).Find(&tasks).Error; err != nil {
+			return
+		}
+	}
+
+	hasSuccess := false
+	for _, task := range tasks {
+		switch task.Status {
+		case "pending", "processing":
+			return
+		case "success":
+			hasSuccess = true
+		}
+	}
+
+	status := "failed"
+	if hasSuccess {
+		status = "ready"
+		if previousStatus == "offline" {
+			status = "offline"
+		}
+	} else if previousStatus == "ready" || previousStatus == "offline" {
+		status = previousStatus
+	}
+
+	store.DB().Model(&store.Video{}).Where("id = ?", videoID).Updates(map[string]interface{}{
+		"status":     status,
+		"updated_at": time.Now(),
+	})
 }
 
 func runTranscode(ctx context.Context, videoID int64, requestedQualities []string, mergeExisting bool) (int, error) {
@@ -136,6 +171,7 @@ func runTranscode(ctx context.Context, videoID int64, requestedQualities []strin
 	encoder := selectedTranscodeEncoder(ctx)
 	log.Printf("transcode encoder selected: %s", encoder.name)
 
+	completedQualities := make([]transcodeQuality, 0, len(qualities))
 	for _, q := range qualities {
 		outDir := filepath.Join(tmpDir, q.name)
 		if err := os.MkdirAll(outDir, 0755); err != nil {
@@ -149,25 +185,18 @@ func runTranscode(ctx context.Context, videoID int64, requestedQualities []strin
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 		if err := cmd.Run(); err != nil {
+			persistCompletedMaster(ctx, videoID, completedQualities, mergeExisting)
 			return 0, fmt.Errorf("ffmpeg %s: %w\n%s", q.name, err, stderr.String())
 		}
 
 		if err := uploadDir(ctx, outDir, fmt.Sprintf("hls/%d/%s", videoID, q.name)); err != nil {
+			persistCompletedMaster(ctx, videoID, completedQualities, mergeExisting)
 			return 0, fmt.Errorf("upload %s hls: %w", q.name, err)
 		}
+		completedQualities = append(completedQualities, q)
 	}
 
-	masterKey := fmt.Sprintf("hls/%d/master.m3u8", videoID)
-	existingMaster := ""
-	if mergeExisting {
-		if raw, err := readMinioText(ctx, masterKey); err == nil {
-			existingMaster = raw
-		} else {
-			log.Printf("read existing master playlist failed for video %d: %v", videoID, err)
-		}
-	}
-	masterContent := buildMasterPlaylist(existingMaster, qualities)
-	if err := putText(ctx, masterKey, masterContent, "application/vnd.apple.mpegurl"); err != nil {
+	if err := putMasterPlaylist(ctx, videoID, completedQualities, mergeExisting); err != nil {
 		return 0, fmt.Errorf("upload master.m3u8: %w", err)
 	}
 
@@ -180,6 +209,29 @@ func runTranscode(ctx context.Context, videoID int64, requestedQualities []strin
 
 	log.Printf("transcode done: video_id=%d duration=%ds", videoID, duration)
 	return duration, nil
+}
+
+func persistCompletedMaster(ctx context.Context, videoID int64, qualities []transcodeQuality, mergeExisting bool) {
+	if len(qualities) == 0 {
+		return
+	}
+	if err := putMasterPlaylist(ctx, videoID, qualities, mergeExisting); err != nil {
+		log.Printf("partial master playlist update failed for video %d: %v", videoID, err)
+	}
+}
+
+func putMasterPlaylist(ctx context.Context, videoID int64, qualities []transcodeQuality, mergeExisting bool) error {
+	masterKey := fmt.Sprintf("hls/%d/master.m3u8", videoID)
+	existingMaster := ""
+	if mergeExisting {
+		if raw, err := readMinioText(ctx, masterKey); err == nil {
+			existingMaster = raw
+		} else {
+			log.Printf("read existing master playlist failed for video %d: %v", videoID, err)
+		}
+	}
+	masterContent := buildMasterPlaylist(existingMaster, qualities)
+	return putText(ctx, masterKey, masterContent, "application/vnd.apple.mpegurl")
 }
 
 func buildMasterPlaylist(existing string, qualities []transcodeQuality) string {
@@ -248,7 +300,7 @@ func parseMasterPlaylistEntries(raw string) []masterPlaylistEntry {
 			resolution = parseMasterAttribute(line, "RESOLUTION")
 			continue
 		}
-		if line == "" || strings.HasPrefix(line, "#") || !strings.HasSuffix(line, ".m3u8") {
+		if line == "" || strings.HasPrefix(line, "#") || !strings.HasSuffix(masterURIPath(line), ".m3u8") {
 			continue
 		}
 		name := qualityNameFromMasterURI(line)
@@ -285,9 +337,23 @@ func parseMasterAttribute(line, key string) string {
 }
 
 func qualityNameFromMasterURI(uri string) string {
-	name := strings.TrimSuffix(uri, "/index.m3u8")
-	name = strings.TrimSuffix(name, "index.m3u8")
-	return strings.Trim(name, "/")
+	path := strings.Trim(masterURIPath(uri), "/")
+	path = strings.TrimSuffix(path, "/index.m3u8")
+	path = strings.TrimSuffix(path, "index.m3u8")
+	path = strings.Trim(path, "/")
+	if path == "" {
+		return ""
+	}
+	parts := strings.Split(path, "/")
+	return parts[len(parts)-1]
+}
+
+func masterURIPath(uri string) string {
+	path := strings.TrimSpace(uri)
+	if i := strings.IndexAny(path, "?#"); i >= 0 {
+		path = path[:i]
+	}
+	return strings.ReplaceAll(path, "\\", "/")
 }
 
 func qualityHeight(name string) int {

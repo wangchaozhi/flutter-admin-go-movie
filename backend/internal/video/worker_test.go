@@ -159,6 +159,29 @@ func TestBuildMasterPlaylistOverridesExistingQuality(t *testing.T) {
 	}
 }
 
+func TestParseMasterPlaylistEntriesHandlesSignedAbsoluteURIs(t *testing.T) {
+	raw := "#EXTM3U\n#EXT-X-VERSION:3\n\n" +
+		"#EXT-X-STREAM-INF:BANDWIDTH=1000000,RESOLUTION=640x360\n" +
+		"https://example.test/api/hls/10/360p/index.m3u8?expires=1&sign=x\n\n" +
+		"#EXT-X-STREAM-INF:BANDWIDTH=2800000,RESOLUTION=1280x720\n" +
+		"720p\\index.m3u8\n\n"
+
+	entries := parseMasterPlaylistEntries(raw)
+	if len(entries) != 2 {
+		t.Fatalf("entry count = %d, want 2: %#v", len(entries), entries)
+	}
+	if entries[0].name != "360p" || entries[1].name != "720p" {
+		t.Fatalf("entries = %#v, want 360p and 720p", entries)
+	}
+}
+
+func TestParseAvailableTranscodeQualityNames(t *testing.T) {
+	got := parseAvailableTranscodeQualityNames("selected transcode qualities are not available for source; available: 360p, 480p, 720p")
+	if strings.Join(got, ",") != "360p,480p,720p" {
+		t.Fatalf("available qualities = %#v", got)
+	}
+}
+
 func assertQualities(t *testing.T, got []transcodeQuality, want []struct {
 	name string
 	res  string
