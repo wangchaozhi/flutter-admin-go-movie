@@ -63,11 +63,19 @@ func (e nonRetryableTranscodeError) Unwrap() error {
 	return e.err
 }
 
+const transcodeQueuedStartWait = 30 * time.Second
+const staleTranscodeTaskAge = transcodeTaskTimeout + 30*time.Minute
+const staleQueuedTaskAge = 10 * time.Minute
+const sourceCacheMaxAge = 7 * 24 * time.Hour
+const sourceCachePruneInterval = time.Hour
+
 var (
 	transcodeEncoderOnce sync.Once
 	cachedEncoder        transcodeEncoder
 	videoTranscodeLocks  sync.Map
 	sourceCacheLocks     sync.Map
+	sourceCachePruneMu   sync.Mutex
+	sourceCachePrunedAt  time.Time
 )
 
 func HandleTranscodeTask(ctx context.Context, t *asynq.Task) error {
@@ -76,14 +84,6 @@ func HandleTranscodeTask(ctx context.Context, t *asynq.Task) error {
 		return err
 	}
 
-	now := time.Now()
-	store.DB().Model(&store.VideoTranscodeTask{}).Where("id = ?", p.TaskID).Updates(map[string]interface{}{
-		"status":        "processing",
-		"error_message": "",
-		"started_at":    now,
-		"finished_at":   nil,
-	})
-
 	requestedQualities := p.Qualities
 	mergeMaster := p.MergeExisting
 	if p.Quality != "" {
@@ -91,34 +91,98 @@ func HandleTranscodeTask(ctx context.Context, t *asynq.Task) error {
 		mergeMaster = true
 	}
 
+	taskState, shouldRun, err := waitForRunnableTranscodeTask(ctx, p.TaskID)
+	if taskState.PreviousStatus != "" {
+		p.PreviousStatus = taskState.PreviousStatus
+	}
+	if err != nil {
+		return handleTranscodeTaskError(ctx, p, err)
+	}
+	if !shouldRun {
+		return nil
+	}
+
+	attempt := 1
+	if retried, ok := asynq.GetRetryCount(ctx); ok {
+		attempt = retried + 1
+	}
+	now := time.Now()
+	store.DB().Model(&store.VideoTranscodeTask{}).Where("id = ?", p.TaskID).Updates(map[string]interface{}{
+		"status":         "processing",
+		"status_message": "准备转码",
+		"progress":       1,
+		"attempt":        attempt,
+		"error_message":  "",
+		"started_at":     now,
+		"finished_at":    nil,
+	})
+
 	if err := runTranscodeForTask(ctx, p.VideoID, p.TaskID, p.BatchID, requestedQualities, mergeMaster); err != nil {
-		returnErr := transcodeTaskReturnError(err)
-		errMsg := transcodeErrorMessage(err)
-		fin := time.Now()
-		if transcodeTaskWillRetry(ctx, returnErr) {
-			store.DB().Model(&store.VideoTranscodeTask{}).Where("id = ?", p.TaskID).Updates(map[string]interface{}{
-				"status":        "pending",
-				"error_message": errMsg,
-				"finished_at":   nil,
-			})
-			return returnErr
-		}
-		store.DB().Model(&store.VideoTranscodeTask{}).Where("id = ?", p.TaskID).Updates(map[string]interface{}{
-			"status":        "failed",
-			"error_message": errMsg,
-			"finished_at":   fin,
-		})
-		finalizeTranscodeBatch(ctx, p.VideoID, p.TaskID, p.PreviousStatus)
-		return returnErr
+		return handleTranscodeTaskError(ctx, p, err)
 	}
 
 	fin := time.Now()
 	store.DB().Model(&store.VideoTranscodeTask{}).Where("id = ?", p.TaskID).Updates(map[string]interface{}{
-		"status":      "success",
-		"finished_at": fin,
+		"status":         "success",
+		"status_message": "完成",
+		"progress":       100,
+		"finished_at":    fin,
 	})
 	finalizeTranscodeBatch(ctx, p.VideoID, p.TaskID, p.PreviousStatus)
 	return nil
+}
+
+func waitForRunnableTranscodeTask(ctx context.Context, taskID int64) (store.VideoTranscodeTask, bool, error) {
+	deadline := time.Now().Add(transcodeQueuedStartWait)
+	for {
+		var task store.VideoTranscodeTask
+		if err := store.DB().First(&task, taskID).Error; err != nil {
+			return task, false, err
+		}
+		switch task.Status {
+		case "queued":
+			if time.Now().After(deadline) {
+				return task, false, fmt.Errorf("transcode task stayed queued")
+			}
+			timer := time.NewTimer(200 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return task, false, ctx.Err()
+			case <-timer.C:
+			}
+		case "pending", "processing":
+			return task, true, nil
+		default:
+			log.Printf("skip transcode task: task_id=%d status=%s", task.ID, task.Status)
+			return task, false, nil
+		}
+	}
+}
+
+func handleTranscodeTaskError(ctx context.Context, p *TranscodePayload, err error) error {
+	returnErr := transcodeTaskReturnError(err)
+	errMsg := transcodeErrorMessage(err)
+	fin := time.Now()
+	if transcodeTaskWillRetry(ctx, returnErr) {
+		store.DB().Model(&store.VideoTranscodeTask{}).Where("id = ?", p.TaskID).Updates(map[string]interface{}{
+			"status":         "pending",
+			"status_message": "等待重试",
+			"progress":       0,
+			"error_message":  errMsg,
+			"finished_at":    nil,
+		})
+		return returnErr
+	}
+	store.DB().Model(&store.VideoTranscodeTask{}).Where("id = ?", p.TaskID).Updates(map[string]interface{}{
+		"status":         "failed",
+		"status_message": "失败",
+		"progress":       100,
+		"error_message":  errMsg,
+		"finished_at":    fin,
+	})
+	finalizeTranscodeBatch(ctx, p.VideoID, p.TaskID, p.PreviousStatus)
+	return returnErr
 }
 
 func runTranscodeForTask(ctx context.Context, videoID, taskID, batchID int64, requestedQualities []string, mergeExisting bool) error {
@@ -215,6 +279,9 @@ func finalizeTranscodeBatch(ctx context.Context, videoID, taskID int64, previous
 	if err := store.DB().First(&current, taskID).Error; err != nil {
 		return
 	}
+	if previousStatus == "" {
+		previousStatus = current.PreviousStatus
+	}
 
 	tasks := []store.VideoTranscodeTask{current}
 	if current.BatchID != 0 {
@@ -252,9 +319,41 @@ func finalizeTranscodeBatch(ctx context.Context, videoID, taskID int64, previous
 	}
 
 	store.DB().Model(&store.Video{}).Where("id = ?", videoID).Updates(updates)
+	if hasSuccess {
+		pruneUnreferencedHLSVersions(ctx, videoID)
+	}
+}
+
+func reconcileStaleTranscodeTasks(ctx context.Context, videoID int64) {
+	now := time.Now()
+	processingCutoff := now.Add(-staleTranscodeTaskAge)
+	queuedCutoff := now.Add(-staleQueuedTaskAge)
+	var tasks []store.VideoTranscodeTask
+	err := store.DB().
+		Where("video_id = ? AND ((status = ? AND started_at < ?) OR (status = ? AND created_at < ?))", videoID, "processing", processingCutoff, "queued", queuedCutoff).
+		Find(&tasks).Error
+	if err != nil || len(tasks) == 0 {
+		return
+	}
+
+	for _, task := range tasks {
+		message := "任务超时，已自动恢复"
+		if task.Status == "queued" {
+			message = "任务入队超时，已自动失败"
+		}
+		store.DB().Model(&store.VideoTranscodeTask{}).Where("id = ?", task.ID).Updates(map[string]interface{}{
+			"status":         "failed",
+			"status_message": message,
+			"progress":       100,
+			"error_message":  message,
+			"finished_at":    now,
+		})
+		finalizeTranscodeBatch(ctx, task.VideoID, task.ID, task.PreviousStatus)
+	}
 }
 
 func runTranscode(ctx context.Context, videoID, taskID, batchID int64, requestedQualities []string, mergeExisting bool) error {
+	updateTranscodeTaskProgress(taskID, "准备源文件", 5)
 	tmpRoot := strings.TrimSpace(config.Load().Worker.TranscodeTempDir)
 	if tmpRoot != "" {
 		if err := os.MkdirAll(tmpRoot, 0755); err != nil {
@@ -273,16 +372,19 @@ func runTranscode(ctx context.Context, videoID, taskID, batchID int64, requested
 		return err
 	}
 
+	updateTranscodeTaskProgress(taskID, "检查清晰度", 10)
 	qualities, err := selectRequestedTranscodeQualities(probeSourceSize(srcPath), requestedQualities)
 	if err != nil {
 		return err
 	}
+	updateTranscodeTaskProgress(taskID, "选择编码器", 15)
 	encoder := selectedTranscodeEncoder(ctx)
 	log.Printf("transcode encoder selected: %s", encoder.name)
 
 	outputVersion := transcodeOutputVersion(batchID, taskID)
 	completedQualities := make([]transcodeQuality, 0, len(qualities))
 	for _, q := range qualities {
+		updateTranscodeTaskProgress(taskID, "转码 "+q.name, 20)
 		outDir := filepath.Join(tmpDir, q.name)
 		if err := os.MkdirAll(outDir, 0755); err != nil {
 			return err
@@ -299,6 +401,7 @@ func runTranscode(ctx context.Context, videoID, taskID, batchID int64, requested
 			return fmt.Errorf("ffmpeg %s: %w\n%s", q.name, err, stderr.String())
 		}
 
+		updateTranscodeTaskProgress(taskID, "上传 "+q.name, 75)
 		if err := uploadDir(ctx, outDir, transcodeQualityObjectPrefix(videoID, outputVersion, q.name)); err != nil {
 			persistCompletedMaster(ctx, videoID, completedQualities, mergeExisting, outputVersion)
 			return fmt.Errorf("upload %s hls: %w", q.name, err)
@@ -306,12 +409,30 @@ func runTranscode(ctx context.Context, videoID, taskID, batchID int64, requested
 		completedQualities = append(completedQualities, q)
 	}
 
+	updateTranscodeTaskProgress(taskID, "更新播放列表", 90)
 	if err := putMasterPlaylist(ctx, videoID, completedQualities, mergeExisting, outputVersion); err != nil {
 		return fmt.Errorf("upload master.m3u8: %w", err)
 	}
 
+	updateTranscodeTaskProgress(taskID, "等待批次完成", 95)
 	log.Printf("transcode done: video_id=%d qualities=%s", videoID, strings.Join(transcodeQualityNames(completedQualities), ","))
 	return nil
+}
+
+func updateTranscodeTaskProgress(taskID int64, message string, progress int) {
+	if taskID <= 0 {
+		return
+	}
+	if progress < 0 {
+		progress = 0
+	}
+	if progress > 100 {
+		progress = 100
+	}
+	store.DB().Model(&store.VideoTranscodeTask{}).Where("id = ?", taskID).Updates(map[string]interface{}{
+		"status_message": message,
+		"progress":       progress,
+	})
 }
 
 func refreshTranscodeVideoMetadata(ctx context.Context, videoID int64, updates map[string]interface{}) {
@@ -440,6 +561,7 @@ func cachedSourcePath(ctx context.Context, videoID int64, srcKey, tmpRoot string
 		return "", fmt.Errorf("move source cache: %w", err)
 	}
 	pruneSourceCache(videoCacheDir, filepath.Base(cachePath))
+	maybePruneSourceCacheRoot(tmpRoot)
 	log.Printf("transcode source cached: video_id=%d path=%s", videoID, cachePath)
 	return cachePath, nil
 }
@@ -496,6 +618,7 @@ func cacheUploadedSource(ctx context.Context, videoID int64, srcKey string, size
 		return "", fmt.Errorf("move source cache: %w", err)
 	}
 	pruneSourceCache(videoCacheDir, filepath.Base(cachePath))
+	maybePruneSourceCacheRoot(strings.TrimSpace(config.Load().Worker.TranscodeTempDir))
 	log.Printf("transcode source cached from upload: video_id=%d path=%s", videoID, cachePath)
 	return cachePath, nil
 }
@@ -561,6 +684,55 @@ func pruneSourceCache(videoCacheDir, keepName string) {
 			continue
 		}
 		_ = os.Remove(filepath.Join(videoCacheDir, entry.Name()))
+	}
+}
+
+func maybePruneSourceCacheRoot(tmpRoot string) {
+	sourceCachePruneMu.Lock()
+	if time.Since(sourceCachePrunedAt) < sourceCachePruneInterval {
+		sourceCachePruneMu.Unlock()
+		return
+	}
+	sourceCachePrunedAt = time.Now()
+	sourceCachePruneMu.Unlock()
+
+	root := sourceCacheRoot(tmpRoot)
+	cutoff := time.Now().Add(-sourceCacheMaxAge)
+	if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || path == root {
+			return nil
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil || info.ModTime().After(cutoff) {
+			return nil
+		}
+		if err := os.Remove(path); err != nil {
+			log.Printf("remove stale source cache %s failed: %v", path, err)
+		}
+		return nil
+	}); err != nil && !os.IsNotExist(err) {
+		log.Printf("prune source cache root %s failed: %v", root, err)
+	}
+	removeEmptySourceCacheDirs(root)
+}
+
+func removeEmptySourceCacheDirs(root string) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		dir := filepath.Join(root, entry.Name())
+		children, err := os.ReadDir(dir)
+		if err == nil && len(children) == 0 {
+			_ = os.Remove(dir)
+		}
 	}
 }
 
@@ -668,6 +840,64 @@ func transcodeQualityMasterURI(outputVersion, quality string) string {
 		return fmt.Sprintf("%s/index.m3u8", quality)
 	}
 	return fmt.Sprintf("versions/%s/%s/index.m3u8", outputVersion, quality)
+}
+
+func pruneUnreferencedHLSVersions(ctx context.Context, videoID int64) {
+	raw, err := readMinioText(ctx, fmt.Sprintf("hls/%d/master.m3u8", videoID))
+	if err != nil {
+		return
+	}
+	keep := referencedHLSVersions(raw)
+	prefix := fmt.Sprintf("hls/%d/versions/", videoID)
+	objectCh := store.ObjectClient().ListObjects(ctx, store.VideoBucket(), minio.ListObjectsOptions{
+		Prefix:    prefix,
+		Recursive: true,
+	})
+	removeCh := make(chan minio.ObjectInfo)
+	go func() {
+		defer close(removeCh)
+		for obj := range objectCh {
+			if obj.Err != nil {
+				log.Printf("list HLS version object failed for video %d: %v", videoID, obj.Err)
+				continue
+			}
+			version := hlsVersionFromObjectKey(videoID, obj.Key)
+			if version == "" || keep[version] {
+				continue
+			}
+			removeCh <- obj
+		}
+	}()
+	for result := range store.ObjectClient().RemoveObjects(ctx, store.VideoBucket(), removeCh, minio.RemoveObjectsOptions{}) {
+		if result.Err != nil {
+			log.Printf("delete stale HLS version object %s failed: %v", result.ObjectName, result.Err)
+		}
+	}
+}
+
+func referencedHLSVersions(master string) map[string]bool {
+	keep := map[string]bool{}
+	for _, entry := range parseMasterPlaylistEntries(master) {
+		uriPath := strings.Trim(masterURIPath(entry.uri), "/")
+		parts := strings.Split(uriPath, "/")
+		if len(parts) >= 3 && parts[0] == "versions" && parts[1] != "" {
+			keep[parts[1]] = true
+		}
+	}
+	return keep
+}
+
+func hlsVersionFromObjectKey(videoID int64, key string) string {
+	prefix := fmt.Sprintf("hls/%d/versions/", videoID)
+	rest := strings.TrimPrefix(key, prefix)
+	if rest == key {
+		return ""
+	}
+	parts := strings.Split(rest, "/")
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(parts[0])
 }
 
 func parseMasterPlaylistEntries(raw string) []masterPlaylistEntry {

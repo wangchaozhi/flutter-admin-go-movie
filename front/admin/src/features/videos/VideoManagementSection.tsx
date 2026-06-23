@@ -51,6 +51,19 @@ function formatBytes(bytes: number) {
   return (bytes / 1024).toFixed(0) + ' KB'
 }
 
+function isActiveTranscodeStatus(status?: string) {
+  return status === 'queued' || status === 'pending' || status === 'processing'
+}
+
+function transcodeStateLabel(status: string | undefined, fallback: string, progress?: number) {
+  if (status === 'failed') return '失败'
+  if (status === 'success') return '已转'
+  if (status === 'queued') return '等待入队'
+  if (status === 'pending') return '等待转码'
+  if (status === 'processing') return `${fallback || '转码中'} ${progress ?? 0}%`
+  return fallback
+}
+
 export function VideoManagementSection({
   token,
   can,
@@ -210,9 +223,13 @@ export function VideoManagementSection({
     const done = new Set(video.transcoded_qualities ?? [])
     const available = new Set(video.available_transcode_qualities ?? [])
     const canSelectQuality = (quality: string) => available.size === 0 || available.has(quality)
-    const selected = video.status === 'ready' || video.status === 'offline'
-      ? (done.size > 0 ? TRANSCODE_QUALITIES.filter(quality => !done.has(quality) && canSelectQuality(quality)) : [])
-      : TRANSCODE_QUALITIES.filter(canSelectQuality)
+    const latestTask = taskStatus[video.id]
+    const failedQualities = TRANSCODE_QUALITIES.filter(quality => latestTask?.quality_statuses?.[quality] === 'failed' && canSelectQuality(quality))
+    const selected = failedQualities.length > 0
+      ? failedQualities
+      : (video.status === 'ready' || video.status === 'offline')
+        ? (done.size > 0 ? TRANSCODE_QUALITIES.filter(quality => !done.has(quality) && canSelectQuality(quality)) : [])
+        : TRANSCODE_QUALITIES.filter(canSelectQuality)
     setTranscodeDialog({ video, selected })
   }
 
@@ -249,7 +266,7 @@ export function VideoManagementSection({
     const json: ApiResponse<TranscodeTask> = await res.json()
     if (json.code === 0 && json.data) {
       setTaskStatus(prev => ({ ...prev, [videoId]: json.data! }))
-      if (json.data.status === 'processing' || json.data.status === 'pending') {
+      if (isActiveTranscodeStatus(json.data.status)) {
         setTimeout(() => pollTaskStatus(videoId), 3000)
       } else {
         await loadVideos()
@@ -304,8 +321,13 @@ export function VideoManagementSection({
                       <span className={`status-badge ${STATUS_CLASS[v.status] ?? ''}`}>
                         {STATUS_LABEL[v.status] ?? v.status}
                       </span>
-                      {task && (task.status === 'pending' || task.status === 'processing') && (
+                      {task && isActiveTranscodeStatus(task.status) && (
                         <Loader size={12} className="spin" style={{ marginLeft: 4 }} />
+                      )}
+                      {task && isActiveTranscodeStatus(task.status) && (
+                        <div className="transcode-inline-progress">
+                          {task.status_message || '等待转码'}{task.progress > 0 ? ` ${task.progress}%` : ''}
+                        </div>
                       )}
                     </td>
                     <td className="text-faint">{formatBytes(v.size)}</td>
@@ -484,18 +506,50 @@ export function VideoManagementSection({
                 const done = transcodeDialog.video.transcoded_qualities?.includes(quality) ?? false
                 const available = transcodeDialog.video.available_transcode_qualities
                 const supported = !available?.length || available.includes(quality)
+                const currentTask = taskStatus[transcodeDialog.video.id]
+                const qualityStatus = currentTask?.quality_statuses?.[quality]
+                const qualityMessage = currentTask?.quality_messages?.[quality] ?? ''
+                const qualityProgress = currentTask?.quality_progress?.[quality]
+                const active = isActiveTranscodeStatus(qualityStatus)
+                const failed = qualityStatus === 'failed'
+                const stateLabel = failed
+                  ? (qualityMessage || '失败')
+                  : active
+                    ? transcodeStateLabel(qualityStatus, qualityMessage, qualityProgress)
+                    : done ? '已转' : supported ? '待转' : '不支持'
+                const badgeLabel = failed
+                  ? '失败'
+                  : active
+                    ? '进行中'
+                    : done ? '已转' : supported ? '待转' : '不支持'
+                const showDetail = stateLabel !== badgeLabel
                 return (
-                  <label key={quality} className={`transcode-quality-option ${done ? 'is-transcoded' : ''} ${supported ? '' : 'is-unsupported'}`}>
+                  <label key={quality} className={`transcode-quality-option ${done ? 'is-transcoded' : ''} ${failed ? 'is-failed' : ''} ${supported ? '' : 'is-unsupported'}`}>
                     <input
                       type="checkbox"
                       checked={transcodeDialog.selected.includes(quality)}
                       onChange={() => toggleTranscodeQuality(quality)}
-                      disabled={!supported}
+                      disabled={!supported || active}
                     />
                     <span className="transcode-quality-name">{quality}</span>
-                    <span className={`transcode-quality-state ${done ? 'done' : supported ? 'pending' : 'unsupported'}`}>
-                      {done ? '已转' : supported ? '待转' : '不支持'}
+                    <span className={`transcode-quality-state ${failed ? 'failed' : done ? 'done' : supported ? 'pending' : 'unsupported'}`}>
+                      {badgeLabel}
                     </span>
+                    {showDetail && <span className="transcode-quality-detail">{stateLabel}</span>}
+                    {failed && supported && (
+                      <button
+                        type="button"
+                        className="transcode-quality-retry"
+                        disabled={transcoding}
+                        onClick={e => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          handleTranscode(transcodeDialog.video.id, [quality])
+                        }}
+                      >
+                        重试
+                      </button>
+                    )}
                   </label>
                 )
               })}

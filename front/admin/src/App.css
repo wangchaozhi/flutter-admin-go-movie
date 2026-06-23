@@ -800,6 +800,11 @@ td {
   opacity: 0.72;
 }
 
+.transcode-quality-option.is-failed {
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+}
+
 .transcode-quality-option:has(input:checked) {
   border-color: var(--primary);
   background: var(--surface-subtle);
@@ -842,6 +847,36 @@ td {
 
 .transcode-quality-state.unsupported {
   color: var(--text-faint);
+}
+
+.transcode-quality-state.failed {
+  border-color: var(--danger-border);
+  color: var(--danger-text);
+}
+
+.transcode-quality-detail {
+  flex: 0 1 96px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.25;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transcode-quality-retry {
+  min-height: 26px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.transcode-inline-progress {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .danger-confirm {

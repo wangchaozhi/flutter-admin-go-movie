@@ -27,15 +27,19 @@ type Video struct {
 func (Video) TableName() string { return "videos" }
 
 type VideoTranscodeTask struct {
-	ID           int64      `gorm:"primaryKey;column:id"    json:"id"`
-	VideoID      int64      `gorm:"column:video_id"         json:"video_id"`
-	BatchID      int64      `gorm:"column:batch_id"         json:"batch_id"`
-	Quality      string     `gorm:"column:quality"          json:"quality"`
-	Status       string     `gorm:"column:status"           json:"status"`
-	ErrorMessage string     `gorm:"column:error_message"    json:"error_message"`
-	StartedAt    *time.Time `gorm:"column:started_at"       json:"started_at"`
-	FinishedAt   *time.Time `gorm:"column:finished_at"      json:"finished_at"`
-	CreatedAt    time.Time  `gorm:"column:created_at"       json:"created_at"`
+	ID             int64      `gorm:"primaryKey;column:id"    json:"id"`
+	VideoID        int64      `gorm:"column:video_id"         json:"video_id"`
+	BatchID        int64      `gorm:"column:batch_id"         json:"batch_id"`
+	Quality        string     `gorm:"column:quality"          json:"quality"`
+	PreviousStatus string     `gorm:"column:previous_status"  json:"previous_status"`
+	Status         string     `gorm:"column:status"           json:"status"`
+	StatusMessage  string     `gorm:"column:status_message"   json:"status_message"`
+	Progress       int        `gorm:"column:progress"          json:"progress"`
+	Attempt        int        `gorm:"column:attempt"           json:"attempt"`
+	ErrorMessage   string     `gorm:"column:error_message"    json:"error_message"`
+	StartedAt      *time.Time `gorm:"column:started_at"       json:"started_at"`
+	FinishedAt     *time.Time `gorm:"column:finished_at"      json:"finished_at"`
+	CreatedAt      time.Time  `gorm:"column:created_at"       json:"created_at"`
 }
 
 func (VideoTranscodeTask) TableName() string { return "video_transcode_tasks" }

@@ -45,14 +45,22 @@ export type VideoForm = {
   is_free: boolean
 }
 
+export type TranscodeTaskStatus = 'queued' | 'pending' | 'processing' | 'success' | 'failed'
+
 export type TranscodeTask = {
   id: number
   video_id: number
   batch_id: number
   quality: string
-  status: 'pending' | 'processing' | 'success' | 'failed'
+  previous_status: string
+  status: TranscodeTaskStatus
+  status_message: string
+  progress: number
+  attempt: number
   error_message: string
-  quality_statuses?: Record<string, 'pending' | 'processing' | 'success' | 'failed'>
+  quality_statuses?: Record<string, TranscodeTaskStatus>
+  quality_messages?: Record<string, string>
+  quality_progress?: Record<string, number>
   started_at: string | null
   finished_at: string | null
   created_at: string

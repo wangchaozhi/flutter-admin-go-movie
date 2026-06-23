@@ -24,6 +24,8 @@ type transcodeRequest struct {
 type transcodeStatusResponse struct {
 	store.VideoTranscodeTask
 	QualityStatuses map[string]string `json:"quality_statuses,omitempty"`
+	QualityMessages map[string]string `json:"quality_messages,omitempty"`
+	QualityProgress map[string]int    `json:"quality_progress,omitempty"`
 }
 
 // POST /api/admin/videos
@@ -215,6 +217,7 @@ func AdminTranscodeHandler(w http.ResponseWriter, r *http.Request) {
 		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "video not uploaded yet"})
 		return
 	}
+	reconcileStaleTranscodeTasks(r.Context(), videoID)
 	var req transcodeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
 		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "invalid body"})
@@ -254,10 +257,12 @@ func AdminTranscodeHandler(w http.ResponseWriter, r *http.Request) {
 	tasks := make([]store.VideoTranscodeTask, 0, len(requestedQualities))
 	for _, quality := range requestedQualities {
 		tasks = append(tasks, store.VideoTranscodeTask{
-			VideoID: videoID,
-			BatchID: batchID,
-			Quality: quality,
-			Status:  "pending",
+			VideoID:        videoID,
+			BatchID:        batchID,
+			Quality:        quality,
+			PreviousStatus: previousStatus,
+			Status:         "queued",
+			StatusMessage:  "等待入队",
 		})
 	}
 	if err := store.DB().Create(&tasks).Error; err != nil {
@@ -271,9 +276,17 @@ func AdminTranscodeHandler(w http.ResponseWriter, r *http.Request) {
 	for _, task := range tasks {
 		taskIDs = append(taskIDs, task.ID)
 		if err := EnqueueTranscode(r.Context(), videoID, task.ID, task.BatchID, task.Quality, mergeExisting, previousStatus); err != nil {
+			failQueuedTranscodeBatch(videoID, batchID, previousStatus, err)
 			common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: "enqueue failed: " + err.Error()})
 			return
 		}
+	}
+	if err := store.DB().Model(&store.VideoTranscodeTask{}).
+		Where("video_id = ? AND batch_id = ? AND status = ?", videoID, batchID, "queued").
+		Updates(map[string]interface{}{"status": "pending", "status_message": "等待转码", "progress": 0}).Error; err != nil {
+		failQueuedTranscodeBatch(videoID, batchID, previousStatus, err)
+		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: "mark pending failed: " + err.Error()})
+		return
 	}
 
 	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: map[string]interface{}{
@@ -286,7 +299,7 @@ func AdminTranscodeHandler(w http.ResponseWriter, r *http.Request) {
 func activeTranscodeTasks(videoID int64) ([]store.VideoTranscodeTask, error) {
 	var tasks []store.VideoTranscodeTask
 	err := store.DB().
-		Where("video_id = ? AND status IN ?", videoID, []string{"pending", "processing"}).
+		Where("video_id = ? AND status IN ?", videoID, []string{"queued", "pending", "processing"}).
 		Order("id asc").
 		Find(&tasks).Error
 	return tasks, err
@@ -315,6 +328,28 @@ func activeTranscodeResponse(tasks []store.VideoTranscodeTask) map[string]interf
 		"qualities": qualities,
 		"status":    status,
 	}
+}
+
+func failQueuedTranscodeBatch(videoID, batchID int64, previousStatus string, enqueueErr error) {
+	now := time.Now()
+	message := "入队失败: " + enqueueErr.Error()
+	store.DB().Model(&store.VideoTranscodeTask{}).
+		Where("video_id = ? AND batch_id = ? AND status IN ?", videoID, batchID, []string{"queued", "pending"}).
+		Updates(map[string]interface{}{
+			"status":         "failed",
+			"status_message": "入队失败",
+			"error_message":  message,
+			"finished_at":    now,
+		})
+
+	status := previousStatus
+	if status == "" || status == "transcoding" {
+		status = "failed"
+	}
+	store.DB().Model(&store.Video{}).Where("id = ?", videoID).Updates(map[string]interface{}{
+		"status":     status,
+		"updated_at": now,
+	})
 }
 
 func normalizeTranscodeQualityNames(input []string) ([]string, error) {
@@ -356,6 +391,7 @@ func AdminTranscodeStatusHandler(w http.ResponseWriter, r *http.Request) {
 		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "invalid video id"})
 		return
 	}
+	reconcileStaleTranscodeTasks(r.Context(), videoID)
 
 	var task store.VideoTranscodeTask
 	if err := store.DB().Where("video_id = ?", videoID).Order("id desc").First(&task).Error; err != nil {
@@ -379,6 +415,8 @@ func aggregateTranscodeStatus(base store.VideoTranscodeTask, tasks []store.Video
 	resp := transcodeStatusResponse{
 		VideoTranscodeTask: base,
 		QualityStatuses:    make(map[string]string, len(tasks)),
+		QualityMessages:    make(map[string]string, len(tasks)),
+		QualityProgress:    make(map[string]int, len(tasks)),
 	}
 	if len(tasks) == 0 {
 		return resp
@@ -387,12 +425,18 @@ func aggregateTranscodeStatus(base store.VideoTranscodeTask, tasks []store.Video
 	hasProcessing := false
 	hasPending := false
 	hasFailed := false
+	totalProgress := 0
 	resp.ErrorMessage = ""
 	for _, task := range tasks {
+		totalProgress += task.Progress
 		if task.Quality != "" {
 			resp.QualityStatuses[task.Quality] = task.Status
+			resp.QualityMessages[task.Quality] = task.StatusMessage
+			resp.QualityProgress[task.Quality] = task.Progress
 		}
 		switch task.Status {
+		case "queued":
+			hasPending = true
 		case "processing":
 			hasProcessing = true
 		case "pending":
@@ -418,8 +462,35 @@ func aggregateTranscodeStatus(base store.VideoTranscodeTask, tasks []store.Video
 	default:
 		resp.Status = "success"
 	}
+	resp.Progress = totalProgress / len(tasks)
+	resp.StatusMessage = aggregateTranscodeMessage(tasks, resp.Status)
 	resp.BatchID = tasks[0].BatchID
 	return resp
+}
+
+func aggregateTranscodeMessage(tasks []store.VideoTranscodeTask, status string) string {
+	for _, task := range tasks {
+		if task.Status == "processing" && task.StatusMessage != "" {
+			return task.Quality + " " + task.StatusMessage
+		}
+	}
+	for _, task := range tasks {
+		if (task.Status == "queued" || task.Status == "pending") && task.StatusMessage != "" {
+			return task.Quality + " " + task.StatusMessage
+		}
+	}
+	for _, task := range tasks {
+		if task.Status == "failed" && task.ErrorMessage != "" {
+			if task.Quality != "" {
+				return task.Quality + " 失败"
+			}
+			return task.ErrorMessage
+		}
+	}
+	if status == "success" {
+		return "完成"
+	}
+	return ""
 }
 
 // GET /api/admin/videos

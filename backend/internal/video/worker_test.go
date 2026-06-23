@@ -186,6 +186,23 @@ func TestBuildVersionedMasterPlaylistUsesVersionedURI(t *testing.T) {
 	assertContains(t, got, "versions/batch-1/720p/index.m3u8")
 }
 
+func TestReferencedHLSVersions(t *testing.T) {
+	master := buildVersionedMasterPlaylist("", []transcodeQuality{
+		{name: "720p", bandwidth: "2800000", res: "1280x720"},
+	}, "batch-1")
+	got := referencedHLSVersions(master)
+	if !got["batch-1"] {
+		t.Fatalf("referenced versions = %#v, want batch-1", got)
+	}
+}
+
+func TestHLSVersionFromObjectKey(t *testing.T) {
+	got := hlsVersionFromObjectKey(10, "hls/10/versions/batch-1/720p/index.m3u8")
+	if got != "batch-1" {
+		t.Fatalf("version = %q, want batch-1", got)
+	}
+}
+
 func TestParseMasterPlaylistEntriesHandlesSignedAbsoluteURIs(t *testing.T) {
 	raw := "#EXTM3U\n#EXT-X-VERSION:3\n\n" +
 		"#EXT-X-STREAM-INF:BANDWIDTH=1000000,RESOLUTION=640x360\n" +
@@ -234,6 +251,22 @@ func TestAvailableTranscodeQualityNamesUsesSourceMetadata(t *testing.T) {
 	})
 	if strings.Join(got, ",") != "360p,480p,720p" {
 		t.Fatalf("available qualities = %#v", got)
+	}
+}
+
+func TestAggregateTranscodeStatusIncludesQueuedProgress(t *testing.T) {
+	resp := aggregateTranscodeStatus(store.VideoTranscodeTask{BatchID: 1}, []store.VideoTranscodeTask{
+		{BatchID: 1, Quality: "720p", Status: "queued", StatusMessage: "等待入队", Progress: 10},
+		{BatchID: 1, Quality: "1080p", Status: "processing", StatusMessage: "转码 1080p", Progress: 30},
+	})
+	if resp.Status != "processing" {
+		t.Fatalf("status = %q, want processing", resp.Status)
+	}
+	if resp.Progress != 20 {
+		t.Fatalf("progress = %d, want 20", resp.Progress)
+	}
+	if resp.QualityMessages["1080p"] != "转码 1080p" {
+		t.Fatalf("quality messages = %#v", resp.QualityMessages)
 	}
 }
 
