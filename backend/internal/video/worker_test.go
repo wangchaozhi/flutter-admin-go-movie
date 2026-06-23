@@ -186,6 +186,32 @@ func TestBuildVersionedMasterPlaylistUsesVersionedURI(t *testing.T) {
 	assertContains(t, got, "versions/batch-1/720p/index.m3u8")
 }
 
+func TestRenderMasterPlaylistDropsRemovedQuality(t *testing.T) {
+	master := buildVersionedMasterPlaylist("", []transcodeQuality{
+		{name: "360p", bandwidth: "1000000", res: "640x360"},
+		{name: "480p", bandwidth: "1400000", res: "854x480"},
+		{name: "720p", bandwidth: "2800000", res: "1280x720"},
+	}, "batch-1")
+
+	remaining := make(map[string]masterPlaylistEntry)
+	for _, entry := range parseMasterPlaylistEntries(master) {
+		if entry.name == "480p" {
+			continue
+		}
+		remaining[entry.name] = entry
+	}
+	got := renderMasterPlaylist(remaining)
+
+	assertContains(t, got, "versions/batch-1/360p/index.m3u8")
+	assertContains(t, got, "versions/batch-1/720p/index.m3u8")
+	if strings.Contains(got, "480p/index.m3u8") {
+		t.Fatalf("master playlist should not contain removed quality:\n%s", got)
+	}
+	if strings.Index(got, "360p/index.m3u8") > strings.Index(got, "720p/index.m3u8") {
+		t.Fatalf("master playlist should remain sorted by quality height:\n%s", got)
+	}
+}
+
 func TestReferencedHLSVersions(t *testing.T) {
 	master := buildVersionedMasterPlaylist("", []transcodeQuality{
 		{name: "720p", bandwidth: "2800000", res: "1280x720"},

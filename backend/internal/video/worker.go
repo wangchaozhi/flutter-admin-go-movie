@@ -776,7 +776,12 @@ func buildVersionedMasterPlaylist(existing string, qualities []transcodeQuality,
 			uri:        transcodeQualityMasterURI(outputVersion, q.name),
 		}
 	}
+	return renderMasterPlaylist(entriesByName)
+}
 
+// renderMasterPlaylist writes a master.m3u8 from the given entries, sorted by
+// quality height ascending.
+func renderMasterPlaylist(entriesByName map[string]masterPlaylistEntry) string {
 	entries := make([]masterPlaylistEntry, 0, len(entriesByName))
 	for _, entry := range entriesByName {
 		entries = append(entries, entry)

@@ -879,6 +879,72 @@ td {
   line-height: 1.35;
 }
 
+/* ── Per-quality transcode detail (expandable row) ── */
+.quality-toggle {
+  min-height: 30px;
+  padding: 0 10px;
+  color: var(--text-muted);
+  background: var(--surface);
+  border-color: var(--border);
+}
+
+.quality-detail-row > td {
+  padding: 0;
+  background: var(--surface-muted);
+}
+
+.quality-detail-row .quality-table {
+  margin: 0;
+}
+
+.quality-detail-row .quality-table th {
+  background: transparent;
+  font-size: 12px;
+}
+
+.quality-detail-row .quality-table th,
+.quality-detail-row .quality-table td {
+  border-bottom: 1px solid var(--border);
+  padding: 8px 10px;
+}
+
+.quality-detail-row .quality-table tr:last-child td {
+  border-bottom: none;
+}
+
+.quality-name {
+  font-weight: 600;
+}
+
+.quality-ok-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--success-text);
+  vertical-align: middle;
+}
+
+.quality-error {
+  margin-top: 4px;
+  color: var(--danger-text);
+  font-size: 11px;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quality-empty {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 14px 12px;
+  color: var(--text-faint);
+  font-size: 13px;
+}
+
 .danger-confirm {
   background: var(--danger-text);
   border-color: var(--danger-text);
