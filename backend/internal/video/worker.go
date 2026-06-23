@@ -78,8 +78,7 @@ func HandleTranscodeTask(ctx context.Context, t *asynq.Task) error {
 		mergeMaster = true
 	}
 
-	duration, err := runTranscodeForTask(ctx, p.VideoID, p.TaskID, requestedQualities, mergeMaster)
-	if err != nil {
+	if err := runTranscodeForTask(ctx, p.VideoID, p.TaskID, requestedQualities, mergeMaster); err != nil {
 		errMsg := err.Error()
 		fin := time.Now()
 		store.DB().Model(&store.VideoTranscodeTask{}).Where("id = ?", p.TaskID).Updates(map[string]interface{}{
@@ -87,28 +86,20 @@ func HandleTranscodeTask(ctx context.Context, t *asynq.Task) error {
 			"error_message": errMsg,
 			"finished_at":   fin,
 		})
-		finalizeTranscodeBatch(p.VideoID, p.TaskID, p.PreviousStatus)
+		finalizeTranscodeBatch(ctx, p.VideoID, p.TaskID, p.PreviousStatus)
 		return err
 	}
 
-	masterKey := fmt.Sprintf("hls/%d/master.m3u8", p.VideoID)
-	coverKey := fmt.Sprintf("covers/%d/cover.jpg", p.VideoID)
 	fin := time.Now()
-	store.DB().Model(&store.Video{}).Where("id = ?", p.VideoID).Updates(map[string]interface{}{
-		"hls_master_key": masterKey,
-		"cover_key":      coverKey,
-		"duration":       duration,
-		"updated_at":     fin,
-	})
 	store.DB().Model(&store.VideoTranscodeTask{}).Where("id = ?", p.TaskID).Updates(map[string]interface{}{
 		"status":      "success",
 		"finished_at": fin,
 	})
-	finalizeTranscodeBatch(p.VideoID, p.TaskID, p.PreviousStatus)
+	finalizeTranscodeBatch(ctx, p.VideoID, p.TaskID, p.PreviousStatus)
 	return nil
 }
 
-func runTranscodeForTask(ctx context.Context, videoID, taskID int64, requestedQualities []string, mergeExisting bool) (int, error) {
+func runTranscodeForTask(ctx context.Context, videoID, taskID int64, requestedQualities []string, mergeExisting bool) error {
 	lock := videoTranscodeLock(videoID)
 	log.Printf("transcode video lock wait: video_id=%d task_id=%d", videoID, taskID)
 	lock.Lock()
@@ -123,7 +114,7 @@ func videoTranscodeLock(videoID int64) *sync.Mutex {
 	return lock.(*sync.Mutex)
 }
 
-func finalizeTranscodeBatch(videoID, taskID int64, previousStatus string) {
+func finalizeTranscodeBatch(ctx context.Context, videoID, taskID int64, previousStatus string) {
 	var current store.VideoTranscodeTask
 	if err := store.DB().First(&current, taskID).Error; err != nil {
 		return
@@ -156,34 +147,39 @@ func finalizeTranscodeBatch(videoID, taskID int64, previousStatus string) {
 		status = previousStatus
 	}
 
-	store.DB().Model(&store.Video{}).Where("id = ?", videoID).Updates(map[string]interface{}{
+	updates := map[string]interface{}{
 		"status":     status,
 		"updated_at": time.Now(),
-	})
+	}
+	if hasSuccess {
+		refreshTranscodeVideoMetadata(ctx, videoID, updates)
+	}
+
+	store.DB().Model(&store.Video{}).Where("id = ?", videoID).Updates(updates)
 }
 
-func runTranscode(ctx context.Context, videoID int64, requestedQualities []string, mergeExisting bool) (int, error) {
+func runTranscode(ctx context.Context, videoID int64, requestedQualities []string, mergeExisting bool) error {
 	tmpRoot := strings.TrimSpace(config.Load().Worker.TranscodeTempDir)
 	if tmpRoot != "" {
 		if err := os.MkdirAll(tmpRoot, 0755); err != nil {
-			return 0, fmt.Errorf("create transcode temp root: %w", err)
+			return fmt.Errorf("create transcode temp root: %w", err)
 		}
 	}
 	tmpDir, err := os.MkdirTemp(tmpRoot, fmt.Sprintf("transcode_%d_", videoID))
 	if err != nil {
-		return 0, fmt.Errorf("create temp dir: %w", err)
+		return fmt.Errorf("create temp dir: %w", err)
 	}
 	defer os.RemoveAll(tmpDir)
 
 	srcKey := fmt.Sprintf("originals/%d/source.mp4", videoID)
 	srcPath, err := cachedSourcePath(ctx, videoID, srcKey, tmpRoot)
 	if err != nil {
-		return 0, err
+		return err
 	}
 
 	qualities, err := selectRequestedTranscodeQualities(probeSourceSize(srcPath), requestedQualities)
 	if err != nil {
-		return 0, err
+		return err
 	}
 	encoder := selectedTranscodeEncoder(ctx)
 	log.Printf("transcode encoder selected: %s", encoder.name)
@@ -192,7 +188,7 @@ func runTranscode(ctx context.Context, videoID int64, requestedQualities []strin
 	for _, q := range qualities {
 		outDir := filepath.Join(tmpDir, q.name)
 		if err := os.MkdirAll(outDir, 0755); err != nil {
-			return 0, err
+			return err
 		}
 		segPattern := filepath.Join(outDir, "seg_%03d.ts")
 		m3u8Out := filepath.Join(outDir, "index.m3u8")
@@ -203,29 +199,105 @@ func runTranscode(ctx context.Context, videoID int64, requestedQualities []strin
 		cmd.Stderr = &stderr
 		if err := cmd.Run(); err != nil {
 			persistCompletedMaster(ctx, videoID, completedQualities, mergeExisting)
-			return 0, fmt.Errorf("ffmpeg %s: %w\n%s", q.name, err, stderr.String())
+			return fmt.Errorf("ffmpeg %s: %w\n%s", q.name, err, stderr.String())
 		}
 
 		if err := uploadDir(ctx, outDir, fmt.Sprintf("hls/%d/%s", videoID, q.name)); err != nil {
 			persistCompletedMaster(ctx, videoID, completedQualities, mergeExisting)
-			return 0, fmt.Errorf("upload %s hls: %w", q.name, err)
+			return fmt.Errorf("upload %s hls: %w", q.name, err)
 		}
 		completedQualities = append(completedQualities, q)
 	}
 
 	if err := putMasterPlaylist(ctx, videoID, completedQualities, mergeExisting); err != nil {
-		return 0, fmt.Errorf("upload master.m3u8: %w", err)
+		return fmt.Errorf("upload master.m3u8: %w", err)
 	}
 
-	duration := probeDuration(srcPath)
+	log.Printf("transcode done: video_id=%d qualities=%s", videoID, strings.Join(transcodeQualityNames(completedQualities), ","))
+	return nil
+}
+
+func refreshTranscodeVideoMetadata(ctx context.Context, videoID int64, updates map[string]interface{}) {
+	updates["hls_master_key"] = fmt.Sprintf("hls/%d/master.m3u8", videoID)
+
+	v := store.Video{ID: videoID, OriginalKey: fmt.Sprintf("originals/%d/source.mp4", videoID)}
+	_ = store.DB().First(&v, videoID).Error
+
+	srcPath, sourceSize, duration, err := probeCachedVideoSource(ctx, v)
+	if err != nil {
+		log.Printf("refresh transcode metadata source probe failed for video %d: %v", videoID, err)
+		return
+	}
+	if duration > 0 {
+		updates["duration"] = duration
+	}
+	if hasSourceSize(sourceSize) {
+		updates["source_width"] = sourceSize.width
+		updates["source_height"] = sourceSize.height
+	}
 
 	coverKey := fmt.Sprintf("covers/%d/cover.jpg", videoID)
 	if err := extractAndUploadCover(ctx, srcPath, coverKey); err != nil {
 		log.Printf("cover extraction failed for video %d: %v", videoID, err)
+		return
+	}
+	updates["cover_key"] = coverKey
+}
+
+func ensureSourceVideoMetadata(ctx context.Context, v *store.Video) sourceVideoSize {
+	sourceSize := sourceSizeFromVideo(*v)
+	if hasSourceSize(sourceSize) {
+		return sourceSize
 	}
 
-	log.Printf("transcode done: video_id=%d duration=%ds", videoID, duration)
-	return duration, nil
+	_, sourceSize, duration, err := probeCachedVideoSource(ctx, *v)
+	if err != nil {
+		log.Printf("source metadata probe failed for video %d: %v", v.ID, err)
+		return sourceSizeFromVideo(*v)
+	}
+
+	updates := map[string]interface{}{}
+	if hasSourceSize(sourceSize) {
+		updates["source_width"] = sourceSize.width
+		updates["source_height"] = sourceSize.height
+		v.SourceWidth = sourceSize.width
+		v.SourceHeight = sourceSize.height
+	}
+	if duration > 0 && v.Duration == 0 {
+		updates["duration"] = duration
+		v.Duration = duration
+	}
+	if len(updates) > 0 {
+		updates["updated_at"] = time.Now()
+		store.DB().Model(&store.Video{}).Where("id = ?", v.ID).Updates(updates)
+	}
+	return sourceSize
+}
+
+func probeCachedVideoSource(ctx context.Context, v store.Video) (string, sourceVideoSize, int, error) {
+	srcKey := sourceKeyForVideo(v)
+	srcPath, err := cachedSourcePath(ctx, v.ID, srcKey, strings.TrimSpace(config.Load().Worker.TranscodeTempDir))
+	if err != nil {
+		return "", sourceVideoSize{}, 0, err
+	}
+	sourceSize := probeSourceSize(srcPath)
+	duration := probeDuration(srcPath)
+	return srcPath, sourceSize, duration, nil
+}
+
+func sourceKeyForVideo(v store.Video) string {
+	if key := strings.TrimSpace(v.OriginalKey); key != "" {
+		return key
+	}
+	return fmt.Sprintf("originals/%d/source.mp4", v.ID)
+}
+
+func sourceSizeFromVideo(v store.Video) sourceVideoSize {
+	return sourceVideoSize{width: v.SourceWidth, height: v.SourceHeight}
+}
+
+func hasSourceSize(sourceSize sourceVideoSize) bool {
+	return sourceSize.width > 0 && sourceSize.height > 0
 }
 
 func cachedSourcePath(ctx context.Context, videoID int64, srcKey, tmpRoot string) (string, error) {
@@ -234,9 +306,7 @@ func cachedSourcePath(ctx context.Context, videoID int64, srcKey, tmpRoot string
 		return "", fmt.Errorf("stat source: %w", err)
 	}
 
-	cacheRoot := sourceCacheRoot(tmpRoot)
-	videoCacheDir := filepath.Join(cacheRoot, strconv.FormatInt(videoID, 10))
-	cachePath := filepath.Join(videoCacheDir, sourceCacheFileName(info))
+	videoCacheDir, cachePath := sourceCachePath(videoID, tmpRoot, info)
 	lock := sourceCacheLock(cachePath)
 	lock.Lock()
 	defer lock.Unlock()
@@ -275,6 +345,68 @@ func cachedSourcePath(ctx context.Context, videoID int64, srcKey, tmpRoot string
 	pruneSourceCache(videoCacheDir, filepath.Base(cachePath))
 	log.Printf("transcode source cached: video_id=%d path=%s", videoID, cachePath)
 	return cachePath, nil
+}
+
+func cacheUploadedSource(ctx context.Context, videoID int64, srcKey string, size int64, etag string, src io.Reader) (string, error) {
+	info := minio.ObjectInfo{Size: size, ETag: etag}
+	if strings.TrimSpace(info.ETag) == "" {
+		stat, err := store.ObjectClient().StatObject(ctx, store.VideoBucket(), srcKey, minio.StatObjectOptions{})
+		if err != nil {
+			return "", fmt.Errorf("stat uploaded source: %w", err)
+		}
+		info = stat
+	}
+
+	videoCacheDir, cachePath := sourceCachePath(videoID, strings.TrimSpace(config.Load().Worker.TranscodeTempDir), info)
+	lock := sourceCacheLock(cachePath)
+	lock.Lock()
+	defer lock.Unlock()
+
+	if sourceCacheFileUsable(cachePath, info.Size) {
+		log.Printf("transcode source cache hit after upload: video_id=%d path=%s", videoID, cachePath)
+		return cachePath, nil
+	}
+	if err := os.MkdirAll(videoCacheDir, 0755); err != nil {
+		return "", fmt.Errorf("create source cache dir: %w", err)
+	}
+	tmp, err := os.CreateTemp(videoCacheDir, ".source_upload_*.mp4")
+	if err != nil {
+		return "", fmt.Errorf("create source cache temp: %w", err)
+	}
+	tmpPath := tmp.Name()
+	written, copyErr := io.Copy(tmp, src)
+	closeErr := tmp.Close()
+	if copyErr != nil {
+		_ = os.Remove(tmpPath)
+		return "", fmt.Errorf("copy uploaded source cache: %w", copyErr)
+	}
+	if closeErr != nil {
+		_ = os.Remove(tmpPath)
+		return "", fmt.Errorf("close uploaded source cache temp: %w", closeErr)
+	}
+	defer os.Remove(tmpPath)
+
+	if info.Size > 0 && written != info.Size {
+		return "", fmt.Errorf("uploaded source cache size mismatch: copied %d, want %d", written, info.Size)
+	}
+	if !sourceCacheFileUsable(tmpPath, info.Size) {
+		return "", fmt.Errorf("uploaded source cache size mismatch")
+	}
+	if err := os.Remove(cachePath); err != nil && !os.IsNotExist(err) {
+		return "", fmt.Errorf("replace source cache: %w", err)
+	}
+	if err := os.Rename(tmpPath, cachePath); err != nil {
+		return "", fmt.Errorf("move source cache: %w", err)
+	}
+	pruneSourceCache(videoCacheDir, filepath.Base(cachePath))
+	log.Printf("transcode source cached from upload: video_id=%d path=%s", videoID, cachePath)
+	return cachePath, nil
+}
+
+func sourceCachePath(videoID int64, tmpRoot string, info minio.ObjectInfo) (string, string) {
+	cacheRoot := sourceCacheRoot(tmpRoot)
+	videoCacheDir := filepath.Join(cacheRoot, strconv.FormatInt(videoID, 10))
+	return videoCacheDir, filepath.Join(videoCacheDir, sourceCacheFileName(info))
 }
 
 func sourceCacheRoot(tmpRoot string) string {
@@ -496,9 +628,20 @@ func selectRequestedTranscodeQualities(sourceSize sourceVideoSize, requested []s
 	if len(requested) == 0 {
 		return available, nil
 	}
+	availableSet := make(map[string]bool, len(available))
+	for _, q := range available {
+		availableSet[q.name] = true
+	}
 	requestedSet := make(map[string]bool, len(requested))
 	for _, name := range requested {
-		requestedSet[strings.ToLower(strings.TrimSpace(name))] = true
+		normalized := strings.ToLower(strings.TrimSpace(name))
+		if normalized == "" {
+			continue
+		}
+		if !availableSet[normalized] {
+			return nil, unavailableTranscodeQualityError(available)
+		}
+		requestedSet[normalized] = true
 	}
 	selected := make([]transcodeQuality, 0, len(available))
 	for _, q := range available {
@@ -507,13 +650,23 @@ func selectRequestedTranscodeQualities(sourceSize sourceVideoSize, requested []s
 		}
 	}
 	if len(selected) == 0 {
-		availableNames := make([]string, 0, len(available))
-		for _, q := range available {
-			availableNames = append(availableNames, q.name)
-		}
-		return nil, fmt.Errorf("selected transcode qualities are not available for source; available: %s", strings.Join(availableNames, ", "))
+		return nil, unavailableTranscodeQualityError(available)
 	}
 	return selected, nil
+}
+
+func unavailableTranscodeQualityError(available []transcodeQuality) error {
+	return fmt.Errorf("selected transcode qualities are not available for source; available: %s", strings.Join(transcodeQualityNames(available), ", "))
+}
+
+func transcodeQualityNames(qualities []transcodeQuality) []string {
+	names := make([]string, 0, len(qualities))
+	for _, q := range qualities {
+		if q.name != "" {
+			names = append(names, q.name)
+		}
+	}
+	return names
 }
 
 func selectedTranscodeEncoder(ctx context.Context) transcodeEncoder {

@@ -12,6 +12,8 @@ type Video struct {
 	HLSMasterKey string    `gorm:"column:hls_master_key"          json:"hls_master_key"`
 	Duration     int       `gorm:"column:duration"                json:"duration"`
 	Size         int64     `gorm:"column:size"                    json:"size"`
+	SourceWidth  int       `gorm:"column:source_width"            json:"source_width"`
+	SourceHeight int       `gorm:"column:source_height"           json:"source_height"`
 	Status       string    `gorm:"column:status"                  json:"status"`
 	IsVip        bool      `gorm:"column:is_vip"                  json:"is_vip"`
 	IsFree       bool      `gorm:"column:is_free"                 json:"is_free"`

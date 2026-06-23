@@ -92,8 +92,8 @@ func AdminUploadVideoHandler(w http.ResponseWriter, r *http.Request) {
 	defer file.Close()
 
 	key := fmt.Sprintf("originals/%d/source.mp4", videoID)
-	_, err = store.ObjectClient().PutObject(
-		context.Background(),
+	uploadInfo, err := store.ObjectClient().PutObject(
+		r.Context(),
 		store.VideoBucket(),
 		key,
 		file,
@@ -105,20 +105,36 @@ func AdminUploadVideoHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	sourceSize := sourceVideoSize{}
+	duration := 0
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		log.Printf("seek uploaded video failed for video %d: %v", videoID, err)
+	} else if srcPath, err := cacheUploadedSource(r.Context(), videoID, key, header.Size, uploadInfo.ETag, file); err != nil {
+		log.Printf("cache uploaded video failed for video %d: %v", videoID, err)
+	} else {
+		sourceSize = probeSourceSize(srcPath)
+		duration = probeDuration(srcPath)
+	}
+
 	now := time.Now()
 	store.DB().Model(&v).Updates(map[string]interface{}{
 		"original_key":   key,
 		"hls_master_key": "",
-		"duration":       0,
+		"duration":       duration,
 		"size":           header.Size,
+		"source_width":   sourceSize.width,
+		"source_height":  sourceSize.height,
 		"status":         "uploaded",
 		"updated_at":     now,
 	})
 
 	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: map[string]interface{}{
-		"video_id":     videoID,
-		"original_key": key,
-		"size":         header.Size,
+		"video_id":      videoID,
+		"original_key":  key,
+		"size":          header.Size,
+		"source_width":  sourceSize.width,
+		"source_height": sourceSize.height,
+		"duration":      duration,
 	}})
 }
 
@@ -209,13 +225,20 @@ func AdminTranscodeHandler(w http.ResponseWriter, r *http.Request) {
 		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: err.Error()})
 		return
 	}
+	sourceSize := ensureSourceVideoMetadata(r.Context(), &v)
 	previousStatus := v.Status
 	mergeExisting := v.Status == "ready" || v.Status == "offline"
 
 	requestedQualities := qualities
 	if len(requestedQualities) == 0 {
-		requestedQualities = allTranscodeQualityNames()
+		requestedQualities = transcodeQualityNames(selectTranscodeQualities(sourceSize))
 	}
+	selectedQualities, err := selectRequestedTranscodeQualities(sourceSize, requestedQualities)
+	if err != nil {
+		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: err.Error()})
+		return
+	}
+	requestedQualities = transcodeQualityNames(selectedQualities)
 
 	batchID := time.Now().UnixNano()
 	tasks := make([]store.VideoTranscodeTask, 0, len(requestedQualities))
@@ -248,10 +271,6 @@ func AdminTranscodeHandler(w http.ResponseWriter, r *http.Request) {
 		"task_ids": taskIDs,
 		"status":   "pending",
 	}})
-}
-
-func allTranscodeQualityNames() []string {
-	return []string{"360p", "480p", "720p", "1080p"}
 }
 
 func normalizeTranscodeQualityNames(input []string) ([]string, error) {
@@ -397,7 +416,7 @@ func AdminGetVideoHandler(w http.ResponseWriter, r *http.Request) {
 func attachVideoTranscodeMetadata(ctx context.Context, videos []store.Video) {
 	for i := range videos {
 		videos[i].TranscodedQualities = transcodedQualityNames(ctx, videos[i])
-		videos[i].AvailableTranscodeQualities = availableTranscodeQualityNames(videos[i].ID)
+		videos[i].AvailableTranscodeQualities = availableTranscodeQualityNames(videos[i])
 	}
 }
 
@@ -426,7 +445,14 @@ func transcodedQualityNames(ctx context.Context, v store.Video) []string {
 	return names
 }
 
-func availableTranscodeQualityNames(videoID int64) []string {
+func availableTranscodeQualityNames(v store.Video) []string {
+	if sourceSize := sourceSizeFromVideo(v); hasSourceSize(sourceSize) {
+		return transcodeQualityNames(selectTranscodeQualities(sourceSize))
+	}
+	return failedAvailableTranscodeQualityNames(v.ID)
+}
+
+func failedAvailableTranscodeQualityNames(videoID int64) []string {
 	var task store.VideoTranscodeTask
 	err := store.DB().
 		Where("video_id = ? AND error_message LIKE ?", videoID, "selected transcode qualities are not available for source; available:%").
@@ -445,17 +471,11 @@ func parseAvailableTranscodeQualityNames(message string) []string {
 		return nil
 	}
 	raw := message[idx+len(marker):]
-	allowed := map[string]bool{
-		"360p":  true,
-		"480p":  true,
-		"720p":  true,
-		"1080p": true,
-	}
 	names := make([]string, 0)
 	seen := make(map[string]bool)
 	for _, item := range strings.Split(raw, ",") {
 		name := strings.ToLower(strings.TrimSpace(item))
-		if !allowed[name] || seen[name] {
+		if qualityHeight(name) <= 0 || seen[name] {
 			continue
 		}
 		names = append(names, name)

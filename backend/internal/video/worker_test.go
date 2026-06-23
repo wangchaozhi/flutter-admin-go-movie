@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"flutter-admin-go/internal/store"
+
 	"github.com/minio/minio-go/v7"
 )
 
@@ -116,6 +118,16 @@ func TestSelectRequestedTranscodeQualitiesRejectsUnavailable(t *testing.T) {
 	}
 }
 
+func TestSelectRequestedTranscodeQualitiesRejectsPartiallyUnavailable(t *testing.T) {
+	_, err := selectRequestedTranscodeQualities(
+		sourceVideoSize{width: 1280, height: 720},
+		[]string{"720p", "1080p"},
+	)
+	if err == nil {
+		t.Fatal("expected partially unavailable quality error")
+	}
+}
+
 func TestNormalizeTranscodeQualityNamesAllMeansAuto(t *testing.T) {
 	qualities, err := normalizeTranscodeQualityNames([]string{"360p", "480p", "720p", "1080p"})
 	if err != nil {
@@ -182,6 +194,16 @@ func TestParseMasterPlaylistEntriesHandlesSignedAbsoluteURIs(t *testing.T) {
 
 func TestParseAvailableTranscodeQualityNames(t *testing.T) {
 	got := parseAvailableTranscodeQualityNames("selected transcode qualities are not available for source; available: 360p, 480p, 720p")
+	if strings.Join(got, ",") != "360p,480p,720p" {
+		t.Fatalf("available qualities = %#v", got)
+	}
+}
+
+func TestAvailableTranscodeQualityNamesUsesSourceMetadata(t *testing.T) {
+	got := availableTranscodeQualityNames(store.Video{
+		SourceWidth:  1280,
+		SourceHeight: 720,
+	})
 	if strings.Join(got, ",") != "360p,480p,720p" {
 		t.Fatalf("available qualities = %#v", got)
 	}

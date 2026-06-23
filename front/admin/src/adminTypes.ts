@@ -25,6 +25,8 @@ export type Video = {
   hls_master_key: string
   duration: number
   size: number
+  source_width: number
+  source_height: number
   status: VideoStatus
   is_vip: boolean
   is_free: boolean
