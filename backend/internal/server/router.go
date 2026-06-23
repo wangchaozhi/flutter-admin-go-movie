@@ -56,6 +56,8 @@ func NewRouter() http.Handler {
 			video.AdminUploadVideoHandler(w, r)
 		case strings.HasSuffix(path, "/cover"):
 			video.AdminUploadCoverHandler(w, r)
+		case strings.Contains(path, "/tasks"):
+			video.AdminVideoTasksHandler(w, r)
 		case strings.HasSuffix(path, "/transcode"):
 			if r.Method == "GET" {
 				video.AdminTranscodeStatusHandler(w, r)

@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import {
+  ChevronDown,
+  ChevronRight,
   Clapperboard,
   CloudUpload,
   Film,
@@ -11,7 +13,14 @@ import {
   Trash2,
 } from 'lucide-react'
 
-import type { ApiResponse, Category, TranscodeTask, Video, VideoForm } from '../../adminTypes'
+import type {
+  ApiResponse,
+  Category,
+  TranscodeTask,
+  Video,
+  VideoForm,
+  VideoQualityTask,
+} from '../../adminTypes'
 import { PanelTitle } from '../../components/shared'
 
 const emptyForm: VideoForm = {
@@ -41,6 +50,48 @@ const STATUS_CLASS: Record<string, string> = {
 }
 
 const TRANSCODE_QUALITIES = ['360p', '480p', '720p', '1080p']
+
+const QUALITY_STATUS_LABEL: Record<string, string> = {
+  queued: '排队中',
+  pending: '等待转码',
+  processing: '转码中',
+  success: '已完成',
+  failed: '失败',
+}
+
+const QUALITY_STATUS_CLASS: Record<string, string> = {
+  queued: 'status-uploaded',
+  pending: 'status-uploaded',
+  processing: 'status-transcoding',
+  success: 'status-ready',
+  failed: 'status-failed',
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) return '—'
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return '—'
+  return d.toLocaleString('zh-CN', { hour12: false })
+}
+
+function formatElapsed(task: Pick<VideoQualityTask, 'started_at' | 'finished_at' | 'status'>) {
+  if (!task.started_at) return '—'
+  const start = new Date(task.started_at).getTime()
+  if (Number.isNaN(start)) return '—'
+  const end = task.finished_at
+    ? new Date(task.finished_at).getTime()
+    : task.status === 'processing'
+      ? Date.now()
+      : Number.NaN
+  if (Number.isNaN(end) || end < start) return '—'
+  const sec = Math.round((end - start) / 1000)
+  const h = Math.floor(sec / 3600)
+  const m = Math.floor((sec % 3600) / 60)
+  const s = sec % 60
+  if (h > 0) return `${h}时${m}分${s}秒`
+  if (m > 0) return `${m}分${s}秒`
+  return `${s}秒`
+}
 
 function formatBytes(bytes: number) {
   if (bytes === 0) return '-'
@@ -82,12 +133,18 @@ export function VideoManagementSection({
     selected: string[]
   } | null>(null)
   const [taskStatus, setTaskStatus] = useState<Record<number, TranscodeTask>>({})
+  const [qualityTasks, setQualityTasks] = useState<Record<number, VideoQualityTask[]>>({})
+  const [expanded, setExpanded] = useState<Set<number>>(new Set())
+  const [qualityLoading, setQualityLoading] = useState<Set<number>>(new Set())
   const [playUrl, setPlayUrl] = useState<string | null>(null)
   const [activeVideoId, setActiveVideoId] = useState<number | null>(null)
   const [uploadError, setUploadError] = useState('')
   const [mp4FileName, setMp4FileName] = useState('')
   const mp4Ref = useRef<HTMLInputElement>(null)
   const coverRef = useRef<HTMLInputElement>(null)
+  // keep the latest expanded set available to the polling closure
+  const expandedRef = useRef<Set<number>>(expanded)
+  useEffect(() => { expandedRef.current = expanded }, [expanded])
 
   const authHeader = { Authorization: `Bearer ${token}` }
   const jsonHeaders = { ...authHeader, 'Content-Type': 'application/json' }
@@ -266,12 +323,71 @@ export function VideoManagementSection({
     const json: ApiResponse<TranscodeTask> = await res.json()
     if (json.code === 0 && json.data) {
       setTaskStatus(prev => ({ ...prev, [videoId]: json.data! }))
+      if (expandedRef.current.has(videoId)) loadQualityTasks(videoId)
       if (isActiveTranscodeStatus(json.data.status)) {
         setTimeout(() => pollTaskStatus(videoId), 3000)
       } else {
         await loadVideos()
       }
     }
+  }
+
+  async function loadQualityTasks(videoId: number) {
+    setQualityLoading(prev => new Set(prev).add(videoId))
+    try {
+      const res = await fetch(`/api/admin/videos/${videoId}/tasks`, { headers: jsonHeaders })
+      const json: ApiResponse<VideoQualityTask[]> = await res.json()
+      if (json.code === 0) setQualityTasks(prev => ({ ...prev, [videoId]: json.data ?? [] }))
+    } finally {
+      setQualityLoading(prev => {
+        const next = new Set(prev)
+        next.delete(videoId)
+        return next
+      })
+    }
+  }
+
+  function toggleQualityDetail(videoId: number) {
+    setExpanded(prev => {
+      const next = new Set(prev)
+      if (next.has(videoId)) {
+        next.delete(videoId)
+      } else {
+        next.add(videoId)
+        loadQualityTasks(videoId)
+      }
+      return next
+    })
+  }
+
+  async function handleRetranscodeQuality(videoId: number, quality: string) {
+    setTranscoding(true)
+    try {
+      const res = await fetch(`/api/admin/videos/${videoId}/transcode`, {
+        method: 'POST',
+        headers: jsonHeaders,
+        body: JSON.stringify({ qualities: [quality] }),
+      })
+      const json = await res.json()
+      if (json.code !== 0) { alert('重转提交失败：' + json.msg); return }
+      await loadVideos()
+      pollTaskStatus(videoId)
+      loadQualityTasks(videoId)
+    } finally {
+      setTranscoding(false)
+    }
+  }
+
+  async function handleDeleteQuality(videoId: number, quality: string) {
+    if (!window.confirm(`确认删除 ${quality} 清晰度？该分辨率的播放文件将被移除。`)) return
+    const res = await fetch(`/api/admin/videos/${videoId}/tasks/${quality}`, {
+      method: 'DELETE',
+      headers: jsonHeaders,
+    })
+    const json = await res.json()
+    if (json.code !== 0) { alert('删除失败：' + json.msg); return }
+    await loadVideos()
+    loadQualityTasks(videoId)
   }
 
   async function handlePlay(videoId: number) {
@@ -312,8 +428,12 @@ export function VideoManagementSection({
             <tbody>
               {videos.map(v => {
                 const task = taskStatus[v.id]
+                const isExpanded = expanded.has(v.id)
+                const detailTasks = qualityTasks[v.id]
+                const detailLoading = qualityLoading.has(v.id)
                 return (
-                  <tr key={v.id} className={form.id === v.id ? 'row-active' : ''}>
+                  <Fragment key={v.id}>
+                  <tr className={form.id === v.id ? 'row-active' : ''}>
                     <td className="text-faint">{v.id}</td>
                     <td>{v.title}</td>
                     <td className="text-faint">{categories.find(c => c.id === v.category_id)?.name ?? '—'}</td>
@@ -335,6 +455,14 @@ export function VideoManagementSection({
                     <td>{v.is_free ? '✓' : '—'}</td>
                     <td>
                       <div className="row-actions">
+                        <button
+                          type="button"
+                          className="quality-toggle"
+                          aria-expanded={isExpanded}
+                          onClick={() => toggleQualityDetail(v.id)}
+                        >
+                          {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />} 清晰度
+                        </button>
                         {canEdit && (
                           <button type="button" onClick={() => {
                             setUploadError('')
@@ -376,6 +504,83 @@ export function VideoManagementSection({
                       </div>
                     </td>
                   </tr>
+                  {isExpanded && (
+                    <tr className="quality-detail-row">
+                      <td colSpan={8}>
+                        {detailLoading && !detailTasks ? (
+                          <div className="quality-empty"><Loader size={13} className="spin" /> 加载中…</div>
+                        ) : !detailTasks || detailTasks.length === 0 ? (
+                          <div className="quality-empty">暂无清晰度转码记录</div>
+                        ) : (
+                          <table className="quality-table">
+                            <thead>
+                              <tr>
+                                <th>清晰度</th>
+                                <th>开始时间</th>
+                                <th>结束时间</th>
+                                <th>耗时</th>
+                                <th>状态</th>
+                                <th>操作</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {detailTasks.map(qt => {
+                                const active = isActiveTranscodeStatus(qt.status)
+                                const label = QUALITY_STATUS_LABEL[qt.status] ?? qt.status
+                                const statusText = qt.status === 'processing' && qt.progress > 0
+                                  ? `${label} ${qt.progress}%`
+                                  : label
+                                return (
+                                  <tr key={qt.quality}>
+                                    <td>
+                                      <span className="quality-name">{qt.quality}</span>
+                                      {qt.transcoded && <span className="quality-ok-dot" title="已生成可播放文件" />}
+                                    </td>
+                                    <td className="text-faint">{formatDateTime(qt.started_at)}</td>
+                                    <td className="text-faint">{formatDateTime(qt.finished_at)}</td>
+                                    <td className="text-faint">{formatElapsed(qt)}</td>
+                                    <td>
+                                      <span className={`status-badge ${QUALITY_STATUS_CLASS[qt.status] ?? ''}`}>
+                                        {statusText}
+                                      </span>
+                                      {active && <Loader size={11} className="spin" style={{ marginLeft: 4 }} />}
+                                      {qt.status === 'failed' && qt.error_message && (
+                                        <div className="quality-error" title={qt.error_message}>{qt.error_message}</div>
+                                      )}
+                                    </td>
+                                    <td>
+                                      <div className="row-actions">
+                                        {canEdit && (
+                                          <button
+                                            type="button"
+                                            disabled={transcoding || active}
+                                            onClick={() => handleRetranscodeQuality(v.id, qt.quality)}
+                                          >
+                                            <RefreshCw size={12} /> 重转
+                                          </button>
+                                        )}
+                                        {canDelete && (
+                                          <button
+                                            type="button"
+                                            className="danger"
+                                            disabled={active}
+                                            onClick={() => handleDeleteQuality(v.id, qt.quality)}
+                                          >
+                                            <Trash2 size={12} /> 删除
+                                          </button>
+                                        )}
+                                      </div>
+                                    </td>
+                                  </tr>
+                                )
+                              })}
+                            </tbody>
+                          </table>
+                        )}
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 )
               })}
             </tbody>

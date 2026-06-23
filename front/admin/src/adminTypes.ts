@@ -66,6 +66,10 @@ export type TranscodeTask = {
   created_at: string
 }
 
+// One per-quality transcode entry shown under a video row, with whether the
+// quality is currently present in the playable master playlist.
+export type VideoQualityTask = TranscodeTask & { transcoded?: boolean }
+
 export type User = {
   id: number
   username: string

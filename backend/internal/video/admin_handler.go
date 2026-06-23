@@ -677,23 +677,28 @@ func deleteVideoObjects(ctx context.Context, videoID int64) {
 		fmt.Sprintf("covers/%d/", videoID),
 	}
 	for _, prefix := range prefixes {
-		objectCh := store.ObjectClient().ListObjects(ctx, store.VideoBucket(), minio.ListObjectsOptions{
-			Prefix:    prefix,
-			Recursive: true,
-		})
-		removeCh := make(chan minio.ObjectInfo)
-		go func() {
-			defer close(removeCh)
-			for obj := range objectCh {
-				if obj.Err == nil {
-					removeCh <- obj
-				}
+		removeObjectsByPrefix(ctx, prefix)
+	}
+}
+
+// removeObjectsByPrefix deletes every MinIO object under the given prefix.
+func removeObjectsByPrefix(ctx context.Context, prefix string) {
+	objectCh := store.ObjectClient().ListObjects(ctx, store.VideoBucket(), minio.ListObjectsOptions{
+		Prefix:    prefix,
+		Recursive: true,
+	})
+	removeCh := make(chan minio.ObjectInfo)
+	go func() {
+		defer close(removeCh)
+		for obj := range objectCh {
+			if obj.Err == nil {
+				removeCh <- obj
 			}
-		}()
-		for result := range store.ObjectClient().RemoveObjects(ctx, store.VideoBucket(), removeCh, minio.RemoveObjectsOptions{}) {
-			if result.Err != nil {
-				log.Printf("deleteVideoObjects %s: %v", result.ObjectName, result.Err)
-			}
+		}
+	}()
+	for result := range store.ObjectClient().RemoveObjects(ctx, store.VideoBucket(), removeCh, minio.RemoveObjectsOptions{}) {
+		if result.Err != nil {
+			log.Printf("removeObjectsByPrefix %s: %v", result.ObjectName, result.Err)
 		}
 	}
 }
