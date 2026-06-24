@@ -144,31 +144,41 @@ export type AppUserForm = {
   status: 'active' | 'banned'
 }
 
+export type CurrencyCode = 'CNY' | 'USD' | 'EUR' | 'JPY' | 'HKD' | 'TWD' | 'GBP' | 'AUD' | 'CAD' | 'SGD'
+export type ProductKind = 'vip' | 'video'
+export type ProductStatus = 'active' | 'inactive'
+export type OrderProvider = 'stripe' | 'paypal' | 'mock'
+export type OrderStatus = 'pending' | 'paying' | 'paid' | 'failed' | 'cancelled' | 'refunded'
+
 export type Product = {
   id: number
   code: string
   name: string
   description: string
-  kind: 'vip' | 'video'
+  kind: ProductKind
   price_cents: number
-  currency: string
+  currency: CurrencyCode
   duration_days: number
-  status: 'active' | 'inactive'
+  video_id?: number | null
+  status: ProductStatus
 }
 
 export type Order = {
   id: number
   order_no: string
   user_id: number
-  provider: 'stripe' | 'paypal' | 'mock'
-  status: 'pending' | 'paying' | 'paid' | 'failed' | 'cancelled' | 'refunded'
+  product_id: number
+  provider: OrderProvider
+  status: OrderStatus
   amount_cents: number
-  currency: string
+  currency: CurrencyCode
   provider_order_id: string
   provider_payment_id: string
   checkout_url: string
   paid_at: string | null
+  expires_at: string | null
   created_at: string
+  updated_at: string
   product?: Product
 }
 

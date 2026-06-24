@@ -32,7 +32,21 @@ type productPayload struct {
 	PriceCents   int    `json:"price_cents"`
 	Currency     string `json:"currency"`
 	DurationDays int    `json:"duration_days"`
+	VideoID      *int64 `json:"video_id"`
 	Status       string `json:"status"`
+}
+
+var supportedProductCurrencies = map[string]bool{
+	"CNY": true,
+	"USD": true,
+	"EUR": true,
+	"JPY": true,
+	"HKD": true,
+	"TWD": true,
+	"GBP": true,
+	"AUD": true,
+	"CAD": true,
+	"SGD": true,
 }
 
 func ProductsHandler(w http.ResponseWriter, r *http.Request) {
@@ -143,8 +157,7 @@ func listMobileOrders(w http.ResponseWriter, r *http.Request) {
 		limit = 50
 	}
 	var orders []store.Order
-	if err := store.DB().
-		Preload("Product").
+	if err := withOrderProduct(store.DB()).
 		Where("user_id = ?", userID).
 		Order("id desc").
 		Limit(limit).
@@ -196,6 +209,17 @@ func AdminProductByIDHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPut:
 		saveProduct(w, r, id)
+	case http.MethodDelete:
+		result := store.DB().Delete(&store.Product{}, id)
+		if result.Error != nil {
+			common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: result.Error.Error()})
+			return
+		}
+		if result.RowsAffected == 0 {
+			common.WriteJSON(w, http.StatusNotFound, common.APIResponse{Code: 404, Msg: "product not found"})
+			return
+		}
+		common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok"})
 	default:
 		common.WriteJSON(w, http.StatusMethodNotAllowed, common.APIResponse{Code: 405, Msg: "method not allowed"})
 	}
@@ -207,7 +231,7 @@ func AdminOrdersHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var orders []store.Order
-	query := store.DB().Preload("Product").Order("id desc").Limit(200)
+	query := withOrderProduct(store.DB()).Order("id desc").Limit(200)
 	if status := strings.TrimSpace(r.URL.Query().Get("status")); status != "" {
 		query = query.Where("status = ?", status)
 	}
@@ -216,6 +240,29 @@ func AdminOrdersHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: orders})
+}
+
+func AdminOrderByIDHandler(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.Atoi(strings.TrimPrefix(r.URL.Path, "/api/admin/orders/"))
+	if err != nil {
+		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "invalid id"})
+		return
+	}
+	switch r.Method {
+	case http.MethodDelete:
+		result := store.DB().Delete(&store.Order{}, id)
+		if result.Error != nil {
+			common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: result.Error.Error()})
+			return
+		}
+		if result.RowsAffected == 0 {
+			common.WriteJSON(w, http.StatusNotFound, common.APIResponse{Code: 404, Msg: "order not found"})
+			return
+		}
+		common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok"})
+	default:
+		common.WriteJSON(w, http.StatusMethodNotAllowed, common.APIResponse{Code: 405, Msg: "method not allowed"})
+	}
 }
 
 func StripeWebhookHandler(w http.ResponseWriter, r *http.Request) {
@@ -254,21 +301,50 @@ func saveProduct(w http.ResponseWriter, r *http.Request, id int) {
 	}
 	req.Code = strings.TrimSpace(req.Code)
 	req.Name = strings.TrimSpace(req.Name)
-	req.Kind = strings.TrimSpace(req.Kind)
+	req.Description = strings.TrimSpace(req.Description)
+	req.Kind = strings.ToLower(strings.TrimSpace(req.Kind))
 	req.Currency = strings.ToUpper(strings.TrimSpace(req.Currency))
-	req.Status = strings.TrimSpace(req.Status)
+	req.Status = strings.ToLower(strings.TrimSpace(req.Status))
 	if req.Code == "" || req.Name == "" || req.PriceCents <= 0 {
 		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "code, name and positive price required"})
+		return
+	}
+	if req.DurationDays < 0 {
+		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "duration_days cannot be negative"})
 		return
 	}
 	if req.Kind == "" {
 		req.Kind = "vip"
 	}
+	if req.Kind != "vip" && req.Kind != "video" {
+		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "invalid kind"})
+		return
+	}
 	if req.Currency == "" {
 		req.Currency = LoadConfig().DefaultCurrency
 	}
+	if !supportedProductCurrencies[req.Currency] {
+		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "invalid currency"})
+		return
+	}
 	if req.Status == "" {
 		req.Status = "active"
+	}
+	if req.Status != "active" && req.Status != "inactive" {
+		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "invalid status"})
+		return
+	}
+	if req.Kind == "video" {
+		if req.VideoID == nil || *req.VideoID <= 0 {
+			common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "video_id required for video product"})
+			return
+		}
+		if err := store.DB().First(&store.Video{}, *req.VideoID).Error; err != nil {
+			common.WriteJSON(w, http.StatusNotFound, common.APIResponse{Code: 404, Msg: "video not found"})
+			return
+		}
+	} else {
+		req.VideoID = nil
 	}
 	product := store.Product{
 		Code:         req.Code,
@@ -278,6 +354,7 @@ func saveProduct(w http.ResponseWriter, r *http.Request, id int) {
 		PriceCents:   req.PriceCents,
 		Currency:     req.Currency,
 		DurationDays: req.DurationDays,
+		VideoID:      req.VideoID,
 		Status:       req.Status,
 		UpdatedAt:    time.Now(),
 	}
@@ -290,8 +367,24 @@ func saveProduct(w http.ResponseWriter, r *http.Request, id int) {
 		common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: product})
 		return
 	}
-	if err := store.DB().Model(&store.Product{}).Where("id = ?", id).Updates(product).Error; err != nil {
-		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
+	result := store.DB().Model(&store.Product{}).Where("id = ?", id).Updates(map[string]interface{}{
+		"code":          product.Code,
+		"name":          product.Name,
+		"description":   product.Description,
+		"kind":          product.Kind,
+		"price_cents":   product.PriceCents,
+		"currency":      product.Currency,
+		"duration_days": product.DurationDays,
+		"video_id":      product.VideoID,
+		"status":        product.Status,
+		"updated_at":    product.UpdatedAt,
+	})
+	if result.Error != nil {
+		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: result.Error.Error()})
+		return
+	}
+	if result.RowsAffected == 0 {
+		common.WriteJSON(w, http.StatusNotFound, common.APIResponse{Code: 404, Msg: "product not found"})
 		return
 	}
 	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok"})
@@ -304,7 +397,7 @@ func showMobileOrder(w http.ResponseWriter, r *http.Request, orderNo string) {
 		return
 	}
 	var order store.Order
-	err := store.DB().Preload("Product").Where("order_no = ? AND user_id = ?", orderNo, userID).First(&order).Error
+	err := withOrderProduct(store.DB()).Where("order_no = ? AND user_id = ?", orderNo, userID).First(&order).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		common.WriteJSON(w, http.StatusNotFound, common.APIResponse{Code: 404, Msg: "not found"})
 		return
@@ -347,32 +440,44 @@ func markOrderPaid(orderNo string, paymentID string) error {
 			return err
 		}
 		now := time.Now()
-		if err := tx.Model(&store.Order{}).Where("id = ?", order.ID).Updates(map[string]interface{}{
-			"status":              "paid",
-			"provider_payment_id": paymentID,
-			"paid_at":             now,
-			"updated_at":          now,
-		}).Error; err != nil {
-			return err
-		}
-		if product.Kind == "vip" && product.DurationDays > 0 {
-			var user store.MobileUser
-			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&user, order.UserID).Error; err != nil {
-				return err
-			}
-			base := now
-			if user.VIPUntil != nil && user.VIPUntil.After(now) {
-				base = *user.VIPUntil
-			}
-			vipUntil := base.AddDate(0, 0, product.DurationDays)
-			if err := tx.Model(&store.MobileUser{}).Where("id = ?", user.ID).Updates(map[string]interface{}{
-				"vip_until":  vipUntil,
-				"updated_at": now,
-			}).Error; err != nil {
-				return err
-			}
-		}
+		return applyPaidOrder(tx, order, product, paymentID, now)
+	})
+}
+
+func applyPaidOrder(tx *gorm.DB, order store.Order, product store.Product, paymentID string, paidAt time.Time) error {
+	updates := map[string]interface{}{
+		"status":     "paid",
+		"paid_at":    paidAt,
+		"updated_at": time.Now(),
+	}
+	if strings.TrimSpace(paymentID) != "" {
+		updates["provider_payment_id"] = strings.TrimSpace(paymentID)
+	}
+	if err := tx.Model(&store.Order{}).Where("id = ?", order.ID).Updates(updates).Error; err != nil {
+		return err
+	}
+	if product.Kind != "vip" || product.DurationDays <= 0 {
 		return nil
+	}
+
+	var user store.MobileUser
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&user, order.UserID).Error; err != nil {
+		return err
+	}
+	base := paidAt
+	if user.VIPUntil != nil && user.VIPUntil.After(base) {
+		base = *user.VIPUntil
+	}
+	vipUntil := base.AddDate(0, 0, product.DurationDays)
+	return tx.Model(&store.MobileUser{}).Where("id = ?", user.ID).Updates(map[string]interface{}{
+		"vip_until":  vipUntil,
+		"updated_at": time.Now(),
+	}).Error
+}
+
+func withOrderProduct(db *gorm.DB) *gorm.DB {
+	return db.Preload("Product", func(tx *gorm.DB) *gorm.DB {
+		return tx.Unscoped()
 	})
 }
 

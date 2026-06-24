@@ -87,6 +87,37 @@ func AdminTranscodeHistoryHandler(w http.ResponseWriter, r *http.Request) {
 	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: result})
 }
 
+// AdminTranscodeHistoryByIDHandler deletes one transcode task history record.
+//
+//	DELETE /api/admin/video/transcode-tasks/{id}
+func AdminTranscodeHistoryByIDHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		common.WriteJSON(w, http.StatusMethodNotAllowed, common.APIResponse{Code: 405, Msg: "method not allowed"})
+		return
+	}
+	idText := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/admin/video/transcode-tasks/"), "/")
+	id, err := strconv.ParseInt(idText, 10, 64)
+	if err != nil || id <= 0 {
+		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "invalid task id"})
+		return
+	}
+
+	var task store.VideoTranscodeTask
+	if err := store.DB().First(&task, id).Error; err != nil {
+		common.WriteJSON(w, http.StatusNotFound, common.APIResponse{Code: 404, Msg: "task not found"})
+		return
+	}
+	if task.Status == "queued" || task.Status == "pending" || task.Status == "processing" {
+		common.WriteJSON(w, http.StatusConflict, common.APIResponse{Code: 409, Msg: "进行中的转码任务不能删除"})
+		return
+	}
+	if err := store.DB().Delete(&store.VideoTranscodeTask{}, id).Error; err != nil {
+		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
+		return
+	}
+	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok"})
+}
+
 func reconcileActiveHistoryTasks(ctx context.Context) {
 	var videoIDs []int64
 	if err := store.DB().Model(&store.VideoTranscodeTask{}).

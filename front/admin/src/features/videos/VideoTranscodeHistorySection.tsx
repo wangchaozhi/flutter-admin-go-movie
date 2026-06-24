@@ -6,6 +6,7 @@ import {
   RefreshCw,
   RotateCcw,
   Search,
+  Trash2,
   XCircle,
 } from 'lucide-react'
 
@@ -83,6 +84,7 @@ export function VideoTranscodeHistorySection({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [retryingId, setRetryingId] = useState<number | null>(null)
+  const [deletingId, setDeletingId] = useState<number | null>(null)
   const headers = useMemo(
     () => ({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }),
     [token],
@@ -136,6 +138,27 @@ export function VideoTranscodeHistorySection({
       setError(err instanceof Error ? err.message : '重试提交失败')
     } finally {
       setRetryingId(null)
+    }
+  }
+
+  async function deleteTask(task: TranscodeHistoryItem) {
+    if (isActiveStatus(task.status)) return
+    const name = task.video_title || `视频 #${task.video_id}`
+    if (!window.confirm(`确认删除「${name}」的 ${task.quality || '未知清晰度'} 转码记录？`)) return
+    setDeletingId(task.id)
+    setError('')
+    try {
+      const res = await fetch(`/api/admin/video/transcode-tasks/${task.id}`, {
+        method: 'DELETE',
+        headers,
+      })
+      const json: ApiResponse<unknown> = await res.json()
+      if (json.code !== 0) throw new Error(json.msg)
+      await loadTasks()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '删除转码记录失败')
+    } finally {
+      setDeletingId(null)
     }
   }
 
@@ -241,7 +264,7 @@ export function VideoTranscodeHistorySection({
                     </td>
                     <td>
                       <div className="row-actions">
-                        {can('video:edit') && task.status === 'failed' && task.quality ? (
+                        {can('video:edit') && task.status === 'failed' && task.quality && (
                           <button
                             disabled={retryingId === task.id}
                             type="button"
@@ -250,7 +273,20 @@ export function VideoTranscodeHistorySection({
                             <RotateCcw size={13} />
                             重试
                           </button>
-                        ) : (
+                        )}
+                        {can('video:delete') && (
+                          <button
+                            className="danger"
+                            disabled={deletingId === task.id || active}
+                            title={active ? '进行中的任务不能删除' : '删除记录'}
+                            type="button"
+                            onClick={() => void deleteTask(task)}
+                          >
+                            <Trash2 size={13} />
+                            删除
+                          </button>
+                        )}
+                        {!(can('video:edit') && task.status === 'failed' && task.quality) && !can('video:delete') && (
                           <span className="muted-action">—</span>
                         )}
                       </div>
