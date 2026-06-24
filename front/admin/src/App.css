@@ -218,11 +218,16 @@ button:disabled {
   margin-left: auto;
   color: var(--text-faint);
   opacity: 0;
+  transition: transform 140ms ease, opacity 140ms ease;
 }
 
 .nav-tabs button.active .nav-chevron,
 .nav-tabs button:hover .nav-chevron {
   opacity: 1;
+}
+
+.nav-chevron.open {
+  transform: rotate(90deg);
 }
 
 .nav-subtabs {
@@ -853,12 +858,24 @@ td small {
   display: inline-block;
 }
 
+.menu-node-icon {
+  width: 26px;
+  min-width: 26px;
+  height: 26px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-muted);
+  background: var(--surface-muted);
+}
+
 .menu-node strong,
-.menu-node span {
+.menu-node-main > div > span {
   display: block;
 }
 
-.menu-node span {
+.menu-node-main > div > span {
   margin-top: 3px;
   color: var(--text-subtle);
   font-size: 12px;

@@ -42,6 +42,7 @@ type Order struct {
 	UpdatedAt         time.Time      `gorm:"column:updated_at"            json:"updated_at"`
 	DeletedAt         gorm.DeletedAt `gorm:"column:deleted_at;index"       json:"-"`
 	Product           Product        `gorm:"foreignKey:ProductID"         json:"product,omitempty"`
+	User              MobileUser     `gorm:"foreignKey:UserID"            json:"user,omitempty"`
 }
 
 func (Order) TableName() string { return "orders" }

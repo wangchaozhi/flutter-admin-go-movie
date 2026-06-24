@@ -95,6 +95,8 @@ type AdminMenu struct {
 	ParentID   int    `gorm:"column:parent_id"`
 	Type       string `gorm:"column:type"`
 	Permission string `gorm:"column:permission"`
+	Icon       string `gorm:"column:icon"`
+	SortOrder  int    `gorm:"column:sort_order"`
 }
 
 func (AdminMenu) TableName() string {

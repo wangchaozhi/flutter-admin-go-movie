@@ -3,6 +3,7 @@ import { ChevronRight } from 'lucide-react'
 
 import type { Menu } from '../../adminTypes'
 import { RowActions } from '../../components/shared'
+import { resolveIcon } from '../../iconRegistry'
 
 export type MenuNodeType = Menu & { children: MenuNodeType[] }
 
@@ -21,6 +22,7 @@ export function MenuNode({
 }) {
   const [expanded, setExpanded] = useState(false)
   const hasChildren = node.children.length > 0
+  const Icon = resolveIcon(node.icon)
 
   return (
     <div className="menu-node">
@@ -38,9 +40,16 @@ export function MenuNode({
           ) : (
             <span className="menu-expand-placeholder" />
           )}
+          <span className="menu-node-icon">
+            <Icon size={14} />
+          </span>
           <div>
             <strong>{node.name}</strong>
-            <span>{node.type === 'button' ? node.permission : node.path}</span>
+            <span>
+              {node.type === 'button' ? node.permission : node.path}
+              {' · '}
+              排序 {node.sortOrder}
+            </span>
           </div>
         </div>
         <RowActions
@@ -82,5 +91,11 @@ export function buildMenuTree(menus: Menu[]): MenuNodeType[] {
     roots.push(node)
   })
 
+  sortMenuNodes(roots)
   return roots
+}
+
+function sortMenuNodes(nodes: MenuNodeType[]) {
+  nodes.sort((left, right) => left.sortOrder - right.sortOrder || left.id - right.id)
+  nodes.forEach((node) => sortMenuNodes(node.children))
 }

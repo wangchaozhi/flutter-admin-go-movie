@@ -45,6 +45,8 @@ type Menu struct {
 	ParentID   int    `json:"parentId"`
 	Type       string `json:"type"`
 	Permission string `json:"permission"`
+	Icon       string `json:"icon"`
+	SortOrder  int    `json:"sortOrder"`
 }
 
 type userPayload struct {
@@ -66,6 +68,8 @@ type menuPayload struct {
 	ParentID   int    `json:"parentId"`
 	Type       string `json:"type"`
 	Permission string `json:"permission"`
+	Icon       string `json:"icon"`
+	SortOrder  int    `json:"sortOrder"`
 }
 
 type Profile struct {
@@ -496,7 +500,7 @@ func updateRole(w http.ResponseWriter, r *http.Request, id int) {
 
 func listMenus(w http.ResponseWriter) {
 	var records []store.AdminMenu
-	if err := store.DB().Order("id ASC").Find(&records).Error; err != nil {
+	if err := store.DB().Order("parent_id ASC, sort_order ASC, id ASC").Find(&records).Error; err != nil {
 		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
 		return
 	}
@@ -510,6 +514,8 @@ func listMenus(w http.ResponseWriter) {
 			ParentID:   record.ParentID,
 			Type:       record.Type,
 			Permission: record.Permission,
+			Icon:       record.Icon,
+			SortOrder:  record.SortOrder,
 		}
 		if menu.Type == "" {
 			menu.Type = "menu"
@@ -536,6 +542,8 @@ func createMenu(w http.ResponseWriter, r *http.Request) {
 		ParentID:   req.ParentID,
 		Type:       req.Type,
 		Permission: req.Permission,
+		Icon:       req.Icon,
+		SortOrder:  req.SortOrder,
 	}
 	if err := store.DB().Create(&record).Error; err != nil {
 		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: err.Error()})
@@ -565,6 +573,8 @@ func updateMenu(w http.ResponseWriter, r *http.Request, id int) {
 		"parent_id":  req.ParentID,
 		"type":       req.Type,
 		"permission": req.Permission,
+		"icon":       req.Icon,
+		"sort_order": req.SortOrder,
 	}
 	if err := store.DB().Model(&store.AdminMenu{}).Where("id = ?", id).Updates(updates).Error; err != nil {
 		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: err.Error()})
@@ -665,6 +675,7 @@ func normalizeMenuPayload(req *menuPayload) {
 	req.Path = strings.TrimSpace(req.Path)
 	req.Type = strings.TrimSpace(req.Type)
 	req.Permission = strings.TrimSpace(req.Permission)
+	req.Icon = strings.TrimSpace(req.Icon)
 	if req.Type == "" {
 		req.Type = "menu"
 	}
@@ -757,7 +768,7 @@ func BuildProfile(username string) (Profile, error) {
 	}
 
 	var menus []store.AdminMenu
-	if err := store.DB().Order("id ASC").Find(&menus).Error; err != nil {
+	if err := store.DB().Order("parent_id ASC, sort_order ASC, id ASC").Find(&menus).Error; err != nil {
 		return Profile{}, err
 	}
 

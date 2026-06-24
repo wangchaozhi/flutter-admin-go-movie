@@ -3,22 +3,14 @@ import type { FormEvent } from 'react'
 import {
   BadgeCheck,
   ChevronRight,
-  Clapperboard,
-  CreditCard,
-  FolderOpen,
-  History,
   KeyRound,
   LogOut,
-  Menu as MenuIcon,
   Monitor,
   Moon,
   ImageUp,
   PanelLeft,
   RefreshCw,
-  Shield,
-  Smartphone,
   Sun,
-  Users,
 } from 'lucide-react'
 import './App.css'
 
@@ -41,10 +33,12 @@ import { ConfirmDialog } from './components/confirm'
 import { AppUserManagementSection } from './features/appUsers'
 import { CategoryManagementSection } from './features/categories'
 import { MenuManagementSection, buildMenuTree } from './features/menus'
+import type { MenuNodeType } from './features/menus'
 import { PaymentManagementSection } from './features/payments'
 import { RoleManagementSection } from './features/roles'
 import { UserManagementSection } from './features/users'
 import { VideoManagementSection, VideoTranscodeHistorySection } from './features/videos'
+import { resolveIcon } from './iconRegistry'
 
 const emptyUser: UserForm = {
   username: '',
@@ -65,40 +59,60 @@ const emptyMenu: MenuForm = {
   parentId: 0,
   type: 'menu',
   permission: '',
+  icon: '',
+  sortOrder: 0,
 }
 
 type ChildNavItem = {
   key: Entity
   label: string
-  icon: typeof Users
+  iconCode: string
   path: string
+  sortOrder?: number
 }
 
 type NavItem = {
-  key: Entity | 'video'
+  key: string
   label: string
-  icon: typeof Users
+  iconCode: string
   path: string
+  sortOrder?: number
   children?: ChildNavItem[]
 }
 
 const tabs: NavItem[] = [
-  { key: 'users', label: '管理员', icon: Users, path: '/system/user' },
-  { key: 'roles', label: '角色', icon: Shield, path: '/system/role' },
-  { key: 'menus', label: '菜单', icon: MenuIcon, path: '/system/menu' },
-  { key: 'app-users', label: 'App 用户', icon: Smartphone, path: '/app-users' },
-  { key: 'categories', label: '类别', icon: FolderOpen, path: '/categories' },
+  {
+    key: 'system',
+    label: '系统管理',
+    iconCode: 'Settings',
+    path: '/system',
+    children: [
+      { key: 'users', label: '管理员', iconCode: 'Users', path: '/system/user' },
+      { key: 'roles', label: '角色', iconCode: 'Shield', path: '/system/role' },
+      { key: 'menus', label: '菜单', iconCode: 'Menu', path: '/system/menu' },
+    ],
+  },
+  {
+    key: 'app',
+    label: 'App 管理',
+    iconCode: 'Smartphone',
+    path: '/app',
+    children: [
+      { key: 'app-users', label: '用户', iconCode: 'Users', path: '/app-users' },
+    ],
+  },
   {
     key: 'video',
     label: '视频管理',
-    icon: Clapperboard,
+    iconCode: 'Clapperboard',
     path: '/videos',
     children: [
-      { key: 'videos', label: '视频列表', icon: Clapperboard, path: '/videos' },
-      { key: 'video-transcodes', label: '转码历史', icon: History, path: '/videos/transcodes' },
+      { key: 'videos', label: '视频列表', iconCode: 'Clapperboard', path: '/videos' },
+      { key: 'categories', label: '类别', iconCode: 'FolderOpen', path: '/categories' },
+      { key: 'video-transcodes', label: '转码历史', iconCode: 'History', path: '/videos/transcodes' },
     ],
   },
-  { key: 'payments', label: '支付', icon: CreditCard, path: '/payments' },
+  { key: 'payments', label: '支付', iconCode: 'CreditCard', path: '/payments' },
 ]
 
 const pageHeaders: Record<Entity, { eyebrow: string; title: string; subtitle: string }> = {
@@ -144,8 +158,155 @@ const pageHeaders: Record<Entity, { eyebrow: string; title: string; subtitle: st
   },
 }
 
-function isEntityKey(key: NavItem['key']): key is Entity {
-  return key !== 'video'
+const routeMetaByPath = new Map<string, { key: Entity; label: string; iconCode: string }>([
+  ['/system/user', { key: 'users', label: '管理员', iconCode: 'Users' }],
+  ['/system/role', { key: 'roles', label: '角色', iconCode: 'Shield' }],
+  ['/system/menu', { key: 'menus', label: '菜单', iconCode: 'Menu' }],
+  ['/app-users', { key: 'app-users', label: '用户', iconCode: 'Users' }],
+  ['/videos', { key: 'videos', label: '视频列表', iconCode: 'Clapperboard' }],
+  ['/categories', { key: 'categories', label: '类别', iconCode: 'FolderOpen' }],
+  ['/videos/transcodes', { key: 'video-transcodes', label: '转码历史', iconCode: 'History' }],
+  ['/payments', { key: 'payments', label: '支付', iconCode: 'CreditCard' }],
+])
+
+const legacyMenuNames = new Set([
+  'system',
+  'user',
+  'role',
+  'menu',
+  'app-users',
+  'videos',
+  'categories',
+  'payments',
+  'video:transcode-history',
+])
+
+const groupLabelByPath = new Map([
+  ['/system', '系统管理'],
+  ['/app', 'App 管理'],
+  ['/videos', '视频管理'],
+])
+
+const entityKeys = new Set<Entity>([
+  'users',
+  'roles',
+  'menus',
+  'videos',
+  'video-transcodes',
+  'categories',
+  'app-users',
+  'payments',
+])
+
+function isEntityKey(key: string): key is Entity {
+  return entityKeys.has(key as Entity)
+}
+
+function buildVisibleNavigation(menuTree: MenuNodeType[], menuPaths: Set<string>) {
+  const items = menuTree
+    .map((node) => buildNavItem(node, menuPaths))
+    .filter((item): item is NavItem => Boolean(item))
+    .sort(compareNavItems)
+  return items.length > 0 ? items : buildFallbackNavigation(menuPaths)
+}
+
+function buildNavItem(node: MenuNodeType, menuPaths: Set<string>): NavItem | null {
+  const meta = routeMetaByPath.get(node.path)
+  const visible = isPathVisible(node.path, menuPaths, false)
+  const children = [
+    ...(node.children.length > 0 && meta && visible
+      ? [{
+          key: meta.key,
+          label: meta.label,
+          iconCode: node.icon || meta.iconCode,
+          path: node.path,
+          sortOrder: 0,
+        }]
+      : []),
+    ...node.children.flatMap((child) => collectNavLinks(child, menuPaths, visible)),
+  ].sort(compareChildNavItems)
+
+  if (children.length > 0) {
+    return {
+      key: `menu:${node.id}`,
+      label: getGroupLabel(node, meta?.label),
+      iconCode: node.icon || meta?.iconCode || children[0]?.iconCode || 'List',
+      path: node.path,
+      sortOrder: node.sortOrder,
+      children,
+    }
+  }
+
+  if (!meta || !visible) return null
+  return {
+    key: meta.key,
+    label: getLinkLabel(node, meta.label),
+    iconCode: node.icon || meta.iconCode,
+    path: node.path,
+    sortOrder: node.sortOrder,
+  }
+}
+
+function collectNavLinks(
+  node: MenuNodeType,
+  menuPaths: Set<string>,
+  inheritedVisible: boolean,
+): ChildNavItem[] {
+  const meta = routeMetaByPath.get(node.path)
+  const visible = isPathVisible(node.path, menuPaths, inheritedVisible)
+  const self = meta && visible
+    ? [{
+        key: meta.key,
+        label: getLinkLabel(node, meta.label),
+        iconCode: node.icon || meta.iconCode,
+        path: node.path,
+        sortOrder: node.sortOrder,
+      }]
+    : []
+  return [
+    ...self,
+    ...node.children.flatMap((child) => collectNavLinks(child, menuPaths, visible)),
+  ].sort(compareChildNavItems)
+}
+
+function buildFallbackNavigation(menuPaths: Set<string>) {
+  return tabs
+    .map((tab) => {
+      if (!tab.children) return tab
+      const children = menuPaths.size === 0 || menuPaths.has(tab.path)
+        ? tab.children
+        : tab.children.filter((child) => menuPaths.has(child.path))
+      return { ...tab, children }
+    })
+    .filter((tab) => {
+      if (menuPaths.size === 0) return true
+      if (tab.children) return tab.children.length > 0
+      return menuPaths.has(tab.path)
+    })
+}
+
+function isPathVisible(path: string, menuPaths: Set<string>, inheritedVisible: boolean) {
+  return inheritedVisible || menuPaths.size === 0 || (path !== '' && menuPaths.has(path))
+}
+
+function getGroupLabel(menu: Menu, fallback = '菜单') {
+  const name = menu.name.trim()
+  if (name && !legacyMenuNames.has(name)) return name
+  return groupLabelByPath.get(menu.path) ?? fallback
+}
+
+function getLinkLabel(menu: Menu, fallback: string) {
+  const name = menu.name.trim()
+  if (name && !legacyMenuNames.has(name)) return name
+  return fallback
+}
+
+function compareNavItems(left: NavItem, right: NavItem) {
+  return (left.sortOrder ?? 0) - (right.sortOrder ?? 0) || left.key.localeCompare(right.key)
+}
+
+function compareChildNavItems(left: ChildNavItem, right: ChildNavItem) {
+  return (left.sortOrder ?? 0) - (right.sortOrder ?? 0) || left.key.localeCompare(right.key)
 }
 
 const adminRememberKey = 'admin.remember'
@@ -408,6 +569,7 @@ function AdminDashboard({
   const [avatarRefreshKey, setAvatarRefreshKey] = useState(0)
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
+  const [openNavGroups, setOpenNavGroups] = useState<Record<string, boolean>>({})
   const userMenuRef = useRef<HTMLDivElement | null>(null)
 
   const roleNameByID = useMemo(
@@ -421,44 +583,51 @@ function AdminDashboard({
   const pageMenus = useMemo(() => menus.filter((menu) => menu.type !== 'button'), [menus])
   const buttonMenus = useMemo(() => menus.filter((menu) => menu.type === 'button'), [menus])
   const menuTree = useMemo(() => buildMenuTree(menus), [menus])
+  const navMenuTree = useMemo(() => buildMenuTree(pageMenus), [pageMenus])
   const permissions = useMemo(() => new Set(session.permissions ?? []), [session.permissions])
   const menuPaths = useMemo(() => new Set(session.menuPaths ?? []), [session.menuPaths])
   const visibleTabs = useMemo(
-    () =>
-      tabs
-        .map((tab) => {
-          if (!tab.children) return tab
-          const children = menuPaths.size === 0 || menuPaths.has(tab.path)
-            ? tab.children
-            : tab.children.filter((child) => menuPaths.has(child.path))
-          return children.length > 0 ? { ...tab, children } : tab
-        })
-        .filter((tab) => menuPaths.size === 0 || menuPaths.has(tab.path) || Boolean(tab.children?.length)),
-    [menuPaths],
+    () => buildVisibleNavigation(navMenuTree, menuPaths),
+    [navMenuTree, menuPaths],
   )
   const flatVisibleTabs = useMemo<ChildNavItem[]>(
     () =>
       visibleTabs.flatMap((tab) => {
         if (tab.children?.length) return tab.children
-        return isEntityKey(tab.key) ? [{ key: tab.key, label: tab.label, icon: tab.icon, path: tab.path }] : []
+        return isEntityKey(tab.key)
+          ? [{ key: tab.key, label: tab.label, iconCode: tab.iconCode, path: tab.path }]
+          : []
       }),
     [visibleTabs],
   )
   const activeHeader = pageHeaders[active]
   const can = (permission: string) => permissions.has(permission)
 
+  function toggleNavGroup(key: string) {
+    setOpenNavGroups((current) => ({ ...current, [key]: !(current[key] ?? true) }))
+  }
+
   async function loadAll() {
     setLoading(true)
     setError('')
     try {
-      const [nextUsers, nextRoles, nextMenus] = await Promise.all([
+      const [nextUsers, nextRoles, nextMenus, nextProfile] = await Promise.all([
         request<User[]>('/api/admin/users'),
         request<Role[]>('/api/admin/roles'),
         request<Menu[]>('/api/admin/menus'),
+        request<Profile>('/api/admin/profile'),
       ])
       setUsers(nextUsers ?? [])
       setRoles(nextRoles ?? [])
       setMenus(nextMenus ?? [])
+      onSessionChange({
+        ...session,
+        theme: nextProfile.theme,
+        menuPaths: nextProfile.menuPaths,
+        permissions: nextProfile.permissions,
+        avatarUrl: nextProfile.avatarUrl,
+        thumbnailUrl: nextProfile.thumbnailUrl,
+      })
       setNotice('数据已同步')
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载失败')
@@ -589,6 +758,8 @@ function AdminDashboard({
         parentId: menuForm.parentId,
         type: menuForm.type,
         permission: menuForm.permission.trim(),
+        icon: menuForm.icon.trim(),
+        sortOrder: menuForm.sortOrder,
       },
       () => setMenuForm(emptyMenu),
     )
@@ -682,17 +853,20 @@ function AdminDashboard({
         </div>
         <nav className="nav-tabs" aria-label="系统管理">
           {visibleTabs.map((tab) => {
-            const Icon = tab.icon
+            const Icon = resolveIcon(tab.iconCode)
             const children = tab.children ?? []
             const activeChild = children.some((child) => child.key === active)
+            const isGroup = children.length > 0
+            const groupOpen = isGroup ? openNavGroups[tab.key] ?? true : false
             return (
               <div className="nav-group" key={tab.key}>
                 <button
-                  className={active === tab.key || activeChild ? 'active' : ''}
+                  className={(isEntityKey(tab.key) && active === tab.key) || activeChild ? 'active' : ''}
                   type="button"
+                  aria-expanded={isGroup ? groupOpen : undefined}
                   onClick={() => {
-                    if (children[0]) {
-                      setActive(children[0].key)
+                    if (isGroup) {
+                      toggleNavGroup(tab.key)
                       return
                     }
                     if (isEntityKey(tab.key)) {
@@ -702,20 +876,24 @@ function AdminDashboard({
                 >
                   <Icon size={16} />
                   <span>{tab.label}</span>
-                  <ChevronRight className="nav-chevron" size={15} />
+                  <ChevronRight className={groupOpen ? 'nav-chevron open' : 'nav-chevron'} size={15} />
                 </button>
-                {children.length > 0 && (
+                {children.length > 0 && groupOpen && (
                   <div className="nav-subtabs">
-                    {children.map((child) => (
-                      <button
-                        className={active === child.key ? 'active' : ''}
-                        key={child.key}
-                        type="button"
-                        onClick={() => setActive(child.key)}
-                      >
-                        <span>{child.label}</span>
-                      </button>
-                    ))}
+                    {children.map((child) => {
+                      const ChildIcon = resolveIcon(child.iconCode)
+                      return (
+                        <button
+                          className={active === child.key ? 'active' : ''}
+                          key={child.key}
+                          type="button"
+                          onClick={() => setActive(child.key)}
+                        >
+                          <ChildIcon size={14} />
+                          <span>{child.label}</span>
+                        </button>
+                      )
+                    })}
                   </div>
                 )}
               </div>

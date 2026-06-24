@@ -95,6 +95,8 @@ export type Menu = {
   parentId: number
   type: 'menu' | 'button'
   permission: string
+  icon: string
+  sortOrder: number
 }
 
 export type ApiResponse<T> = {
@@ -180,6 +182,7 @@ export type Order = {
   created_at: string
   updated_at: string
   product?: Product
+  user?: AppUser
 }
 
 export type UserForm = Omit<User, 'id'> & { id?: number; password: string }

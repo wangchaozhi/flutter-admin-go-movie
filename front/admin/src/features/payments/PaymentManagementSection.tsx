@@ -126,6 +126,17 @@ function statusBadge(status: OrderStatus) {
   return <span className={`status-badge ${orderStatusClass[status]}`}>{orderStatusLabels[status]}</span>
 }
 
+function orderUserLabel(order: Order) {
+  return order.user?.username?.trim() || `#${order.user_id}`
+}
+
+function orderUserDetail(order: Order) {
+  const nickname = order.user?.nickname?.trim()
+  if (nickname) return `${nickname} · #${order.user_id}`
+  if (order.user?.username) return `#${order.user_id}`
+  return ''
+}
+
 export function PaymentManagementSection({
   token,
   can,
@@ -534,7 +545,10 @@ export function PaymentManagementSection({
                     <strong>{order.order_no}</strong>
                     {order.provider_payment_id && <small>{order.provider_payment_id}</small>}
                   </td>
-                  <td>#{order.user_id}</td>
+                  <td>
+                    <strong>{orderUserLabel(order)}</strong>
+                    {orderUserDetail(order) && <small>{orderUserDetail(order)}</small>}
+                  </td>
                   <td>{order.product?.name ?? productNameByID.get(order.product_id) ?? '-'}</td>
                   <td>{order.provider}</td>
                   <td>{money(order)}</td>

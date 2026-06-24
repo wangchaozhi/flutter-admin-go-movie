@@ -2,6 +2,7 @@ import type { FormEvent } from 'react'
 
 import type { Menu, MenuForm } from '../../adminTypes'
 import { FormActions, PanelTitle } from '../../components/shared'
+import { menuIconOptions } from '../../iconRegistry'
 import { MenuNode } from './menuTree'
 import type { MenuNodeType } from './menuTree'
 
@@ -11,6 +12,8 @@ const emptyMenu: MenuForm = {
   parentId: 0,
   type: 'menu',
   permission: '',
+  icon: '',
+  sortOrder: 0,
 }
 
 export function MenuManagementSection({
@@ -77,6 +80,34 @@ export function MenuManagementSection({
             value={menuForm.name}
             onChange={(event) => onMenuFormChange({ ...menuForm, name: event.target.value })}
             placeholder="系统管理"
+          />
+        </label>
+        <label>
+          图标编码
+          <input
+            list="menu-icon-options"
+            value={menuForm.icon}
+            onChange={(event) => onMenuFormChange({ ...menuForm, icon: event.target.value })}
+            placeholder="Settings"
+          />
+          <datalist id="menu-icon-options">
+            {menuIconOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </datalist>
+        </label>
+        <label>
+          排序
+          <input
+            min={0}
+            type="number"
+            value={menuForm.sortOrder}
+            onChange={(event) =>
+              onMenuFormChange({ ...menuForm, sortOrder: Number(event.target.value) })
+            }
+            placeholder="10"
           />
         </label>
         <label>

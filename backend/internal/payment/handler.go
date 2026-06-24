@@ -231,7 +231,7 @@ func AdminOrdersHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var orders []store.Order
-	query := withOrderProduct(store.DB()).Order("id desc").Limit(200)
+	query := withOrderProduct(store.DB()).Preload("User").Order("id desc").Limit(200)
 	if status := strings.TrimSpace(r.URL.Query().Get("status")); status != "" {
 		query = query.Where("status = ?", status)
 	}
