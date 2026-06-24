@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -93,29 +94,48 @@ func AdminUploadVideoHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	key := fmt.Sprintf("originals/%d/source.mp4", videoID)
+	key, contentType, err := uploadedVideoSourceInfo(videoID, header.Filename, header.Header.Get("Content-Type"))
+	if err != nil {
+		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: err.Error()})
+		return
+	}
 	uploadInfo, err := store.ObjectClient().PutObject(
 		r.Context(),
 		store.VideoBucket(),
 		key,
 		file,
 		header.Size,
-		minio.PutObjectOptions{ContentType: "video/mp4"},
+		minio.PutObjectOptions{ContentType: contentType},
 	)
 	if err != nil {
 		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: "upload failed: " + err.Error()})
 		return
 	}
+	removeObjectsByPrefix(r.Context(), fmt.Sprintf("hls/%d/", videoID))
+	store.DB().Where("video_id = ?", videoID).Delete(&store.VideoMediaTrack{})
+	if strings.TrimSpace(v.OriginalKey) != "" && v.OriginalKey != key {
+		_ = store.ObjectClient().RemoveObject(r.Context(), store.VideoBucket(), v.OriginalKey, minio.RemoveObjectOptions{})
+	}
 
 	sourceSize := sourceVideoSize{}
 	duration := 0
+	srcPath := ""
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
 		log.Printf("seek uploaded video failed for video %d: %v", videoID, err)
-	} else if srcPath, err := cacheUploadedSource(r.Context(), videoID, key, header.Size, uploadInfo.ETag, file); err != nil {
-		log.Printf("cache uploaded video failed for video %d: %v", videoID, err)
 	} else {
-		sourceSize = probeSourceSize(srcPath)
-		duration = probeDuration(srcPath)
+		cachedPath, err := cacheUploadedSource(r.Context(), videoID, key, header.Size, uploadInfo.ETag, file)
+		if err != nil {
+			log.Printf("cache uploaded video failed for video %d: %v", videoID, err)
+		} else {
+			srcPath = cachedPath
+			sourceSize = probeSourceSize(srcPath)
+			duration = probeDuration(srcPath)
+		}
+	}
+	if srcPath != "" {
+		if _, err := ensureVideoMediaTracks(r.Context(), videoID, key, srcPath); err != nil {
+			log.Printf("prepare media tracks failed for video %d: %v", videoID, err)
+		}
 	}
 
 	now := time.Now()
@@ -350,6 +370,24 @@ func failQueuedTranscodeBatch(videoID, batchID int64, previousStatus string, enq
 		"status":     status,
 		"updated_at": now,
 	})
+}
+
+func uploadedVideoSourceInfo(videoID int64, filename, contentType string) (string, string, error) {
+	ext := strings.ToLower(filepath.Ext(filename))
+	if ext == "" {
+		ext = ".mp4"
+	}
+	switch ext {
+	case ".mp4":
+		if strings.TrimSpace(contentType) == "" {
+			contentType = "video/mp4"
+		}
+	case ".mkv":
+		contentType = "video/x-matroska"
+	default:
+		return "", "", fmt.Errorf("unsupported video source format %s", ext)
+	}
+	return fmt.Sprintf("originals/%d/source%s", videoID, ext), contentType, nil
 }
 
 func normalizeTranscodeQualityNames(input []string) ([]string, error) {

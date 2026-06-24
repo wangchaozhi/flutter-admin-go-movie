@@ -109,6 +109,8 @@ func NewRouter() http.Handler {
 			video.HLSMasterHandler(w, r)
 		} else if strings.HasSuffix(r.URL.Path, "index.m3u8") {
 			video.HLSIndexHandler(w, r)
+		} else if strings.HasSuffix(r.URL.Path, ".vtt") {
+			video.HLSAssetHandler(w, r)
 		} else {
 			http.NotFound(w, r)
 		}

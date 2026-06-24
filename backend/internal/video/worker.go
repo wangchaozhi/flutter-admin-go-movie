@@ -366,10 +366,17 @@ func runTranscode(ctx context.Context, videoID, taskID, batchID int64, requested
 	}
 	defer os.RemoveAll(tmpDir)
 
-	srcKey := fmt.Sprintf("originals/%d/source.mp4", videoID)
+	var video store.Video
+	if err := store.DB().First(&video, videoID).Error; err != nil {
+		return fmt.Errorf("load video: %w", err)
+	}
+	srcKey := sourceKeyForVideo(video)
 	srcPath, err := cachedSourcePath(ctx, videoID, srcKey, tmpRoot)
 	if err != nil {
 		return err
+	}
+	if _, err := ensureVideoMediaTracks(ctx, videoID, srcKey, srcPath); err != nil {
+		log.Printf("ensure media tracks failed for video %d: %v", videoID, err)
 	}
 
 	updateTranscodeTaskProgress(taskID, "检查清晰度", 10)

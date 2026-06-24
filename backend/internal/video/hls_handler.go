@@ -27,6 +27,18 @@ type HLSQualityOption struct {
 	URL        string `json:"url"`
 }
 
+type MediaTrackOption struct {
+	ID       int64  `json:"id"`
+	Type     string `json:"type"`
+	Label    string `json:"label"`
+	Language string `json:"language,omitempty"`
+	Title    string `json:"title,omitempty"`
+	Codec    string `json:"codec,omitempty"`
+	Default  bool   `json:"default"`
+	Forced   bool   `json:"forced"`
+	URL      string `json:"url"`
+}
+
 const hlsSignedURLTTLSeconds = 6 * 60 * 60
 
 // GET /api/hls/{videoId}/master.m3u8?expires=xxx&sign=xxx
@@ -114,6 +126,36 @@ func HLSIndexHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write(buf.Bytes())
 }
 
+// GET /api/hls/{videoId}/tracks/{...}.vtt?expires=xxx&sign=xxx
+func HLSAssetHandler(w http.ResponseWriter, r *http.Request) {
+	videoID, requestPath, ok := parseHLSRequest(r, w)
+	if !ok {
+		return
+	}
+	if !verifyHLSSign(r, requestPath, w) {
+		return
+	}
+
+	relPath := strings.Trim(strings.TrimPrefix(r.URL.Path, fmt.Sprintf("/api/hls/%d/", videoID)), "/")
+	if !validHLSRelativePath(relPath) || !strings.HasSuffix(relPath, ".vtt") {
+		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "invalid path"})
+		return
+	}
+
+	obj, err := store.ObjectClient().GetObject(r.Context(), store.VideoBucket(), fmt.Sprintf("hls/%d/%s", videoID, relPath), minio.GetObjectOptions{})
+	if err != nil {
+		common.WriteJSON(w, http.StatusNotFound, common.APIResponse{Code: 404, Msg: "not found"})
+		return
+	}
+	defer obj.Close()
+
+	w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	io.Copy(w, obj)
+}
+
 // GET /api/videos/{id}/play  (VIP videos require mobile JWT)
 func AppPlayHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -154,13 +196,17 @@ func AppPlayHandler(w http.ResponseWriter, r *http.Request) {
 	masterPath := fmt.Sprintf("/api/hls/%d/master.m3u8", id)
 	signedPath := SignPath(masterPath, hlsSignedURLTTLSeconds)
 	qualities := signedHLSQualities(r.Context(), id)
+	audioTracks := signedMediaTrackOptions(r.Context(), id, "audio")
+	subtitleTracks := signedMediaTrackOptions(r.Context(), id, "subtitle")
 
 	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: map[string]interface{}{
-		"video_id":   id,
-		"type":       "hls",
-		"url":        signedPath,
-		"qualities":  qualities,
-		"auto_label": "自动",
+		"video_id":        id,
+		"type":            "hls",
+		"url":             signedPath,
+		"qualities":       qualities,
+		"audio_tracks":    audioTracks,
+		"subtitle_tracks": subtitleTracks,
+		"auto_label":      "自动",
 	}})
 }
 
@@ -198,6 +244,64 @@ func signedHLSQualities(ctx context.Context, videoID int64) []HLSQualityOption {
 		resolution = ""
 	}
 	return qualities
+}
+
+func signedMediaTrackOptions(ctx context.Context, videoID int64, trackType string) []MediaTrackOption {
+	var tracks []store.VideoMediaTrack
+	err := store.DB().
+		Where("video_id = ? AND track_type = ? AND status = ? AND object_key <> ?", videoID, trackType, "ready", "").
+		Order("stream_position asc").
+		Find(&tracks).Error
+	if err != nil || len(tracks) == 0 {
+		return nil
+	}
+	options := make([]MediaTrackOption, 0, len(tracks))
+	for _, track := range tracks {
+		url := signedMediaTrackURL(videoID, track.ObjectKey)
+		if url == "" {
+			continue
+		}
+		options = append(options, MediaTrackOption{
+			ID:       track.ID,
+			Type:     track.TrackType,
+			Label:    mediaTrackLabel(track),
+			Language: track.Language,
+			Title:    track.Title,
+			Codec:    track.CodecName,
+			Default:  track.IsDefault,
+			Forced:   track.IsForced,
+			URL:      url,
+		})
+	}
+	return options
+}
+
+func signedMediaTrackURL(videoID int64, objectKey string) string {
+	prefix := fmt.Sprintf("hls/%d/", videoID)
+	if !strings.HasPrefix(objectKey, prefix) {
+		return ""
+	}
+	relPath := strings.TrimPrefix(objectKey, prefix)
+	if !validHLSRelativePath(relPath) {
+		return ""
+	}
+	return SignPath(fmt.Sprintf("/api/hls/%d/%s", videoID, relPath), hlsSignedURLTTLSeconds)
+}
+
+func mediaTrackLabel(track store.VideoMediaTrack) string {
+	if title := strings.TrimSpace(track.Title); title != "" {
+		return title
+	}
+	if language := strings.TrimSpace(track.Language); language != "" {
+		return language
+	}
+	prefix := "Track"
+	if track.TrackType == "audio" {
+		prefix = "Audio"
+	} else if track.TrackType == "subtitle" {
+		prefix = "Subtitle"
+	}
+	return fmt.Sprintf("%s %d", prefix, track.StreamPosition+1)
 }
 
 func hlsPlaylistRelativePath(line string) string {

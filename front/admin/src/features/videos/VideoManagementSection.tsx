@@ -251,7 +251,7 @@ export function VideoManagementSection({
       setUploadError('上传超时，请重试')
     }
 
-    xhr.timeout = 10 * 60 * 1000 // 10 分钟
+    xhr.timeout = 30 * 60 * 1000 // 30 分钟
 
     xhr.send(fd)
   }
@@ -643,7 +643,7 @@ export function VideoManagementSection({
               <input
                 ref={mp4Ref}
                 type="file"
-                accept="video/mp4"
+                accept="video/mp4,video/x-matroska,.mkv"
                 required
                 onChange={e => setMp4FileName(e.target.files?.[0]?.name ?? '')}
               />
@@ -672,7 +672,7 @@ export function VideoManagementSection({
 
             <div className="upload-row">
               <label className="upload-label">MP4 视频</label>
-              <input ref={mp4Ref} type="file" accept="video/mp4" disabled={uploading} />
+              <input ref={mp4Ref} type="file" accept="video/mp4,video/x-matroska,.mkv" disabled={uploading} />
               <button type="button" disabled={uploading} onClick={() => handleUploadMp4(form.id!)}>
                 <Loader size={13} className={uploading ? 'spin' : undefined} style={{ display: uploading ? undefined : 'none' }} />
                 {!uploading && <CloudUpload size={13} />}

@@ -44,6 +44,29 @@ type VideoTranscodeTask struct {
 
 func (VideoTranscodeTask) TableName() string { return "video_transcode_tasks" }
 
+type VideoMediaTrack struct {
+	ID             int64     `gorm:"primaryKey;column:id"       json:"id"`
+	VideoID        int64     `gorm:"column:video_id"            json:"video_id"`
+	SourceKey      string    `gorm:"column:source_key"          json:"source_key"`
+	SourceETag     string    `gorm:"column:source_etag"         json:"source_etag"`
+	SourceSize     int64     `gorm:"column:source_size"         json:"source_size"`
+	TrackType      string    `gorm:"column:track_type"          json:"track_type"`
+	StreamIndex    int       `gorm:"column:stream_index"        json:"stream_index"`
+	StreamPosition int       `gorm:"column:stream_position"     json:"stream_position"`
+	CodecName      string    `gorm:"column:codec_name"          json:"codec_name"`
+	Language       string    `gorm:"column:language"            json:"language"`
+	Title          string    `gorm:"column:title"               json:"title"`
+	IsDefault      bool      `gorm:"column:is_default"          json:"is_default"`
+	IsForced       bool      `gorm:"column:is_forced"           json:"is_forced"`
+	ObjectKey      string    `gorm:"column:object_key"          json:"object_key"`
+	Status         string    `gorm:"column:status"              json:"status"`
+	ErrorMessage   string    `gorm:"column:error_message"       json:"error_message"`
+	CreatedAt      time.Time `gorm:"column:created_at"          json:"created_at"`
+	UpdatedAt      time.Time `gorm:"column:updated_at"          json:"updated_at"`
+}
+
+func (VideoMediaTrack) TableName() string { return "video_media_tracks" }
+
 type VideoPlayRecord struct {
 	ID        int64     `gorm:"primaryKey;column:id"`
 	UserID    int64     `gorm:"column:user_id"`
