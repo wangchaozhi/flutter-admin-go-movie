@@ -4,7 +4,8 @@ param(
   [switch]$NoWorker,
   [switch]$SkipInstall,
   [switch]$Restart,
-  [string]$HostName = "127.0.0.1",
+  [string]$BindHost = "0.0.0.0",
+  [string]$HostName = "localhost",
   [int]$AdminPort = 5173,
   [int]$MobilePort = 5174
 )
@@ -22,6 +23,7 @@ $RunDir = Join-Path $RunRoot $Stamp
 $PidFile = Join-Path $RunRoot "pids.json"
 $TranscodeTempDir = Join-Path $RunRoot "transcode-tmp"
 $ComposeNetwork = "$(Split-Path -Leaf $Root)_app-network"
+$BackendHTTPAddr = "$BindHost`:8080"
 $ApiBaseURL = "http://$HostName`:8080"
 $VideoBaseURL = "http://$HostName`:8081"
 $DefaultFFmpegBin = "E:\dev\ffmpeg-6.0-full_build\bin"
@@ -409,6 +411,9 @@ if ([string]::IsNullOrWhiteSpace($env:APP_ENV)) {
 if ([string]::IsNullOrWhiteSpace($env:HLS_SECRET)) {
   $env:HLS_SECRET = "your_hls_secret_key_change_in_prod"
 }
+if ([string]::IsNullOrWhiteSpace($env:HTTP_ADDR)) {
+  $env:HTTP_ADDR = $BackendHTTPAddr
+}
 if ([string]::IsNullOrWhiteSpace($env:API_BASE_URL)) {
   $env:API_BASE_URL = $ApiBaseURL
 }
@@ -484,7 +489,7 @@ $services += Start-DevProcess `
   -Name "admin" `
   -Port $AdminPort `
   -FilePath "node" `
-  -Arguments @($viteBin, "--host", $HostName, "--port", [string]$AdminPort) `
+  -Arguments @($viteBin, "--host", $BindHost, "--port", [string]$AdminPort) `
   -WorkingDirectory $AdminDir
 
 if (-not $NoMobile) {
@@ -493,7 +498,7 @@ if (-not $NoMobile) {
     -Name "mobile" `
     -Port $MobilePort `
     -FilePath "cmd.exe" `
-    -Arguments @("/c", "flutter run -d web-server --web-hostname $HostName --web-port $MobilePort --dart-define API_BASE_URL=$ApiBaseURL") `
+    -Arguments @("/c", "flutter run -d web-server --web-hostname $BindHost --web-port $MobilePort --dart-define API_BASE_URL=$ApiBaseURL") `
     -WorkingDirectory $MobileDir
 }
 
@@ -516,6 +521,7 @@ $stopIds = @($ownerIds + $trackedIds | Where-Object { $_ } | Sort-Object -Unique
 
 Write-Host ""
 Write-Host "Ready"
+Write-Host "  Listening: $BindHost"
 Write-Host "  Backend: http://$HostName`:8080/api/health"
 Write-Host "  Admin:   http://$HostName`:$AdminPort/"
 if (-not $NoMobile) {

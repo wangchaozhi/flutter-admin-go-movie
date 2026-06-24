@@ -40,6 +40,9 @@ func ensureVideoMediaTracks(ctx context.Context, videoID int64, srcKey, srcPath 
 }
 
 func ensureVideoMediaTracksForSource(ctx context.Context, videoID int64, srcKey, srcPath string, info minio.ObjectInfo) ([]store.VideoMediaTrack, error) {
+	if !videoSourceKeyMatches(videoID, srcKey) {
+		return nil, context.Canceled
+	}
 	sourceETag := mediaSourceETag(info)
 	var existing []store.VideoMediaTrack
 	if err := store.DB().
@@ -73,6 +76,10 @@ func ensureVideoMediaTracksForSource(ctx context.Context, videoID int64, srcKey,
 
 	streams, err := probeMediaStreams(srcPath)
 	if err != nil {
+		return nil, err
+	}
+	audioCount, subtitleCount := mediaStreamCounts(streams)
+	if err := recordVideoMediaTrackScan(ctx, videoID, srcKey, audioCount, subtitleCount); err != nil {
 		return nil, err
 	}
 
@@ -138,6 +145,54 @@ func ensureVideoMediaTracksForSource(ctx context.Context, videoID int64, srcKey,
 	}
 	sortMediaTracks(created)
 	return created, nil
+}
+
+func videoSourceKeyMatches(videoID int64, srcKey string) bool {
+	srcKey = strings.TrimSpace(srcKey)
+	if srcKey == "" {
+		return true
+	}
+	var video store.Video
+	if err := store.DB().Select("id, original_key").First(&video, videoID).Error; err != nil {
+		return false
+	}
+	return sourceKeyForVideo(video) == srcKey
+}
+
+func mediaStreamCounts(streams []ffprobeStreamInfo) (int, int) {
+	audioCount := 0
+	subtitleCount := 0
+	for _, stream := range streams {
+		switch stream.CodecType {
+		case "audio":
+			audioCount++
+		case "subtitle":
+			if isTextSubtitleCodec(stream.CodecName) {
+				subtitleCount++
+			}
+		}
+	}
+	return audioCount, subtitleCount
+}
+
+func recordVideoMediaTrackScan(ctx context.Context, videoID int64, srcKey string, audioCount, subtitleCount int) error {
+	query := store.DB().WithContext(ctx).Model(&store.Video{}).Where("id = ?", videoID)
+	if strings.TrimSpace(srcKey) != "" {
+		query = query.Where("original_key = ?", srcKey)
+	}
+	result := query.Updates(map[string]interface{}{
+		"audio_track_count":    audioCount,
+		"subtitle_track_count": subtitleCount,
+		"media_tracks_scanned": true,
+		"updated_at":           time.Now(),
+	})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return context.Canceled
+	}
+	return nil
 }
 
 func probeMediaStreams(srcPath string) ([]ffprobeStreamInfo, error) {

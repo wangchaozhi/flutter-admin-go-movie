@@ -11,6 +11,7 @@ import {
   Play,
   RefreshCw,
   Trash2,
+  XCircle,
 } from 'lucide-react'
 
 import type {
@@ -59,6 +60,7 @@ const QUALITY_STATUS_LABEL: Record<string, string> = {
   processing: '转码中',
   success: '已完成',
   failed: '失败',
+  canceled: '已取消',
 }
 
 const QUALITY_STATUS_CLASS: Record<string, string> = {
@@ -67,6 +69,7 @@ const QUALITY_STATUS_CLASS: Record<string, string> = {
   processing: 'status-transcoding',
   success: 'status-ready',
   failed: 'status-failed',
+  canceled: 'status-offline',
 }
 
 function formatDateTime(value?: string | null) {
@@ -110,6 +113,7 @@ function isActiveTranscodeStatus(status?: string) {
 
 function transcodeStateLabel(status: string | undefined, fallback: string, progress?: number) {
   if (status === 'failed') return '失败'
+  if (status === 'canceled') return '已取消'
   if (status === 'success') return '已转'
   if (status === 'queued') return '等待入队'
   if (status === 'pending') return '等待转码'
@@ -130,6 +134,7 @@ export function VideoManagementSection({
   const [saving, setSaving] = useState(false)
   const [uploadProgress, setUploadProgress] = useState<number | null>(null)
   const [transcoding, setTranscoding] = useState(false)
+  const [cancelingTranscode, setCancelingTranscode] = useState<Set<string>>(new Set())
   const [transcodeDialog, setTranscodeDialog] = useState<{
     video: Video
     selected: string[]
@@ -144,6 +149,8 @@ export function VideoManagementSection({
   const [mp4FileName, setMp4FileName] = useState('')
   const mp4Ref = useRef<HTMLInputElement>(null)
   const coverRef = useRef<HTMLInputElement>(null)
+  const uploadXhrRef = useRef<XMLHttpRequest | null>(null)
+  const uploadVideoIdRef = useRef<number | null>(null)
   // keep the latest expanded set available to the polling closure
   const expandedRef = useRef<Set<number>>(expanded)
   useEffect(() => { expandedRef.current = expanded }, [expanded])
@@ -177,6 +184,24 @@ export function VideoManagementSection({
 
   useEffect(() => { loadVideos(); loadCategories() }, [])
 
+  function transcodeCancelKey(videoId: number, quality?: string) {
+    return quality ? `${videoId}:${quality}` : `${videoId}:all`
+  }
+
+  function clearActiveUpload(xhr: XMLHttpRequest) {
+    if (uploadXhrRef.current === xhr) {
+      uploadXhrRef.current = null
+      uploadVideoIdRef.current = null
+    }
+  }
+
+  function cancelUploadIfActive(videoId?: number) {
+    if (!uploadXhrRef.current) return false
+    if (videoId !== undefined && uploadVideoIdRef.current !== videoId) return false
+    uploadXhrRef.current.abort()
+    return true
+  }
+
   async function handleSave(e: FormEvent) {
     e.preventDefault()
     if (!form.title.trim()) return
@@ -204,8 +229,21 @@ export function VideoManagementSection({
 
   async function handleDelete(id: number) {
     if (!window.confirm('确认删除该视频？')) return
-    await fetch(`/api/admin/videos/${id}`, { method: 'DELETE', headers: jsonHeaders })
+    cancelUploadIfActive(id)
+    const res = await fetch(`/api/admin/videos/${id}`, { method: 'DELETE', headers: jsonHeaders })
+    const json: ApiResponse<unknown> = await res.json()
+    if (json.code !== 0) { alert('删除失败：' + json.msg); return }
     if (form.id === id) setForm(emptyForm)
+    setTaskStatus(prev => {
+      const next = { ...prev }
+      delete next[id]
+      return next
+    })
+    setQualityTasks(prev => {
+      const next = { ...prev }
+      delete next[id]
+      return next
+    })
     loadVideos()
   }
 
@@ -229,6 +267,8 @@ export function VideoManagementSection({
     fd.append('file', file)
 
     const xhr = new XMLHttpRequest()
+    uploadXhrRef.current = xhr
+    uploadVideoIdRef.current = videoId
     xhr.open('POST', `/api/admin/videos/${videoId}/upload`)
     xhr.setRequestHeader('Authorization', `Bearer ${token}`)
 
@@ -241,6 +281,7 @@ export function VideoManagementSection({
     }
 
     xhr.onload = async () => {
+      clearActiveUpload(xhr)
       setUploadProgress(null)
       try {
         const json = JSON.parse(xhr.responseText)
@@ -258,13 +299,21 @@ export function VideoManagementSection({
     }
 
     xhr.onerror = () => {
+      clearActiveUpload(xhr)
       setUploadProgress(null)
       setUploadError('上传出错，请重试')
     }
 
     xhr.ontimeout = () => {
+      clearActiveUpload(xhr)
       setUploadProgress(null)
       setUploadError('上传超时，请重试')
+    }
+
+    xhr.onabort = () => {
+      clearActiveUpload(xhr)
+      setUploadProgress(null)
+      setUploadError('上传已取消')
     }
 
     xhr.timeout = 30 * 60 * 1000 // 30 分钟
@@ -331,6 +380,28 @@ export function VideoManagementSection({
       pollTaskStatus(videoId)
     } finally {
       setTranscoding(false)
+    }
+  }
+
+  async function handleCancelTranscode(videoId: number, quality?: string) {
+    const key = transcodeCancelKey(videoId, quality)
+    setCancelingTranscode(prev => new Set(prev).add(key))
+    try {
+      const url = quality
+        ? `/api/admin/videos/${videoId}/tasks/${quality}/cancel`
+        : `/api/admin/videos/${videoId}/transcode`
+      const res = await fetch(url, { method: 'DELETE', headers: jsonHeaders })
+      const json: ApiResponse<{ canceled: number }> = await res.json()
+      if (json.code !== 0) { alert('取消失败：' + json.msg); return }
+      await loadVideos()
+      await pollTaskStatus(videoId)
+      if (expandedRef.current.has(videoId)) await loadQualityTasks(videoId)
+    } finally {
+      setCancelingTranscode(prev => {
+        const next = new Set(prev)
+        next.delete(key)
+        return next
+      })
     }
   }
 
@@ -447,6 +518,8 @@ export function VideoManagementSection({
                 const isExpanded = expanded.has(v.id)
                 const detailTasks = qualityTasks[v.id]
                 const detailLoading = qualityLoading.has(v.id)
+                const activeTranscode = v.status === 'transcoding' || (task ? isActiveTranscodeStatus(task.status) : false)
+                const cancelingVideoTranscode = cancelingTranscode.has(transcodeCancelKey(v.id))
                 return (
                   <Fragment key={v.id}>
                   <tr className={form.id === v.id ? 'row-active' : ''}>
@@ -502,6 +575,17 @@ export function VideoManagementSection({
                             <RefreshCw size={13} /> 继续转码
                           </button>
                         )}
+                        {canEdit && activeTranscode && (
+                          <button
+                            type="button"
+                            className="danger"
+                            disabled={cancelingVideoTranscode}
+                            onClick={() => handleCancelTranscode(v.id)}
+                          >
+                            {cancelingVideoTranscode ? <Loader size={13} className="spin" /> : <XCircle size={13} />}
+                            取消转码
+                          </button>
+                        )}
                         {canEdit && v.status === 'ready' && (
                           <button type="button" onClick={() => handlePlay(v.id)}>
                             <Play size={13} /> 播放地址
@@ -542,6 +626,7 @@ export function VideoManagementSection({
                             <tbody>
                               {detailTasks.map(qt => {
                                 const active = isActiveTranscodeStatus(qt.status)
+                                const cancelingQuality = cancelingTranscode.has(transcodeCancelKey(v.id, qt.quality))
                                 const label = QUALITY_STATUS_LABEL[qt.status] ?? qt.status
                                 const statusText = qt.status === 'processing' && qt.progress > 0
                                   ? `${label} ${qt.progress}%`
@@ -573,6 +658,17 @@ export function VideoManagementSection({
                                             onClick={() => handleRetranscodeQuality(v.id, qt.quality)}
                                           >
                                             <RefreshCw size={12} /> 重转
+                                          </button>
+                                        )}
+                                        {canEdit && active && (
+                                          <button
+                                            type="button"
+                                            className="danger"
+                                            disabled={cancelingQuality}
+                                            onClick={() => handleCancelTranscode(v.id, qt.quality)}
+                                          >
+                                            {cancelingQuality ? <Loader size={12} className="spin" /> : <XCircle size={12} />}
+                                            取消
                                           </button>
                                         )}
                                         {canDelete && (
@@ -696,6 +792,11 @@ export function VideoManagementSection({
                   ? (uploadProgress !== null && uploadProgress < 99 ? `上传 ${uploadProgress}%` : '服务器处理中…')
                   : '上传 MP4'}
               </button>
+              {uploading && (
+                <button type="button" className="danger" onClick={() => cancelUploadIfActive(form.id!)}>
+                  <XCircle size={13} /> 取消上传
+                </button>
+              )}
             </div>
 
             {uploading && (
@@ -733,13 +834,18 @@ export function VideoManagementSection({
                 const qualityProgress = currentTask?.quality_progress?.[quality]
                 const active = isActiveTranscodeStatus(qualityStatus)
                 const failed = qualityStatus === 'failed'
+                const canceled = qualityStatus === 'canceled'
                 const stateLabel = failed
                   ? (qualityMessage || '失败')
+                  : canceled
+                    ? '已取消'
                   : active
                     ? transcodeStateLabel(qualityStatus, qualityMessage, qualityProgress)
                     : done ? '已转' : supported ? '待转' : '不支持'
                 const badgeLabel = failed
                   ? '失败'
+                  : canceled
+                    ? '已取消'
                   : active
                     ? '进行中'
                     : done ? '已转' : supported ? '待转' : '不支持'
@@ -753,7 +859,7 @@ export function VideoManagementSection({
                       disabled={!supported || active}
                     />
                     <span className="transcode-quality-name">{quality}</span>
-                    <span className={`transcode-quality-state ${failed ? 'failed' : done ? 'done' : supported ? 'pending' : 'unsupported'}`}>
+                    <span className={`transcode-quality-state ${failed ? 'failed' : done ? 'done' : canceled ? 'unsupported' : supported ? 'pending' : 'unsupported'}`}>
                       {badgeLabel}
                     </span>
                     {showDetail && <span className="transcode-quality-detail">{stateLabel}</span>}

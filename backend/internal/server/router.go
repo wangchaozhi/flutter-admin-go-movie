@@ -64,6 +64,8 @@ func NewRouter() http.Handler {
 		case strings.HasSuffix(path, "/transcode"):
 			if r.Method == "GET" {
 				video.AdminTranscodeStatusHandler(w, r)
+			} else if r.Method == "DELETE" {
+				video.AdminCancelTranscodeHandler(w, r)
 			} else {
 				video.AdminTranscodeHandler(w, r)
 			}

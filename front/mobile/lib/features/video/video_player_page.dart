@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:ui';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
@@ -44,17 +45,39 @@ class _MediaTrackOption {
   });
 }
 
+class _TrackMenuOption {
+  final String value;
+  final String label;
+  final AudioTrack? audioTrack;
+  final SubtitleTrack? subtitleTrack;
+  final _MediaTrackOption? apiTrack;
+
+  const _TrackMenuOption({
+    required this.value,
+    required this.label,
+    this.audioTrack,
+    this.subtitleTrack,
+    this.apiTrack,
+  });
+}
+
 class _PlaybackSource {
   final String url;
   final List<_QualityOption> qualities;
   final List<_MediaTrackOption> audioTracks;
   final List<_MediaTrackOption> subtitleTracks;
+  final bool mediaTracksScanned;
+  final bool hasMultipleAudioTracks;
+  final bool hasSubtitleTracks;
 
   const _PlaybackSource({
     required this.url,
     required this.qualities,
     required this.audioTracks,
     required this.subtitleTracks,
+    required this.mediaTracksScanned,
+    required this.hasMultipleAudioTracks,
+    required this.hasSubtitleTracks,
   });
 }
 
@@ -73,6 +96,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   late final VideoController _controller;
   StreamSubscription<String>? _playerErrorSubscription;
   StreamSubscription<bool>? _playerCompletedSubscription;
+  StreamSubscription<Tracks>? _playerTracksSubscription;
   bool _loading = true;
   bool _switchingQuality = false;
   bool _switchingTrack = false;
@@ -80,10 +104,15 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   String? _error;
   String _selectedQuality = 'auto';
   List<_QualityOption> _qualities = const [];
-  int? _selectedAudioTrackId;
-  int? _selectedSubtitleTrackId;
+  String? _selectedAudioTrackValue;
+  String? _selectedSubtitleTrackValue;
   List<_MediaTrackOption> _audioTracks = const [];
   List<_MediaTrackOption> _subtitleTracks = const [];
+  List<AudioTrack> _hlsAudioTracks = const [];
+  List<SubtitleTrack> _hlsSubtitleTracks = const [];
+  bool _mediaTracksScanned = false;
+  bool _hasMultipleAudioTracks = false;
+  bool _hasSubtitleTracks = false;
   Timer? _progressTimer;
   Timer? _refreshTimer;
   Duration _lastSavedPosition = Duration.zero;
@@ -103,6 +132,9 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     _playerCompletedSubscription = _player.stream.completed.listen(
       _handlePlayerCompleted,
     );
+    _playerTracksSubscription = _player.stream.tracks.listen(
+      _syncDetectedTracks,
+    );
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.landscapeLeft,
       DeviceOrientation.landscapeRight,
@@ -118,6 +150,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     _refreshTimer?.cancel();
     _playerErrorSubscription?.cancel();
     _playerCompletedSubscription?.cancel();
+    _playerTracksSubscription?.cancel();
     unawaited(_saveProgress(force: true));
     unawaited(_restoreSystemUi());
     _player.dispose();
@@ -149,16 +182,22 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
           _qualities = source.qualities;
           _audioTracks = source.audioTracks;
           _subtitleTracks = source.subtitleTracks;
+          _mediaTracksScanned = source.mediaTracksScanned;
+          _hasMultipleAudioTracks = source.hasMultipleAudioTracks;
+          _hasSubtitleTracks = source.hasSubtitleTracks;
+          _hlsAudioTracks = const [];
+          _hlsSubtitleTracks = const [];
           _selectedQuality = 'auto';
-          _selectedAudioTrackId = null;
-          _selectedSubtitleTrackId = null;
+          _selectedAudioTrackValue = null;
+          _selectedSubtitleTrackValue = null;
         });
       }
       final resumePosition = await _loadSavedProgress();
       await _player.open(Media(source.url), play: false);
       await _player.setRate(_playbackRate);
-      await _applySelectedMediaTracks();
       await _waitForMediaReady();
+      _syncDetectedTracks(_player.state.tracks);
+      await _applySelectedMediaTracks();
       if (resumePosition > Duration.zero && _canResumeAt(resumePosition)) {
         await _player.seek(resumePosition);
       }
@@ -199,19 +238,38 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     if (qualities.isEmpty) {
       qualities = await _parseQualitiesFromMaster(url);
     }
+    final audioTracks = _parseMediaTracks(data, 'audio_tracks');
+    final subtitleTracks = _parseMediaTracks(data, 'subtitle_tracks');
+    final audioTrackCount = _parseInt(data?['audio_track_count']);
+    final subtitleTrackCount = _parseInt(data?['subtitle_track_count']);
+    final mediaTracksScanned = data?['media_tracks_scanned'] == true;
     return _PlaybackSource(
       url: url,
       qualities: [
         _QualityOption(name: 'auto', label: '自动', url: url),
         ...qualities,
       ],
-      audioTracks: _parseMediaTracks(data, 'audio_tracks'),
-      subtitleTracks: _parseMediaTracks(data, 'subtitle_tracks'),
+      audioTracks: audioTracks,
+      subtitleTracks: subtitleTracks,
+      mediaTracksScanned: mediaTracksScanned,
+      hasMultipleAudioTracks:
+          data?['has_multiple_audio_tracks'] == true ||
+          audioTrackCount > 1 ||
+          audioTracks.isNotEmpty,
+      hasSubtitleTracks:
+          data?['has_subtitle_tracks'] == true ||
+          subtitleTrackCount > 0 ||
+          subtitleTracks.isNotEmpty,
     );
   }
 
   String _absoluteUrl(String url) {
     return url.startsWith('http') ? url : '${ApiClient.baseUrl}$url';
+  }
+
+  int _parseInt(dynamic value) {
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '') ?? 0;
   }
 
   List<_QualityOption> _parseQualities(Map<String, dynamic>? data) {
@@ -333,41 +391,47 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   }
 
   Future<void> _applySelectedMediaTracks() async {
-    final audioTrack = _selectedAudioTrackId == null
+    final audioOption = _selectedAudioTrackValue == null
         ? null
-        : _audioTracks
-              .where((track) => track.id == _selectedAudioTrackId)
+        : _audioMenuOptions()
+              .where((option) => option.value == _selectedAudioTrackValue)
               .firstOrNull;
-    final subtitleTrack = _selectedSubtitleTrackId == null
+    final subtitleOption = _selectedSubtitleTrackValue == null
         ? null
-        : _subtitleTracks
-              .where((track) => track.id == _selectedSubtitleTrackId)
+        : _subtitleMenuOptions()
+              .where((option) => option.value == _selectedSubtitleTrackValue)
               .firstOrNull;
 
-    if (audioTrack == null) {
-      await _player.setAudioTrack(AudioTrack.auto());
+    if (audioOption == null) {
+      if (!kIsWeb) {
+        await _player.setAudioTrack(AudioTrack.auto());
+      }
+    } else if (audioOption.audioTrack != null) {
+      if (!kIsWeb) {
+        await _player.setAudioTrack(audioOption.audioTrack!);
+      }
     } else {
+      final apiTrack = audioOption.apiTrack!;
       await _player.setAudioTrack(
         AudioTrack.uri(
-          audioTrack.url,
-          title: audioTrack.title.isEmpty ? audioTrack.label : audioTrack.title,
-          language: audioTrack.language.isEmpty ? null : audioTrack.language,
+          apiTrack.url,
+          title: apiTrack.title.isEmpty ? apiTrack.label : apiTrack.title,
+          language: apiTrack.language.isEmpty ? null : apiTrack.language,
         ),
       );
     }
 
-    if (subtitleTrack == null) {
+    if (subtitleOption == null) {
       await _player.setSubtitleTrack(SubtitleTrack.no());
+    } else if (subtitleOption.subtitleTrack != null) {
+      await _player.setSubtitleTrack(subtitleOption.subtitleTrack!);
     } else {
+      final apiTrack = subtitleOption.apiTrack!;
       await _player.setSubtitleTrack(
         SubtitleTrack.uri(
-          subtitleTrack.url,
-          title: subtitleTrack.title.isEmpty
-              ? subtitleTrack.label
-              : subtitleTrack.title,
-          language: subtitleTrack.language.isEmpty
-              ? null
-              : subtitleTrack.language,
+          apiTrack.url,
+          title: apiTrack.title.isEmpty ? apiTrack.label : apiTrack.title,
+          language: apiTrack.language.isEmpty ? null : apiTrack.language,
         ),
       );
     }
@@ -375,22 +439,27 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
 
   Future<void> _switchAudioTrack(String value) async {
     if (_switchingTrack) return;
-    final nextID = value == 'auto' ? null : int.tryParse(value);
-    if (nextID == _selectedAudioTrackId) return;
-    if (nextID != null && !_audioTracks.any((track) => track.id == nextID)) {
+    final nextValue = value == 'auto' ? null : value;
+    if (nextValue == _selectedAudioTrackValue) return;
+    if (nextValue != null &&
+        !_audioMenuOptions().any((option) => option.value == nextValue)) {
       return;
     }
 
-    final previousID = _selectedAudioTrackId;
+    final previousValue = _selectedAudioTrackValue;
     setState(() {
       _switchingTrack = true;
-      _selectedAudioTrackId = nextID;
+      _selectedAudioTrackValue = nextValue;
     });
     try {
-      await _applySelectedMediaTracks();
+      if (kIsWeb && nextValue == null && previousValue != null) {
+        await _reloadCurrentMediaPreservingPlayback();
+      } else {
+        await _applySelectedMediaTracks();
+      }
     } catch (e) {
       if (mounted) {
-        setState(() => _selectedAudioTrackId = previousID);
+        setState(() => _selectedAudioTrackValue = previousValue);
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text('Audio track failed: $e')));
@@ -403,22 +472,23 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
 
   Future<void> _switchSubtitleTrack(String value) async {
     if (_switchingTrack) return;
-    final nextID = value == 'off' ? null : int.tryParse(value);
-    if (nextID == _selectedSubtitleTrackId) return;
-    if (nextID != null && !_subtitleTracks.any((track) => track.id == nextID)) {
+    final nextValue = value == 'off' ? null : value;
+    if (nextValue == _selectedSubtitleTrackValue) return;
+    if (nextValue != null &&
+        !_subtitleMenuOptions().any((option) => option.value == nextValue)) {
       return;
     }
 
-    final previousID = _selectedSubtitleTrackId;
+    final previousValue = _selectedSubtitleTrackValue;
     setState(() {
       _switchingTrack = true;
-      _selectedSubtitleTrackId = nextID;
+      _selectedSubtitleTrackValue = nextValue;
     });
     try {
       await _applySelectedMediaTracks();
     } catch (e) {
       if (mounted) {
-        setState(() => _selectedSubtitleTrackId = previousID);
+        setState(() => _selectedSubtitleTrackValue = previousValue);
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text('Subtitle failed: $e')));
@@ -448,8 +518,9 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     try {
       await _player.open(Media(option.url), play: false);
       await _player.setRate(_playbackRate);
-      await _applySelectedMediaTracks();
       await _waitForMediaReady();
+      _syncDetectedTracks(_player.state.tracks);
+      await _applySelectedMediaTracks();
       if (position > Duration.zero) {
         await _player.seek(position);
       }
@@ -483,8 +554,9 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     try {
       await _player.open(Media(option.url), play: false);
       await _player.setRate(_playbackRate);
-      await _applySelectedMediaTracks();
       await _waitForMediaReady();
+      _syncDetectedTracks(_player.state.tracks);
+      await _applySelectedMediaTracks();
       if (position > Duration.zero) {
         await _player.seek(position);
       }
@@ -495,6 +567,31 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       if (mounted) {
         setState(() => _showResumePlaybackButton = true);
       }
+    }
+  }
+
+  Future<void> _reloadCurrentMediaPreservingPlayback() async {
+    final option =
+        _qualities
+            .where((quality) => quality.name == _selectedQuality)
+            .firstOrNull ??
+        _qualities.firstOrNull;
+    if (option == null) return;
+
+    final position = _player.state.position;
+    final wasPlaying = _player.state.playing;
+    await _player.open(Media(option.url), play: false);
+    await _player.setRate(_playbackRate);
+    await _waitForMediaReady();
+    _syncDetectedTracks(_player.state.tracks);
+    await _applySelectedMediaTracks();
+    if (position > Duration.zero) {
+      await _player.seek(position);
+    }
+    if (wasPlaying) {
+      await _resumePlayback();
+    } else {
+      await _player.pause();
     }
   }
 
@@ -552,6 +649,142 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     if (mounted) {
       setState(() => _showResumePlaybackButton = true);
     }
+  }
+
+  void _syncDetectedTracks(Tracks tracks) {
+    final audioTracks = _selectableHLSAudioTracks(tracks.audio);
+    final subtitleTracks = _selectableHLSSubtitleTracks(tracks.subtitle);
+    final nextAudioValue =
+        _trackValueExists(
+          _selectedAudioTrackValue,
+          _audioMenuOptionsFor(audioTracks, _audioTracks),
+        )
+        ? _selectedAudioTrackValue
+        : null;
+    final nextSubtitleValue =
+        _trackValueExists(
+          _selectedSubtitleTrackValue,
+          _subtitleMenuOptionsFor(subtitleTracks, _subtitleTracks),
+        )
+        ? _selectedSubtitleTrackValue
+        : null;
+
+    if (!mounted) {
+      _hlsAudioTracks = audioTracks;
+      _hlsSubtitleTracks = subtitleTracks;
+      _selectedAudioTrackValue = nextAudioValue;
+      _selectedSubtitleTrackValue = nextSubtitleValue;
+      return;
+    }
+
+    setState(() {
+      _hlsAudioTracks = audioTracks;
+      _hlsSubtitleTracks = subtitleTracks;
+      _selectedAudioTrackValue = nextAudioValue;
+      _selectedSubtitleTrackValue = nextSubtitleValue;
+    });
+  }
+
+  List<AudioTrack> _selectableHLSAudioTracks(List<AudioTrack> tracks) {
+    if (kIsWeb) return const [];
+    final selectable = tracks
+        .where(
+          (track) =>
+              track.id != 'auto' &&
+              track.id != 'no' &&
+              track.id.trim().isNotEmpty &&
+              !track.uri,
+        )
+        .toList();
+    return selectable.length > 1 ? selectable : const [];
+  }
+
+  List<SubtitleTrack> _selectableHLSSubtitleTracks(List<SubtitleTrack> tracks) {
+    if (kIsWeb) return const [];
+    return tracks
+        .where(
+          (track) =>
+              track.id != 'auto' &&
+              track.id != 'no' &&
+              track.id.trim().isNotEmpty &&
+              !track.uri &&
+              !track.data,
+        )
+        .toList();
+  }
+
+  bool _trackValueExists(String? value, List<_TrackMenuOption> options) {
+    return value == null || options.any((option) => option.value == value);
+  }
+
+  List<_TrackMenuOption> _audioMenuOptions() {
+    return _audioMenuOptionsFor(_hlsAudioTracks, _audioTracks);
+  }
+
+  List<_TrackMenuOption> _subtitleMenuOptions() {
+    return _subtitleMenuOptionsFor(_hlsSubtitleTracks, _subtitleTracks);
+  }
+
+  List<_TrackMenuOption> _audioMenuOptionsFor(
+    List<AudioTrack> hlsTracks,
+    List<_MediaTrackOption> apiTracks,
+  ) {
+    if (_mediaTracksScanned && !_hasMultipleAudioTracks) {
+      return const [];
+    }
+    if (hlsTracks.isNotEmpty) {
+      return [
+        for (var i = 0; i < hlsTracks.length; i++)
+          _TrackMenuOption(
+            value: 'hls:${hlsTracks[i].id}',
+            label: _playerTrackLabel(hlsTracks[i], 'Audio ${i + 1}'),
+            audioTrack: hlsTracks[i],
+          ),
+      ];
+    }
+    return [
+      for (final track in apiTracks)
+        _TrackMenuOption(
+          value: 'api:${track.id}',
+          label: track.label,
+          apiTrack: track,
+        ),
+    ];
+  }
+
+  List<_TrackMenuOption> _subtitleMenuOptionsFor(
+    List<SubtitleTrack> hlsTracks,
+    List<_MediaTrackOption> apiTracks,
+  ) {
+    if (_mediaTracksScanned && !_hasSubtitleTracks) {
+      return const [];
+    }
+    if (hlsTracks.isNotEmpty) {
+      return [
+        for (var i = 0; i < hlsTracks.length; i++)
+          _TrackMenuOption(
+            value: 'hls:${hlsTracks[i].id}',
+            label: _playerTrackLabel(hlsTracks[i], 'Subtitle ${i + 1}'),
+            subtitleTrack: hlsTracks[i],
+          ),
+      ];
+    }
+    return [
+      for (final track in apiTracks)
+        _TrackMenuOption(
+          value: 'api:${track.id}',
+          label: track.label,
+          apiTrack: track,
+        ),
+    ];
+  }
+
+  String _playerTrackLabel(dynamic track, String fallback) {
+    final title = track.title?.toString().trim() ?? '';
+    if (title.isNotEmpty) return title;
+    final language = track.language?.toString().trim() ?? '';
+    if (language.isNotEmpty) return language;
+    return fallback;
   }
 
   Future<Duration> _loadSavedProgress() async {
@@ -648,30 +881,22 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
               .where((q) => q.name == selectedQuality)
               .firstOrNull ??
           source.qualities.first;
-      final nextAudioTrackId =
-          source.audioTracks.any((track) => track.id == _selectedAudioTrackId)
-          ? _selectedAudioTrackId
-          : null;
-      final nextSubtitleTrackId =
-          source.subtitleTracks.any(
-            (track) => track.id == _selectedSubtitleTrackId,
-          )
-          ? _selectedSubtitleTrackId
-          : null;
       if (!mounted) return;
       setState(() {
         _qualities = source.qualities;
         _audioTracks = source.audioTracks;
         _subtitleTracks = source.subtitleTracks;
+        _mediaTracksScanned = source.mediaTracksScanned;
+        _hasMultipleAudioTracks = source.hasMultipleAudioTracks;
+        _hasSubtitleTracks = source.hasSubtitleTracks;
         _selectedQuality = nextOption.name;
-        _selectedAudioTrackId = nextAudioTrackId;
-        _selectedSubtitleTrackId = nextSubtitleTrackId;
         _switchingQuality = true;
       });
       await _player.open(Media(nextOption.url), play: false);
       await _player.setRate(_playbackRate);
-      await _applySelectedMediaTracks();
       await _waitForMediaReady();
+      _syncDetectedTracks(_player.state.tracks);
+      await _applySelectedMediaTracks();
       if (position > Duration.zero) {
         await _player.seek(position);
       }
@@ -1086,15 +1311,17 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   }
 
   Widget _buildTrackAndQualityMenus() {
+    final audioOptions = _audioMenuOptions();
+    final subtitleOptions = _subtitleMenuOptions();
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (_audioTracks.isNotEmpty) ...[
-          _buildAudioMenu(),
+        if (audioOptions.isNotEmpty) ...[
+          _buildAudioMenu(audioOptions),
           const SizedBox(width: 8),
         ],
-        if (_subtitleTracks.isNotEmpty) ...[
-          _buildSubtitleMenu(),
+        if (subtitleOptions.isNotEmpty) ...[
+          _buildSubtitleMenu(subtitleOptions),
           const SizedBox(width: 8),
         ],
         _buildQualityMenu(),
@@ -1102,8 +1329,8 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     );
   }
 
-  Widget _buildAudioMenu() {
-    final selectedValue = _selectedAudioTrackId?.toString() ?? 'auto';
+  Widget _buildAudioMenu(List<_TrackMenuOption> options) {
+    final selectedValue = _selectedAudioTrackValue ?? 'auto';
     return PopupMenuButton<String>(
       enabled: !_switchingTrack,
       tooltip: 'Audio',
@@ -1115,12 +1342,12 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
           value: 'auto',
           child: _buildTrackMenuItem('Default', selectedValue == 'auto'),
         ),
-        ..._audioTracks.map(
-          (track) => PopupMenuItem<String>(
-            value: track.id.toString(),
+        ...options.map(
+          (option) => PopupMenuItem<String>(
+            value: option.value,
             child: _buildTrackMenuItem(
-              track.label,
-              selectedValue == track.id.toString(),
+              option.label,
+              selectedValue == option.value,
             ),
           ),
         ),
@@ -1129,8 +1356,8 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     );
   }
 
-  Widget _buildSubtitleMenu() {
-    final selectedValue = _selectedSubtitleTrackId?.toString() ?? 'off';
+  Widget _buildSubtitleMenu(List<_TrackMenuOption> options) {
+    final selectedValue = _selectedSubtitleTrackValue ?? 'off';
     return PopupMenuButton<String>(
       enabled: !_switchingTrack,
       tooltip: 'Subtitles',
@@ -1142,12 +1369,12 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
           value: 'off',
           child: _buildTrackMenuItem('Off', selectedValue == 'off'),
         ),
-        ..._subtitleTracks.map(
-          (track) => PopupMenuItem<String>(
-            value: track.id.toString(),
+        ...options.map(
+          (option) => PopupMenuItem<String>(
+            value: option.value,
             child: _buildTrackMenuItem(
-              track.label,
-              selectedValue == track.id.toString(),
+              option.label,
+              selectedValue == option.value,
             ),
           ),
         ),

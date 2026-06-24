@@ -2,6 +2,7 @@ package video
 
 import (
 	"context"
+	"errors"
 	"log"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"flutter-admin-go/internal/store"
 
 	"github.com/hibiken/asynq"
+	"gorm.io/gorm"
 )
 
 // videoStatusExtracting marks a video whose source has been uploaded but whose
@@ -21,6 +23,7 @@ const videoStatusExtracting = "extracting"
 // "uploaded". Extraction is normally a few minutes even for long sources with
 // several tracks, so a generous window avoids racing a slow job.
 const staleExtractingAge = 2 * time.Hour
+const extractTracksCancelPollInterval = 2 * time.Second
 
 // HandleExtractTracksTask runs background extraction of the audio/subtitle
 // tracks for an uploaded source. Extraction is best effort: per-track failures
@@ -36,8 +39,6 @@ func HandleExtractTracksTask(ctx context.Context, t *asynq.Task) error {
 }
 
 func runExtractTracks(ctx context.Context, videoID int64, srcKey string) {
-	defer releaseExtractingVideo(videoID)
-
 	var video store.Video
 	if err := store.DB().First(&video, videoID).Error; err != nil {
 		log.Printf("extract tracks: load video %d failed: %v", videoID, err)
@@ -46,25 +47,63 @@ func runExtractTracks(ctx context.Context, videoID int64, srcKey string) {
 	if strings.TrimSpace(srcKey) == "" {
 		srcKey = sourceKeyForVideo(video)
 	}
+	runCtx, stopWatchingCancel := watchExtractTracksCancellation(ctx, videoID, srcKey)
+	defer stopWatchingCancel()
+	defer releaseExtractingVideo(videoID, srcKey)
 
 	tmpRoot := strings.TrimSpace(config.Load().Worker.TranscodeTempDir)
-	srcPath, err := cachedSourcePath(ctx, videoID, srcKey, tmpRoot)
+	srcPath, err := cachedSourcePath(runCtx, videoID, srcKey, tmpRoot)
 	if err != nil {
 		log.Printf("extract tracks: cache source for video %d failed: %v", videoID, err)
 		return
 	}
-	if _, err := ensureVideoMediaTracks(ctx, videoID, srcKey, srcPath); err != nil {
+	if extractTracksCancellationRequested(videoID, srcKey) {
+		log.Printf("extract tracks: canceled before processing video %d", videoID)
+		return
+	}
+	if _, err := ensureVideoMediaTracks(runCtx, videoID, srcKey, srcPath); err != nil {
 		log.Printf("extract tracks: ensure media tracks for video %d failed: %v", videoID, err)
 	}
+}
+
+func watchExtractTracksCancellation(ctx context.Context, videoID int64, srcKey string) (context.Context, context.CancelFunc) {
+	runCtx, cancel := context.WithCancel(ctx)
+	go func() {
+		ticker := time.NewTicker(extractTracksCancelPollInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-runCtx.Done():
+				return
+			case <-ticker.C:
+				if extractTracksCancellationRequested(videoID, srcKey) {
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+	return runCtx, cancel
+}
+
+func extractTracksCancellationRequested(videoID int64, srcKey string) bool {
+	var video store.Video
+	if err := store.DB().Select("id, original_key").First(&video, videoID).Error; err != nil {
+		return errors.Is(err, gorm.ErrRecordNotFound)
+	}
+	return strings.TrimSpace(srcKey) != "" && sourceKeyForVideo(video) != srcKey
 }
 
 // releaseExtractingVideo advances a video from "extracting" to "uploaded".
 // It is a no-op for any other status so it never clobbers a transcode that the
 // admin may have started in the meantime.
-func releaseExtractingVideo(videoID int64) {
-	store.DB().Model(&store.Video{}).
-		Where("id = ? AND status = ?", videoID, videoStatusExtracting).
-		Updates(map[string]interface{}{"status": "uploaded", "updated_at": time.Now()})
+func releaseExtractingVideo(videoID int64, sourceKey ...string) {
+	query := store.DB().Model(&store.Video{}).
+		Where("id = ? AND status = ?", videoID, videoStatusExtracting)
+	if len(sourceKey) > 0 && strings.TrimSpace(sourceKey[0]) != "" {
+		query = query.Where("original_key = ?", sourceKey[0])
+	}
+	query.Updates(map[string]interface{}{"status": "uploaded", "updated_at": time.Now()})
 }
 
 // reapStaleExtractingVideos releases videos that have been stuck in "extracting"

@@ -19,6 +19,7 @@ const STATUS_LABEL: Record<TranscodeTaskStatus, string> = {
   processing: '转码中',
   success: '成功',
   failed: '失败',
+  canceled: '已取消',
 }
 
 const STATUS_CLASS: Record<string, string> = {
@@ -27,6 +28,7 @@ const STATUS_CLASS: Record<string, string> = {
   processing: 'status-transcoding',
   success: 'status-ready',
   failed: 'status-failed',
+  canceled: 'status-offline',
 }
 
 const statusOptions: Array<{ value: 'all' | TranscodeTaskStatus; label: string }> = [
@@ -36,6 +38,7 @@ const statusOptions: Array<{ value: 'all' | TranscodeTaskStatus; label: string }
   { value: 'processing', label: '转码中' },
   { value: 'success', label: '成功' },
   { value: 'failed', label: '失败' },
+  { value: 'canceled', label: '已取消' },
 ]
 
 const qualityOptions = ['all', '360p', '480p', '720p', '1080p'] as const

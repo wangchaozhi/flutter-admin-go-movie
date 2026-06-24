@@ -22,6 +22,7 @@ import (
 
 	"github.com/hibiken/asynq"
 	"github.com/minio/minio-go/v7"
+	"gorm.io/gorm"
 )
 
 type sourceVideoSize struct {
@@ -66,8 +67,11 @@ func (e nonRetryableTranscodeError) Unwrap() error {
 const transcodeQueuedStartWait = 30 * time.Second
 const staleTranscodeTaskAge = transcodeTaskTimeout + 30*time.Minute
 const staleQueuedTaskAge = 10 * time.Minute
+const transcodeCancelPollInterval = 2 * time.Second
 const sourceCacheMaxAge = 7 * 24 * time.Hour
 const sourceCachePruneInterval = time.Hour
+
+var errTranscodeCanceled = errors.New("transcode canceled")
 
 var (
 	transcodeEncoderOnce sync.Once
@@ -117,8 +121,16 @@ func HandleTranscodeTask(ctx context.Context, t *asynq.Task) error {
 		"finished_at":    nil,
 	})
 
-	if err := runTranscodeForTask(ctx, p.VideoID, p.TaskID, p.BatchID, requestedQualities, mergeMaster); err != nil {
+	runCtx, stopWatchingCancel := watchTranscodeCancellation(ctx, p.VideoID, p.TaskID)
+	defer stopWatchingCancel()
+	if err := runTranscodeForTask(runCtx, p.VideoID, p.TaskID, p.BatchID, requestedQualities, mergeMaster); err != nil {
+		if runCtx.Err() != nil && transcodeCancellationRequested(p.VideoID, p.TaskID) {
+			err = errTranscodeCanceled
+		}
 		return handleTranscodeTaskError(ctx, p, err)
+	}
+	if transcodeCancellationRequested(p.VideoID, p.TaskID) {
+		return handleTranscodeTaskError(ctx, p, errTranscodeCanceled)
 	}
 
 	fin := time.Now()
@@ -161,6 +173,11 @@ func waitForRunnableTranscodeTask(ctx context.Context, taskID int64) (store.Vide
 }
 
 func handleTranscodeTaskError(ctx context.Context, p *TranscodePayload, err error) error {
+	if errors.Is(err, errTranscodeCanceled) {
+		markTranscodeTaskCanceled(p.TaskID)
+		finalizeTranscodeBatch(ctx, p.VideoID, p.TaskID, p.PreviousStatus)
+		return nil
+	}
 	returnErr := transcodeTaskReturnError(err)
 	errMsg := transcodeErrorMessage(err)
 	fin := time.Now()
@@ -185,6 +202,19 @@ func handleTranscodeTaskError(ctx context.Context, p *TranscodePayload, err erro
 	return returnErr
 }
 
+func markTranscodeTaskCanceled(taskID int64) {
+	if taskID <= 0 {
+		return
+	}
+	store.DB().Model(&store.VideoTranscodeTask{}).Where("id = ?", taskID).Updates(map[string]interface{}{
+		"status":         "canceled",
+		"status_message": "已取消",
+		"progress":       100,
+		"error_message":  "",
+		"finished_at":    time.Now(),
+	})
+}
+
 func runTranscodeForTask(ctx context.Context, videoID, taskID, batchID int64, requestedQualities []string, mergeExisting bool) error {
 	lock := videoTranscodeLock(videoID)
 	log.Printf("transcode video lock wait: video_id=%d task_id=%d", videoID, taskID)
@@ -195,6 +225,41 @@ func runTranscodeForTask(ctx context.Context, videoID, taskID, batchID int64, re
 	return withVideoTranscodeAdvisoryLock(ctx, videoID, taskID, func() error {
 		return runTranscode(ctx, videoID, taskID, batchID, requestedQualities, mergeExisting)
 	})
+}
+
+func watchTranscodeCancellation(ctx context.Context, videoID, taskID int64) (context.Context, context.CancelFunc) {
+	runCtx, cancel := context.WithCancel(ctx)
+	go func() {
+		ticker := time.NewTicker(transcodeCancelPollInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-runCtx.Done():
+				return
+			case <-ticker.C:
+				if transcodeCancellationRequested(videoID, taskID) {
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+	return runCtx, cancel
+}
+
+func transcodeCancellationRequested(videoID, taskID int64) bool {
+	var task store.VideoTranscodeTask
+	if err := store.DB().Select("id, status").First(&task, taskID).Error; err != nil {
+		return errors.Is(err, gorm.ErrRecordNotFound)
+	}
+	if task.Status == "canceled" {
+		return true
+	}
+	var count int64
+	if err := store.DB().Model(&store.Video{}).Where("id = ?", videoID).Count(&count).Error; err != nil {
+		return false
+	}
+	return count == 0
 }
 
 func videoTranscodeLock(videoID int64) *sync.Mutex {
@@ -291,12 +356,18 @@ func finalizeTranscodeBatch(ctx context.Context, videoID, taskID int64, previous
 	}
 
 	hasSuccess := false
+	hasFailure := false
+	hasCanceled := false
 	for _, task := range tasks {
 		switch task.Status {
-		case "pending", "processing":
+		case "queued", "pending", "processing":
 			return
 		case "success":
 			hasSuccess = true
+		case "failed":
+			hasFailure = true
+		case "canceled":
+			hasCanceled = true
 		}
 	}
 
@@ -306,6 +377,8 @@ func finalizeTranscodeBatch(ctx context.Context, videoID, taskID int64, previous
 		if previousStatus == "offline" {
 			status = "offline"
 		}
+	} else if hasCanceled && !hasFailure {
+		status = restoredTranscodeStatus(previousStatus)
 	} else if previousStatus == "ready" || previousStatus == "offline" {
 		status = previousStatus
 	}
@@ -378,6 +451,9 @@ func runTranscode(ctx context.Context, videoID, taskID, batchID int64, requested
 	if _, err := ensureVideoMediaTracks(ctx, videoID, srcKey, srcPath); err != nil {
 		log.Printf("ensure media tracks failed for video %d: %v", videoID, err)
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	updateTranscodeTaskProgress(taskID, "检查清晰度", 10)
 	qualities, err := selectRequestedTranscodeQualities(probeSourceSize(srcPath), requestedQualities)
@@ -391,6 +467,9 @@ func runTranscode(ctx context.Context, videoID, taskID, batchID int64, requested
 	outputVersion := transcodeOutputVersion(batchID, taskID)
 	completedQualities := make([]transcodeQuality, 0, len(qualities))
 	for _, q := range qualities {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		updateTranscodeTaskProgress(taskID, "转码 "+q.name, 20)
 		outDir := filepath.Join(tmpDir, q.name)
 		if err := os.MkdirAll(outDir, 0755); err != nil {
@@ -413,9 +492,16 @@ func runTranscode(ctx context.Context, videoID, taskID, batchID int64, requested
 			persistCompletedMaster(ctx, videoID, completedQualities, mergeExisting, outputVersion)
 			return fmt.Errorf("upload %s hls: %w", q.name, err)
 		}
+		if err := ctx.Err(); err != nil {
+			persistCompletedMaster(ctx, videoID, completedQualities, mergeExisting, outputVersion)
+			return err
+		}
 		completedQualities = append(completedQualities, q)
 	}
 
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	updateTranscodeTaskProgress(taskID, "更新播放列表", 90)
 	if err := putMasterPlaylist(ctx, videoID, completedQualities, mergeExisting, outputVersion); err != nil {
 		return fmt.Errorf("upload master.m3u8: %w", err)
@@ -436,7 +522,7 @@ func updateTranscodeTaskProgress(taskID int64, message string, progress int) {
 	if progress > 100 {
 		progress = 100
 	}
-	store.DB().Model(&store.VideoTranscodeTask{}).Where("id = ?", taskID).Updates(map[string]interface{}{
+	store.DB().Model(&store.VideoTranscodeTask{}).Where("id = ? AND status = ?", taskID, "processing").Updates(map[string]interface{}{
 		"status_message": message,
 		"progress":       progress,
 	})
@@ -740,6 +826,17 @@ func removeEmptySourceCacheDirs(root string) {
 		if err == nil && len(children) == 0 {
 			_ = os.Remove(dir)
 		}
+	}
+}
+
+func removeVideoSourceCache(videoID int64) {
+	if videoID <= 0 {
+		return
+	}
+	root := sourceCacheRoot(strings.TrimSpace(config.Load().Worker.TranscodeTempDir))
+	dir := filepath.Join(root, strconv.FormatInt(videoID, 10))
+	if err := os.RemoveAll(dir); err != nil {
+		log.Printf("remove source cache for video %d failed: %v", videoID, err)
 	}
 }
 

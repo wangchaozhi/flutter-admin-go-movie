@@ -27,6 +27,9 @@ export type Video = {
   size: number
   source_width: number
   source_height: number
+  audio_track_count: number
+  subtitle_track_count: number
+  media_tracks_scanned: boolean
   status: VideoStatus
   is_vip: boolean
   is_free: boolean
@@ -45,7 +48,7 @@ export type VideoForm = {
   is_free: boolean
 }
 
-export type TranscodeTaskStatus = 'queued' | 'pending' | 'processing' | 'success' | 'failed'
+export type TranscodeTaskStatus = 'queued' | 'pending' | 'processing' | 'success' | 'failed' | 'canceled'
 
 export type TranscodeTask = {
   id: number

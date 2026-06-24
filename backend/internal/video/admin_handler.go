@@ -111,6 +111,11 @@ func AdminUploadVideoHandler(w http.ResponseWriter, r *http.Request) {
 		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: "upload failed: " + err.Error()})
 		return
 	}
+	if !videoRecordExists(videoID) {
+		_ = store.ObjectClient().RemoveObject(r.Context(), store.VideoBucket(), key, minio.RemoveObjectOptions{})
+		common.WriteJSON(w, http.StatusGone, common.APIResponse{Code: 410, Msg: "video was deleted during upload"})
+		return
+	}
 	removeObjectsByPrefix(r.Context(), fmt.Sprintf("hls/%d/", videoID))
 	store.DB().Where("video_id = ?", videoID).Delete(&store.VideoMediaTrack{})
 	if strings.TrimSpace(v.OriginalKey) != "" && v.OriginalKey != key {
@@ -133,16 +138,28 @@ func AdminUploadVideoHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	now := time.Now()
-	store.DB().Model(&v).Updates(map[string]interface{}{
-		"original_key":   key,
-		"hls_master_key": "",
-		"duration":       duration,
-		"size":           header.Size,
-		"source_width":   sourceSize.width,
-		"source_height":  sourceSize.height,
-		"status":         videoStatusExtracting,
-		"updated_at":     now,
+	result := store.DB().Model(&store.Video{}).Where("id = ?", videoID).Updates(map[string]interface{}{
+		"original_key":         key,
+		"hls_master_key":       "",
+		"duration":             duration,
+		"size":                 header.Size,
+		"source_width":         sourceSize.width,
+		"source_height":        sourceSize.height,
+		"audio_track_count":    0,
+		"subtitle_track_count": 0,
+		"media_tracks_scanned": false,
+		"status":               videoStatusExtracting,
+		"updated_at":           now,
 	})
+	if result.Error != nil {
+		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: result.Error.Error()})
+		return
+	}
+	if result.RowsAffected == 0 {
+		_ = store.ObjectClient().RemoveObject(r.Context(), store.VideoBucket(), key, minio.RemoveObjectOptions{})
+		common.WriteJSON(w, http.StatusGone, common.APIResponse{Code: 410, Msg: "video was deleted during upload"})
+		return
+	}
 
 	// Extract audio/subtitle tracks in the background so the upload request
 	// returns immediately; the video shows as "extracting" until the worker
@@ -154,7 +171,7 @@ func AdminUploadVideoHandler(w http.ResponseWriter, r *http.Request) {
 				log.Printf("prepare media tracks failed for video %d: %v", videoID, err)
 			}
 		}
-		releaseExtractingVideo(videoID)
+		releaseExtractingVideo(videoID, key)
 	}
 
 	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: map[string]interface{}{
@@ -323,10 +340,33 @@ func AdminTranscodeHandler(w http.ResponseWriter, r *http.Request) {
 	}})
 }
 
+// DELETE /api/admin/videos/{id}/transcode
+func AdminCancelTranscodeHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		common.WriteJSON(w, http.StatusMethodNotAllowed, common.APIResponse{Code: 405, Msg: "method not allowed"})
+		return
+	}
+	videoID, err := parseVideoID(r.URL.Path, "/api/admin/videos/", "/transcode")
+	if err != nil {
+		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "invalid video id"})
+		return
+	}
+	if !videoRecordExists(videoID) {
+		common.WriteJSON(w, http.StatusNotFound, common.APIResponse{Code: 404, Msg: "video not found"})
+		return
+	}
+	count, err := cancelTranscodeTasks(r.Context(), videoID, "")
+	if err != nil {
+		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
+		return
+	}
+	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: map[string]interface{}{"canceled": count}})
+}
+
 func activeTranscodeTasks(videoID int64) ([]store.VideoTranscodeTask, error) {
 	var tasks []store.VideoTranscodeTask
 	err := store.DB().
-		Where("video_id = ? AND status IN ?", videoID, []string{"queued", "pending", "processing"}).
+		Where("video_id = ? AND status IN ?", videoID, activeTranscodeStatuses()).
 		Order("id asc").
 		Find(&tasks).Error
 	return tasks, err
@@ -377,6 +417,85 @@ func failQueuedTranscodeBatch(videoID, batchID int64, previousStatus string, enq
 		"status":     status,
 		"updated_at": now,
 	})
+}
+
+func activeTranscodeStatuses() []string {
+	return []string{"queued", "pending", "processing"}
+}
+
+func isActiveTranscodeStatus(status string) bool {
+	switch status {
+	case "queued", "pending", "processing":
+		return true
+	default:
+		return false
+	}
+}
+
+func cancelTranscodeTasks(ctx context.Context, videoID int64, quality string) (int64, error) {
+	query := store.DB().Where("video_id = ? AND status IN ?", videoID, activeTranscodeStatuses())
+	if strings.TrimSpace(quality) != "" {
+		query = query.Where("quality = ?", strings.ToLower(strings.TrimSpace(quality)))
+	}
+	var tasks []store.VideoTranscodeTask
+	if err := query.Order("id asc").Find(&tasks).Error; err != nil {
+		return 0, err
+	}
+	if len(tasks) == 0 {
+		return 0, nil
+	}
+
+	ids := make([]int64, 0, len(tasks))
+	previousStatus := ""
+	for _, task := range tasks {
+		ids = append(ids, task.ID)
+		if previousStatus == "" && strings.TrimSpace(task.PreviousStatus) != "" {
+			previousStatus = task.PreviousStatus
+		}
+	}
+	now := time.Now()
+	if err := store.DB().Model(&store.VideoTranscodeTask{}).
+		Where("id IN ?", ids).
+		Updates(map[string]interface{}{
+			"status":         "canceled",
+			"status_message": "已取消",
+			"progress":       100,
+			"error_message":  "",
+			"finished_at":    now,
+		}).Error; err != nil {
+		return 0, err
+	}
+
+	var remaining int64
+	if err := store.DB().Model(&store.VideoTranscodeTask{}).
+		Where("video_id = ? AND status IN ?", videoID, activeTranscodeStatuses()).
+		Count(&remaining).Error; err != nil {
+		return 0, err
+	}
+	if remaining == 0 {
+		store.DB().Model(&store.Video{}).
+			Where("id = ? AND status = ?", videoID, "transcoding").
+			Updates(map[string]interface{}{"status": restoredTranscodeStatus(previousStatus), "updated_at": now})
+	}
+	finalizeTranscodeBatch(ctx, videoID, tasks[0].ID, previousStatus)
+	return int64(len(tasks)), nil
+}
+
+func restoredTranscodeStatus(previousStatus string) string {
+	switch previousStatus {
+	case "ready", "offline", "uploaded", "failed":
+		return previousStatus
+	default:
+		return "uploaded"
+	}
+}
+
+func videoRecordExists(videoID int64) bool {
+	var count int64
+	if err := store.DB().Model(&store.Video{}).Where("id = ?", videoID).Count(&count).Error; err != nil {
+		return false
+	}
+	return count > 0
 }
 
 func uploadedVideoSourceInfo(videoID int64, filename, contentType string) (string, string, error) {
@@ -470,6 +589,7 @@ func aggregateTranscodeStatus(base store.VideoTranscodeTask, tasks []store.Video
 	hasProcessing := false
 	hasPending := false
 	hasFailed := false
+	hasCanceled := false
 	totalProgress := 0
 	resp.ErrorMessage = ""
 	for _, task := range tasks {
@@ -494,6 +614,8 @@ func aggregateTranscodeStatus(base store.VideoTranscodeTask, tasks []store.Video
 					resp.ErrorMessage = task.Quality + ": " + resp.ErrorMessage
 				}
 			}
+		case "canceled":
+			hasCanceled = true
 		}
 	}
 
@@ -504,6 +626,8 @@ func aggregateTranscodeStatus(base store.VideoTranscodeTask, tasks []store.Video
 		resp.Status = "pending"
 	case hasFailed:
 		resp.Status = "failed"
+	case hasCanceled:
+		resp.Status = "canceled"
 	default:
 		resp.Status = "success"
 	}
@@ -534,6 +658,9 @@ func aggregateTranscodeMessage(tasks []store.VideoTranscodeTask, status string) 
 	}
 	if status == "success" {
 		return "完成"
+	}
+	if status == "canceled" {
+		return "已取消"
 	}
 	return ""
 }
@@ -708,9 +835,24 @@ func AdminDeleteVideoHandler(w http.ResponseWriter, r *http.Request) {
 		common.WriteJSON(w, http.StatusNotFound, common.APIResponse{Code: 404, Msg: "not found"})
 		return
 	}
+	if _, err := cancelTranscodeTasks(r.Context(), id, ""); err != nil {
+		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
+		return
+	}
+	if err := store.DB().Where("video_id = ?", id).Delete(&store.VideoMediaTrack{}).Error; err != nil {
+		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
+		return
+	}
+	if err := store.DB().Where("video_id = ?", id).Delete(&store.VideoTranscodeTask{}).Error; err != nil {
+		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
+		return
+	}
+	if err := store.DB().Delete(&store.Video{}, id).Error; err != nil {
+		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
+		return
+	}
 	deleteVideoObjects(r.Context(), id)
-	store.DB().Where("video_id = ?", id).Delete(&store.VideoTranscodeTask{})
-	store.DB().Delete(&store.Video{}, id)
+	removeVideoSourceCache(id)
 	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok"})
 }
 

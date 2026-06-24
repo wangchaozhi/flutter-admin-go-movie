@@ -296,6 +296,19 @@ func TestAggregateTranscodeStatusIncludesQueuedProgress(t *testing.T) {
 	}
 }
 
+func TestAggregateTranscodeStatusCanceled(t *testing.T) {
+	resp := aggregateTranscodeStatus(store.VideoTranscodeTask{BatchID: 1}, []store.VideoTranscodeTask{
+		{BatchID: 1, Quality: "720p", Status: "canceled", StatusMessage: "已取消", Progress: 100},
+		{BatchID: 1, Quality: "1080p", Status: "canceled", StatusMessage: "已取消", Progress: 100},
+	})
+	if resp.Status != "canceled" {
+		t.Fatalf("status = %q, want canceled", resp.Status)
+	}
+	if resp.Progress != 100 {
+		t.Fatalf("progress = %d, want 100", resp.Progress)
+	}
+}
+
 func TestNewTranscodeTaskIncludesBatchID(t *testing.T) {
 	task, err := NewTranscodeTask(1, 2, 3, "720p", true, "ready")
 	if err != nil {

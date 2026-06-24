@@ -28,18 +28,27 @@ type HLSQualityOption struct {
 }
 
 type MediaTrackOption struct {
-	ID       int64  `json:"id"`
-	Type     string `json:"type"`
-	Label    string `json:"label"`
-	Language string `json:"language,omitempty"`
-	Title    string `json:"title,omitempty"`
-	Codec    string `json:"codec,omitempty"`
-	Default  bool   `json:"default"`
-	Forced   bool   `json:"forced"`
-	URL      string `json:"url"`
+	ID             int64  `json:"id"`
+	Type           string `json:"type"`
+	Label          string `json:"label"`
+	Language       string `json:"language,omitempty"`
+	Title          string `json:"title,omitempty"`
+	Codec          string `json:"codec,omitempty"`
+	StreamPosition int    `json:"stream_position"`
+	Default        bool   `json:"default"`
+	Forced         bool   `json:"forced"`
+	URL            string `json:"url"`
+}
+
+type mediaTrackSummary struct {
+	Scanned       bool
+	AudioCount    int
+	SubtitleCount int
 }
 
 const hlsSignedURLTTLSeconds = 6 * 60 * 60
+const hlsAudioGroupID = "audio"
+const hlsSubtitleGroupID = "subs"
 
 // GET /api/hls/{videoId}/master.m3u8?expires=xxx&sign=xxx
 func HLSMasterHandler(w http.ResponseWriter, r *http.Request) {
@@ -58,24 +67,14 @@ func HLSMasterHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var buf bytes.Buffer
-	scanner := bufio.NewScanner(strings.NewReader(raw))
-	for scanner.Scan() {
-		line := scanner.Text()
-		if relPath := hlsPlaylistRelativePath(line); relPath != "" {
-			subPath := fmt.Sprintf("/api/hls/%d/%s", videoID, relPath)
-			signed := SignPath(subPath, hlsSignedURLTTLSeconds)
-			buf.WriteString(signed + "\n")
-		} else {
-			buf.WriteString(line + "\n")
-		}
-	}
+	audioTracks, subtitleTracks := readyMasterMediaTracks(r.Context(), videoID)
+	master := rewriteMasterPlaylist(videoID, raw, audioTracks, subtitleTracks)
 
 	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
-	w.Write(buf.Bytes())
+	w.Write([]byte(master))
 }
 
 // GET /api/hls/{videoId}/{quality}/index.m3u8?expires=xxx&sign=xxx
@@ -91,6 +90,16 @@ func HLSIndexHandler(w http.ResponseWriter, r *http.Request) {
 	indexRelPath := strings.Trim(strings.TrimPrefix(r.URL.Path, fmt.Sprintf("/api/hls/%d/", videoID)), "/")
 	if !validHLSRelativePath(indexRelPath) || !strings.HasSuffix(indexRelPath, "index.m3u8") {
 		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "invalid path"})
+		return
+	}
+
+	if track, ok := subtitleTrackForPlaylist(r.Context(), videoID, indexRelPath); ok {
+		playlist := renderSubtitleMediaPlaylist(videoID, track, videoDurationSeconds(r.Context(), videoID))
+		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(playlist))
 		return
 	}
 
@@ -124,6 +133,279 @@ func HLSIndexHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
 	w.Write(buf.Bytes())
+}
+
+func readyMasterMediaTracks(ctx context.Context, videoID int64) ([]store.VideoMediaTrack, []store.VideoMediaTrack) {
+	var tracks []store.VideoMediaTrack
+	err := store.DB().WithContext(ctx).
+		Where("video_id = ? AND track_type IN ? AND status = ? AND object_key <> ?", videoID, []string{"audio", "subtitle"}, "ready", "").
+		Order("track_type asc, stream_position asc").
+		Find(&tracks).Error
+	if err != nil {
+		return nil, nil
+	}
+	audioTracks := make([]store.VideoMediaTrack, 0)
+	subtitleTracks := make([]store.VideoMediaTrack, 0)
+	for _, track := range tracks {
+		switch track.TrackType {
+		case "audio":
+			audioTracks = append(audioTracks, track)
+		case "subtitle":
+			subtitleTracks = append(subtitleTracks, track)
+		}
+	}
+	return audioTracks, subtitleTracks
+}
+
+func rewriteMasterPlaylist(videoID int64, raw string, audioTracks, subtitleTracks []store.VideoMediaTrack) string {
+	audioRenditions := renderAudioRenditionTags(videoID, audioTracks)
+	subtitleRenditions := renderSubtitleRenditionTags(videoID, subtitleTracks)
+	hasAudioGroup := len(audioRenditions) > 0
+	hasSubtitleGroup := len(subtitleRenditions) > 0
+
+	var buf bytes.Buffer
+	insertedRenditions := false
+	scanner := bufio.NewScanner(strings.NewReader(raw))
+	for scanner.Scan() {
+		line := scanner.Text()
+		trimmed := strings.TrimSpace(line)
+		if isGeneratedMasterMediaLine(trimmed) {
+			continue
+		}
+		if !insertedRenditions && strings.HasPrefix(trimmed, "#EXT-X-STREAM-INF") {
+			writeMasterRenditions(&buf, audioRenditions, subtitleRenditions)
+			insertedRenditions = true
+		}
+		if strings.HasPrefix(trimmed, "#EXT-X-STREAM-INF") {
+			line = addStreamInfMediaGroups(line, hasAudioGroup, hasSubtitleGroup)
+		}
+		if relPath := hlsPlaylistRelativePath(line); relPath != "" {
+			subPath := fmt.Sprintf("/api/hls/%d/%s", videoID, relPath)
+			buf.WriteString(SignPath(subPath, hlsSignedURLTTLSeconds) + "\n")
+		} else {
+			buf.WriteString(line + "\n")
+		}
+	}
+	return buf.String()
+}
+
+func writeMasterRenditions(buf *bytes.Buffer, audioRenditions, subtitleRenditions []string) {
+	for _, line := range audioRenditions {
+		buf.WriteString(line + "\n")
+	}
+	for _, line := range subtitleRenditions {
+		buf.WriteString(line + "\n")
+	}
+	if len(audioRenditions) > 0 || len(subtitleRenditions) > 0 {
+		buf.WriteString("\n")
+	}
+}
+
+func renderAudioRenditionTags(videoID int64, tracks []store.VideoMediaTrack) []string {
+	if !hasAlternateAudioTracks(tracks) {
+		return nil
+	}
+
+	defaultTrack := store.VideoMediaTrack{
+		TrackType:      "audio",
+		StreamPosition: 0,
+		Title:          "Default",
+	}
+	for _, track := range tracks {
+		if track.StreamPosition == 0 {
+			defaultTrack = track
+			break
+		}
+	}
+
+	usedNames := map[string]int{}
+	renditions := []string{renderMediaRenditionTag("AUDIO", hlsAudioGroupID, uniqueRenditionName(mediaTrackLabel(defaultTrack), usedNames), defaultTrack.Language, true, true, false, "")}
+	alternateCount := 0
+	for _, track := range tracks {
+		if track.StreamPosition == 0 {
+			continue
+		}
+		url := signedMediaTrackURL(videoID, track.ObjectKey)
+		if url == "" {
+			continue
+		}
+		renditions = append(renditions, renderMediaRenditionTag("AUDIO", hlsAudioGroupID, uniqueRenditionName(mediaTrackLabel(track), usedNames), track.Language, false, true, false, url))
+		alternateCount++
+	}
+	if alternateCount == 0 {
+		return nil
+	}
+	return renditions
+}
+
+func hasAlternateAudioTracks(tracks []store.VideoMediaTrack) bool {
+	for _, track := range tracks {
+		if track.StreamPosition > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func renderSubtitleRenditionTags(videoID int64, tracks []store.VideoMediaTrack) []string {
+	if len(tracks) == 0 {
+		return nil
+	}
+	usedNames := map[string]int{}
+	renditions := make([]string, 0, len(tracks))
+	for _, track := range tracks {
+		url := subtitlePlaylistURL(videoID, track.ObjectKey)
+		if url == "" {
+			continue
+		}
+		renditions = append(renditions, renderMediaRenditionTag("SUBTITLES", hlsSubtitleGroupID, uniqueRenditionName(mediaTrackLabel(track), usedNames), track.Language, track.IsDefault, true, track.IsForced, url))
+	}
+	return renditions
+}
+
+func renderMediaRenditionTag(mediaType, groupID, name, language string, isDefault, autoselect, forced bool, uri string) string {
+	attrs := []string{
+		"TYPE=" + mediaType,
+		"GROUP-ID=" + hlsQuoteAttribute(groupID),
+		"NAME=" + hlsQuoteAttribute(name),
+	}
+	if strings.TrimSpace(language) != "" {
+		attrs = append(attrs, "LANGUAGE="+hlsQuoteAttribute(language))
+	}
+	attrs = append(attrs,
+		"DEFAULT="+hlsBool(isDefault),
+		"AUTOSELECT="+hlsBool(autoselect),
+	)
+	if mediaType == "AUDIO" {
+		attrs = append(attrs, "CHANNELS="+hlsQuoteAttribute("2"))
+	}
+	if mediaType == "SUBTITLES" {
+		attrs = append(attrs, "FORCED="+hlsBool(forced))
+	}
+	if strings.TrimSpace(uri) != "" {
+		attrs = append(attrs, "URI="+hlsQuoteAttribute(uri))
+	}
+	return "#EXT-X-MEDIA:" + strings.Join(attrs, ",")
+}
+
+func uniqueRenditionName(name string, used map[string]int) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = "Track"
+	}
+	used[name]++
+	if used[name] == 1 {
+		return name
+	}
+	return fmt.Sprintf("%s %d", name, used[name])
+}
+
+func hlsBool(value bool) string {
+	if value {
+		return "YES"
+	}
+	return "NO"
+}
+
+func hlsQuoteAttribute(value string) string {
+	value = strings.ReplaceAll(value, `\`, `\\`)
+	value = strings.ReplaceAll(value, `"`, `\"`)
+	return `"` + value + `"`
+}
+
+func isGeneratedMasterMediaLine(line string) bool {
+	if !strings.HasPrefix(line, "#EXT-X-MEDIA:") {
+		return false
+	}
+	groupID := strings.Trim(parseMasterAttribute(line, "GROUP-ID"), `"`)
+	return groupID == hlsAudioGroupID || groupID == hlsSubtitleGroupID
+}
+
+func addStreamInfMediaGroups(line string, hasAudioGroup, hasSubtitleGroup bool) string {
+	additions := make([]string, 0, 2)
+	if hasAudioGroup && parseMasterAttribute(line, "AUDIO") == "" {
+		additions = append(additions, "AUDIO="+hlsQuoteAttribute(hlsAudioGroupID))
+	}
+	if hasSubtitleGroup && parseMasterAttribute(line, "SUBTITLES") == "" {
+		additions = append(additions, "SUBTITLES="+hlsQuoteAttribute(hlsSubtitleGroupID))
+	}
+	if len(additions) == 0 {
+		return line
+	}
+	separator := ","
+	if !strings.Contains(line, ":") {
+		separator = ":"
+	}
+	return line + separator + strings.Join(additions, ",")
+}
+
+func subtitlePlaylistURL(videoID int64, objectKey string) string {
+	relPath := subtitlePlaylistRelPath(videoID, objectKey)
+	if relPath == "" {
+		return ""
+	}
+	return SignPath(fmt.Sprintf("/api/hls/%d/%s", videoID, relPath), hlsSignedURLTTLSeconds)
+}
+
+func subtitlePlaylistRelPath(videoID int64, objectKey string) string {
+	prefix := fmt.Sprintf("hls/%d/", videoID)
+	if !strings.HasPrefix(objectKey, prefix) || !strings.HasSuffix(objectKey, ".vtt") {
+		return ""
+	}
+	relPath := strings.TrimPrefix(objectKey, prefix)
+	playlistRelPath := strings.TrimSuffix(relPath, ".vtt") + "/index.m3u8"
+	if !validHLSRelativePath(playlistRelPath) {
+		return ""
+	}
+	return playlistRelPath
+}
+
+func subtitleVTTObjectKeyForPlaylist(videoID int64, playlistRelPath string) string {
+	if !strings.HasSuffix(playlistRelPath, "/index.m3u8") {
+		return ""
+	}
+	vttRelPath := strings.TrimSuffix(playlistRelPath, "/index.m3u8") + ".vtt"
+	if !validHLSRelativePath(vttRelPath) {
+		return ""
+	}
+	return fmt.Sprintf("hls/%d/%s", videoID, vttRelPath)
+}
+
+func subtitleTrackForPlaylist(ctx context.Context, videoID int64, playlistRelPath string) (store.VideoMediaTrack, bool) {
+	objectKey := subtitleVTTObjectKeyForPlaylist(videoID, playlistRelPath)
+	if objectKey == "" {
+		return store.VideoMediaTrack{}, false
+	}
+	var track store.VideoMediaTrack
+	err := store.DB().WithContext(ctx).
+		Where("video_id = ? AND track_type = ? AND status = ? AND object_key = ?", videoID, "subtitle", "ready", objectKey).
+		First(&track).Error
+	return track, err == nil
+}
+
+func videoDurationSeconds(ctx context.Context, videoID int64) int {
+	var video store.Video
+	if err := store.DB().WithContext(ctx).Select("duration").First(&video, videoID).Error; err != nil {
+		return 0
+	}
+	return video.Duration
+}
+
+func renderSubtitleMediaPlaylist(videoID int64, track store.VideoMediaTrack, duration int) string {
+	if duration <= 0 {
+		duration = 1
+	}
+	vttURL := signedMediaTrackURL(videoID, track.ObjectKey)
+	var b strings.Builder
+	b.WriteString("#EXTM3U\n")
+	b.WriteString("#EXT-X-VERSION:3\n")
+	b.WriteString(fmt.Sprintf("#EXT-X-TARGETDURATION:%d\n", duration))
+	b.WriteString("#EXT-X-MEDIA-SEQUENCE:0\n")
+	b.WriteString("#EXT-X-PLAYLIST-TYPE:VOD\n")
+	b.WriteString(fmt.Sprintf("#EXTINF:%.3f,\n", float64(duration)))
+	b.WriteString(vttURL + "\n")
+	b.WriteString("#EXT-X-ENDLIST\n")
+	return b.String()
 }
 
 // GET /api/hls/{videoId}/tracks/{...}.vtt?expires=xxx&sign=xxx
@@ -198,15 +480,21 @@ func AppPlayHandler(w http.ResponseWriter, r *http.Request) {
 	qualities := signedHLSQualities(r.Context(), id)
 	audioTracks := signedMediaTrackOptions(r.Context(), id, "audio")
 	subtitleTracks := signedMediaTrackOptions(r.Context(), id, "subtitle")
+	trackSummary := loadMediaTrackSummary(r.Context(), v)
 
 	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: map[string]interface{}{
-		"video_id":        id,
-		"type":            "hls",
-		"url":             signedPath,
-		"qualities":       qualities,
-		"audio_tracks":    audioTracks,
-		"subtitle_tracks": subtitleTracks,
-		"auto_label":      "自动",
+		"video_id":                  id,
+		"type":                      "hls",
+		"url":                       signedPath,
+		"qualities":                 qualities,
+		"audio_tracks":              audioTracks,
+		"subtitle_tracks":           subtitleTracks,
+		"media_tracks_scanned":      trackSummary.Scanned,
+		"audio_track_count":         trackSummary.AudioCount,
+		"subtitle_track_count":      trackSummary.SubtitleCount,
+		"has_multiple_audio_tracks": trackSummary.AudioCount > 1,
+		"has_subtitle_tracks":       trackSummary.SubtitleCount > 0,
+		"auto_label":                "自动",
 	}})
 }
 
@@ -257,23 +545,74 @@ func signedMediaTrackOptions(ctx context.Context, videoID int64, trackType strin
 	}
 	options := make([]MediaTrackOption, 0, len(tracks))
 	for _, track := range tracks {
+		if trackType == "audio" && track.StreamPosition == 0 {
+			continue
+		}
 		url := signedMediaTrackURL(videoID, track.ObjectKey)
 		if url == "" {
 			continue
 		}
 		options = append(options, MediaTrackOption{
-			ID:       track.ID,
-			Type:     track.TrackType,
-			Label:    mediaTrackLabel(track),
-			Language: track.Language,
-			Title:    track.Title,
-			Codec:    track.CodecName,
-			Default:  track.IsDefault,
-			Forced:   track.IsForced,
-			URL:      url,
+			ID:             track.ID,
+			Type:           track.TrackType,
+			Label:          mediaTrackLabel(track),
+			Language:       track.Language,
+			Title:          track.Title,
+			Codec:          track.CodecName,
+			StreamPosition: track.StreamPosition,
+			Default:        track.IsDefault,
+			Forced:         track.IsForced,
+			URL:            url,
 		})
 	}
+	if len(options) == 0 {
+		return nil
+	}
 	return options
+}
+
+func loadMediaTrackSummary(ctx context.Context, v store.Video) mediaTrackSummary {
+	summary := mediaTrackSummary{
+		Scanned:       v.MediaTracksScanned,
+		AudioCount:    v.AudioTrackCount,
+		SubtitleCount: v.SubtitleTrackCount,
+	}
+	srcKey := sourceKeyForVideo(v)
+
+	var sourceRows int64
+	sourceQuery := store.DB().WithContext(ctx).Model(&store.VideoMediaTrack{}).
+		Where("video_id = ? AND track_type = ?", v.ID, "source")
+	if strings.TrimSpace(srcKey) != "" {
+		sourceQuery = sourceQuery.Where("source_key = ?", srcKey)
+	}
+	if err := sourceQuery.Count(&sourceRows).Error; err == nil && sourceRows > 0 {
+		summary.Scanned = true
+	}
+
+	var audioRows int64
+	audioQuery := store.DB().WithContext(ctx).Model(&store.VideoMediaTrack{}).
+		Where("video_id = ? AND track_type = ?", v.ID, "audio")
+	if strings.TrimSpace(srcKey) != "" {
+		audioQuery = audioQuery.Where("source_key = ?", srcKey)
+	}
+	if err := audioQuery.Count(&audioRows).Error; err == nil && int(audioRows) > summary.AudioCount {
+		summary.AudioCount = int(audioRows)
+	}
+
+	var subtitleRows int64
+	subtitleQuery := store.DB().WithContext(ctx).Model(&store.VideoMediaTrack{}).
+		Where("video_id = ? AND track_type = ? AND status <> ?", v.ID, "subtitle", "unsupported")
+	if strings.TrimSpace(srcKey) != "" {
+		subtitleQuery = subtitleQuery.Where("source_key = ?", srcKey)
+	}
+	if err := subtitleQuery.Count(&subtitleRows).Error; err == nil && int(subtitleRows) > summary.SubtitleCount {
+		summary.SubtitleCount = int(subtitleRows)
+	}
+
+	if summary.AudioCount > 0 || summary.SubtitleCount > 0 {
+		summary.Scanned = true
+	}
+	return summary
 }
 
 func signedMediaTrackURL(videoID int64, objectKey string) string {

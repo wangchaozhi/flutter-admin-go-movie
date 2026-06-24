@@ -107,7 +107,7 @@ func AdminTranscodeHistoryByIDHandler(w http.ResponseWriter, r *http.Request) {
 		common.WriteJSON(w, http.StatusNotFound, common.APIResponse{Code: 404, Msg: "task not found"})
 		return
 	}
-	if task.Status == "queued" || task.Status == "pending" || task.Status == "processing" {
+	if isActiveTranscodeStatus(task.Status) {
 		common.WriteJSON(w, http.StatusConflict, common.APIResponse{Code: 409, Msg: "进行中的转码任务不能删除"})
 		return
 	}
@@ -121,7 +121,7 @@ func AdminTranscodeHistoryByIDHandler(w http.ResponseWriter, r *http.Request) {
 func reconcileActiveHistoryTasks(ctx context.Context) {
 	var videoIDs []int64
 	if err := store.DB().Model(&store.VideoTranscodeTask{}).
-		Where("status IN ?", []string{"queued", "pending", "processing"}).
+		Where("status IN ?", activeTranscodeStatuses()).
 		Distinct("video_id").
 		Limit(100).
 		Pluck("video_id", &videoIDs).Error; err != nil {
@@ -135,8 +135,9 @@ func reconcileActiveHistoryTasks(ctx context.Context) {
 // AdminVideoTasksHandler serves the per-quality transcode task list and the
 // per-quality variant deletion for a video.
 //
-//	GET    /api/admin/videos/{id}/tasks            -> list latest task per quality
-//	DELETE /api/admin/videos/{id}/tasks/{quality}  -> remove that quality variant
+//	GET    /api/admin/videos/{id}/tasks                   -> list latest task per quality
+//	DELETE /api/admin/videos/{id}/tasks/{quality}         -> remove that quality variant
+//	DELETE /api/admin/videos/{id}/tasks/{quality}/cancel  -> cancel active transcode for that quality
 func AdminVideoTasksHandler(w http.ResponseWriter, r *http.Request) {
 	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/admin/videos/"), "/")
 	parts := strings.Split(rest, "/")
@@ -155,6 +156,8 @@ func AdminVideoTasksHandler(w http.ResponseWriter, r *http.Request) {
 		listVideoTranscodeTasks(w, r, videoID)
 	case r.Method == http.MethodDelete && len(parts) == 3:
 		deleteVideoTranscodeQuality(w, r, videoID, parts[2])
+	case r.Method == http.MethodDelete && len(parts) == 4 && parts[3] == "cancel":
+		cancelVideoTranscodeQuality(w, r, videoID, parts[2])
 	default:
 		common.WriteJSON(w, http.StatusMethodNotAllowed, common.APIResponse{Code: 405, Msg: "method not allowed"})
 	}
@@ -214,7 +217,7 @@ func deleteVideoTranscodeQuality(w http.ResponseWriter, r *http.Request, videoID
 
 	var active int64
 	store.DB().Model(&store.VideoTranscodeTask{}).
-		Where("video_id = ? AND quality = ? AND status IN ?", videoID, quality, []string{"queued", "pending", "processing"}).
+		Where("video_id = ? AND quality = ? AND status IN ?", videoID, quality, activeTranscodeStatuses()).
 		Count(&active)
 	if active > 0 {
 		common.WriteJSON(w, http.StatusConflict, common.APIResponse{Code: 409, Msg: "该清晰度正在转码中，无法删除"})
@@ -228,6 +231,24 @@ func deleteVideoTranscodeQuality(w http.ResponseWriter, r *http.Request, videoID
 
 	store.DB().Where("video_id = ? AND quality = ?", videoID, quality).Delete(&store.VideoTranscodeTask{})
 	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok"})
+}
+
+func cancelVideoTranscodeQuality(w http.ResponseWriter, r *http.Request, videoID int64, quality string) {
+	quality = strings.ToLower(strings.TrimSpace(quality))
+	if qualityHeight(quality) <= 0 {
+		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "invalid quality"})
+		return
+	}
+	if err := store.DB().First(&store.Video{}, videoID).Error; err != nil {
+		common.WriteJSON(w, http.StatusNotFound, common.APIResponse{Code: 404, Msg: "video not found"})
+		return
+	}
+	count, err := cancelTranscodeTasks(r.Context(), videoID, quality)
+	if err != nil {
+		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
+		return
+	}
+	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: map[string]interface{}{"canceled": count}})
 }
 
 // removeTranscodeQualityOutput drops one quality from the master playlist and
