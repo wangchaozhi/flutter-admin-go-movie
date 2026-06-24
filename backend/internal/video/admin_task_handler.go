@@ -22,6 +22,85 @@ type transcodeTaskItem struct {
 	Transcoded bool `json:"transcoded"`
 }
 
+type adminTranscodeHistoryItem struct {
+	ID             int64      `json:"id"`
+	VideoID        int64      `json:"video_id"`
+	VideoTitle     string     `json:"video_title"`
+	BatchID        int64      `json:"batch_id"`
+	Quality        string     `json:"quality"`
+	PreviousStatus string     `json:"previous_status"`
+	Status         string     `json:"status"`
+	StatusMessage  string     `json:"status_message"`
+	Progress       int        `json:"progress"`
+	Attempt        int        `json:"attempt"`
+	ErrorMessage   string     `json:"error_message"`
+	StartedAt      *time.Time `json:"started_at"`
+	FinishedAt     *time.Time `json:"finished_at"`
+	CreatedAt      time.Time  `json:"created_at"`
+}
+
+// AdminTranscodeHistoryHandler serves global transcode task history for admin.
+//
+//	GET /api/admin/video/transcode-tasks
+func AdminTranscodeHistoryHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		common.WriteJSON(w, http.StatusMethodNotAllowed, common.APIResponse{Code: 405, Msg: "method not allowed"})
+		return
+	}
+	reconcileActiveHistoryTasks(r.Context())
+
+	status := strings.TrimSpace(r.URL.Query().Get("status"))
+	quality := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("quality")))
+	keyword := strings.TrimSpace(r.URL.Query().Get("q"))
+
+	query := store.DB().
+		Table("video_transcode_tasks AS t").
+		Select(`t.id, t.video_id, COALESCE(v.title, '') AS video_title, t.batch_id, t.quality,
+			t.previous_status, t.status, t.status_message, t.progress, t.attempt, t.error_message,
+			t.started_at, t.finished_at, t.created_at`).
+		Joins("LEFT JOIN videos AS v ON v.id = t.video_id").
+		Order("t.created_at DESC, t.id DESC").
+		Limit(300)
+	if status != "" && status != "all" {
+		query = query.Where("t.status = ?", status)
+	}
+	if quality != "" && quality != "all" {
+		query = query.Where("t.quality = ?", quality)
+	}
+	if keyword != "" {
+		like := "%" + keyword + "%"
+		query = query.Where(
+			"CAST(t.video_id AS TEXT) LIKE ? OR COALESCE(v.title, '') ILIKE ? OR t.quality ILIKE ? OR t.status_message ILIKE ? OR t.error_message ILIKE ?",
+			like,
+			like,
+			like,
+			like,
+			like,
+		)
+	}
+
+	var result []adminTranscodeHistoryItem
+	if err := query.Scan(&result).Error; err != nil {
+		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
+		return
+	}
+	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: result})
+}
+
+func reconcileActiveHistoryTasks(ctx context.Context) {
+	var videoIDs []int64
+	if err := store.DB().Model(&store.VideoTranscodeTask{}).
+		Where("status IN ?", []string{"queued", "pending", "processing"}).
+		Distinct("video_id").
+		Limit(100).
+		Pluck("video_id", &videoIDs).Error; err != nil {
+		return
+	}
+	for _, videoID := range videoIDs {
+		reconcileStaleTranscodeTasks(ctx, videoID)
+	}
+}
+
 // AdminVideoTasksHandler serves the per-quality transcode task list and the
 // per-quality variant deletion for a video.
 //

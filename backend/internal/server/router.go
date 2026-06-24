@@ -42,6 +42,7 @@ func NewRouter() http.Handler {
 	mux.Handle("/api/admin/orders", requireAdminAuth(http.HandlerFunc(payment.AdminOrdersHandler)))
 
 	// admin video management (requires admin auth)
+	mux.Handle("/api/admin/video/transcode-tasks", requireAdminAuth(http.HandlerFunc(video.AdminTranscodeHistoryHandler)))
 	mux.Handle("/api/admin/videos", requireAdminAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			video.AdminCreateVideoHandler(w, r)

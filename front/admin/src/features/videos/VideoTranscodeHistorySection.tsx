@@ -1,0 +1,299 @@
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import {
+  CheckCircle2,
+  Clock3,
+  Loader,
+  RefreshCw,
+  RotateCcw,
+  Search,
+  XCircle,
+} from 'lucide-react'
+
+import type { ApiResponse, TranscodeHistoryItem, TranscodeTaskStatus } from '../../adminTypes'
+import { PanelTitle } from '../../components/shared'
+
+const STATUS_LABEL: Record<TranscodeTaskStatus, string> = {
+  queued: '排队中',
+  pending: '等待转码',
+  processing: '转码中',
+  success: '成功',
+  failed: '失败',
+}
+
+const STATUS_CLASS: Record<string, string> = {
+  queued: 'status-uploaded',
+  pending: 'status-uploaded',
+  processing: 'status-transcoding',
+  success: 'status-ready',
+  failed: 'status-failed',
+}
+
+const statusOptions: Array<{ value: 'all' | TranscodeTaskStatus; label: string }> = [
+  { value: 'all', label: '全部' },
+  { value: 'queued', label: '排队中' },
+  { value: 'pending', label: '等待转码' },
+  { value: 'processing', label: '转码中' },
+  { value: 'success', label: '成功' },
+  { value: 'failed', label: '失败' },
+]
+
+const qualityOptions = ['all', '360p', '480p', '720p', '1080p'] as const
+
+function isActiveStatus(status: string) {
+  return status === 'queued' || status === 'pending' || status === 'processing'
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) return '—'
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return '—'
+  return d.toLocaleString('zh-CN', { hour12: false })
+}
+
+function formatElapsed(task: Pick<TranscodeHistoryItem, 'started_at' | 'finished_at' | 'status'>) {
+  if (!task.started_at) return '—'
+  const start = new Date(task.started_at).getTime()
+  if (Number.isNaN(start)) return '—'
+  const end = task.finished_at
+    ? new Date(task.finished_at).getTime()
+    : task.status === 'processing'
+      ? Date.now()
+      : Number.NaN
+  if (Number.isNaN(end) || end < start) return '—'
+  const sec = Math.round((end - start) / 1000)
+  const h = Math.floor(sec / 3600)
+  const m = Math.floor((sec % 3600) / 60)
+  const s = sec % 60
+  if (h > 0) return `${h}时${m}分${s}秒`
+  if (m > 0) return `${m}分${s}秒`
+  return `${s}秒`
+}
+
+export function VideoTranscodeHistorySection({
+  token,
+  can,
+}: {
+  token: string
+  can: (permission: string) => boolean
+}) {
+  const [tasks, setTasks] = useState<TranscodeHistoryItem[]>([])
+  const [status, setStatus] = useState<'all' | TranscodeTaskStatus>('all')
+  const [quality, setQuality] = useState<(typeof qualityOptions)[number]>('all')
+  const [keyword, setKeyword] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [retryingId, setRetryingId] = useState<number | null>(null)
+  const headers = useMemo(
+    () => ({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }),
+    [token],
+  )
+
+  const loadTasks = useCallback(async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const params = new URLSearchParams()
+      if (status !== 'all') params.set('status', status)
+      if (quality !== 'all') params.set('quality', quality)
+      if (keyword.trim()) params.set('q', keyword.trim())
+      const query = params.toString()
+      const res = await fetch(`/api/admin/video/transcode-tasks${query ? `?${query}` : ''}`, { headers })
+      const json: ApiResponse<TranscodeHistoryItem[]> = await res.json()
+      if (json.code !== 0) throw new Error(json.msg)
+      setTasks(json.data ?? [])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '转码历史加载失败')
+    } finally {
+      setLoading(false)
+    }
+  }, [headers, keyword, quality, status])
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void loadTasks()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [loadTasks])
+
+  const activeCount = tasks.filter((task) => isActiveStatus(task.status)).length
+  const successCount = tasks.filter((task) => task.status === 'success').length
+  const failedCount = tasks.filter((task) => task.status === 'failed').length
+
+  async function retryTask(task: TranscodeHistoryItem) {
+    if (!task.quality) return
+    setRetryingId(task.id)
+    setError('')
+    try {
+      const res = await fetch(`/api/admin/videos/${task.video_id}/transcode`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ qualities: [task.quality] }),
+      })
+      const json: ApiResponse<unknown> = await res.json()
+      if (json.code !== 0) throw new Error(json.msg)
+      await loadTasks()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '重试提交失败')
+    } finally {
+      setRetryingId(null)
+    }
+  }
+
+  return (
+    <section className="stack">
+      <section className="panel">
+        <div className="section-header">
+          <PanelTitle title="转码历史" count={tasks.length} />
+          <button className="ghost-button" disabled={loading} type="button" onClick={loadTasks}>
+            <RefreshCw size={15} className={loading ? 'spin' : undefined} />
+            刷新
+          </button>
+        </div>
+        <div className="summary-grid transcode-history-summary">
+          <SummaryCard icon={Clock3} label="进行中" value={activeCount} />
+          <SummaryCard icon={CheckCircle2} label="成功" value={successCount} />
+          <SummaryCard icon={XCircle} label="失败" value={failedCount} />
+        </div>
+        <div className="history-filter-bar">
+          <div className="segmented-tabs" role="tablist" aria-label="转码状态">
+            {statusOptions.map((option) => (
+              <button
+                className={status === option.value ? 'active' : ''}
+                key={option.value}
+                type="button"
+                onClick={() => setStatus(option.value)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          <select value={quality} onChange={(event) => setQuality(event.target.value as typeof quality)}>
+            {qualityOptions.map((item) => (
+              <option key={item} value={item}>
+                {item === 'all' ? '全部清晰度' : item}
+              </option>
+            ))}
+          </select>
+          <label className="history-search">
+            <Search size={14} />
+            <input
+              value={keyword}
+              onChange={(event) => setKeyword(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') void loadTasks()
+              }}
+              placeholder="搜索视频、ID、错误"
+            />
+          </label>
+          <button className="ghost-button" disabled={loading} type="button" onClick={loadTasks}>
+            查询
+          </button>
+        </div>
+        {error && <span className="status error">{error}</span>}
+      </section>
+
+      <section className="table-panel">
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>视频</th>
+                <th>清晰度</th>
+                <th>状态</th>
+                <th>进度</th>
+                <th>时间</th>
+                <th>信息</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {tasks.map((task) => {
+                const active = isActiveStatus(task.status)
+                return (
+                  <tr key={task.id}>
+                    <td>
+                      <strong>{task.video_title || `视频 #${task.video_id}`}</strong>
+                      <small>#{task.video_id} · 批次 {task.batch_id || '—'}</small>
+                    </td>
+                    <td>
+                      <span className="quality-name">{task.quality || '—'}</span>
+                      {task.previous_status && <small>原状态 {task.previous_status}</small>}
+                    </td>
+                    <td>
+                      <span className={`status-badge ${STATUS_CLASS[task.status] ?? ''}`}>
+                        {STATUS_LABEL[task.status] ?? task.status}
+                      </span>
+                      {active && <Loader size={11} className="spin" style={{ marginLeft: 4 }} />}
+                    </td>
+                    <td>
+                      <div className="history-progress">
+                        <span style={{ width: `${task.progress}%` }} />
+                      </div>
+                      <small>{task.progress}%</small>
+                    </td>
+                    <td>
+                      {formatDateTime(task.created_at)}
+                      <small>耗时 {formatElapsed(task)}</small>
+                    </td>
+                    <td className="history-message-cell">
+                      {task.error_message || task.status_message || '—'}
+                      <small>尝试 {task.attempt}</small>
+                    </td>
+                    <td>
+                      <div className="row-actions">
+                        {can('video:edit') && task.status === 'failed' && task.quality ? (
+                          <button
+                            disabled={retryingId === task.id}
+                            type="button"
+                            onClick={() => void retryTask(task)}
+                          >
+                            <RotateCcw size={13} />
+                            重试
+                          </button>
+                        ) : (
+                          <span className="muted-action">—</span>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
+              {!loading && tasks.length === 0 && (
+                <tr>
+                  <td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-subtle)' }}>
+                    暂无转码记录
+                  </td>
+                </tr>
+              )}
+              {loading && tasks.length === 0 && (
+                <tr>
+                  <td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-subtle)' }}>
+                    加载中...
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+  )
+}
+
+function SummaryCard({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon: typeof Clock3
+  label: string
+  value: number
+}) {
+  return (
+    <div className="summary-card">
+      <Icon size={16} />
+      <small>{label}</small>
+      <strong>{value}</strong>
+    </div>
+  )
+}

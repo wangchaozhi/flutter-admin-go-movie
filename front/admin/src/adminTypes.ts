@@ -1,4 +1,4 @@
-export type Entity = 'users' | 'roles' | 'menus' | 'videos' | 'categories' | 'app-users' | 'payments'
+export type Entity = 'users' | 'roles' | 'menus' | 'videos' | 'video-transcodes' | 'categories' | 'app-users' | 'payments'
 
 export type VideoStatus = 'uploading' | 'uploaded' | 'transcoding' | 'ready' | 'failed' | 'offline'
 
@@ -69,6 +69,10 @@ export type TranscodeTask = {
 // One per-quality transcode entry shown under a video row, with whether the
 // quality is currently present in the playable master playlist.
 export type VideoQualityTask = TranscodeTask & { transcoded?: boolean }
+
+export type TranscodeHistoryItem = TranscodeTask & {
+  video_title: string
+}
 
 export type User = {
   id: number

@@ -6,6 +6,7 @@ import {
   Clapperboard,
   CreditCard,
   FolderOpen,
+  History,
   KeyRound,
   LogOut,
   Menu as MenuIcon,
@@ -43,7 +44,7 @@ import { MenuManagementSection, buildMenuTree } from './features/menus'
 import { PaymentManagementSection } from './features/payments'
 import { RoleManagementSection } from './features/roles'
 import { UserManagementSection } from './features/users'
-import { VideoManagementSection } from './features/videos'
+import { VideoManagementSection, VideoTranscodeHistorySection } from './features/videos'
 
 const emptyUser: UserForm = {
   username: '',
@@ -66,14 +67,38 @@ const emptyMenu: MenuForm = {
   permission: '',
 }
 
-const tabs: Array<{ key: Entity; label: string; icon: typeof Users }> = [
-  { key: 'users', label: '管理员', icon: Users },
-  { key: 'roles', label: '角色', icon: Shield },
-  { key: 'menus', label: '菜单', icon: MenuIcon },
-  { key: 'app-users', label: 'App 用户', icon: Smartphone },
-  { key: 'categories', label: '类别', icon: FolderOpen },
-  { key: 'videos', label: '视频', icon: Clapperboard },
-  { key: 'payments', label: '支付', icon: CreditCard },
+type ChildNavItem = {
+  key: Entity
+  label: string
+  icon: typeof Users
+  path: string
+}
+
+type NavItem = {
+  key: Entity | 'video'
+  label: string
+  icon: typeof Users
+  path: string
+  children?: ChildNavItem[]
+}
+
+const tabs: NavItem[] = [
+  { key: 'users', label: '管理员', icon: Users, path: '/system/user' },
+  { key: 'roles', label: '角色', icon: Shield, path: '/system/role' },
+  { key: 'menus', label: '菜单', icon: MenuIcon, path: '/system/menu' },
+  { key: 'app-users', label: 'App 用户', icon: Smartphone, path: '/app-users' },
+  { key: 'categories', label: '类别', icon: FolderOpen, path: '/categories' },
+  {
+    key: 'video',
+    label: '视频管理',
+    icon: Clapperboard,
+    path: '/videos',
+    children: [
+      { key: 'videos', label: '视频列表', icon: Clapperboard, path: '/videos' },
+      { key: 'video-transcodes', label: '转码历史', icon: History, path: '/videos/transcodes' },
+    ],
+  },
+  { key: 'payments', label: '支付', icon: CreditCard, path: '/payments' },
 ]
 
 const pageHeaders: Record<Entity, { eyebrow: string; title: string; subtitle: string }> = {
@@ -107,11 +132,20 @@ const pageHeaders: Record<Entity, { eyebrow: string; title: string; subtitle: st
     title: '视频',
     subtitle: '管理视频资料、封面、上传和转码状态。',
   },
+  'video-transcodes': {
+    eyebrow: '内容中心',
+    title: '转码历史',
+    subtitle: '查看视频转码任务、清晰度进度和失败重试记录。',
+  },
   payments: {
     eyebrow: '商业中心',
     title: '支付',
     subtitle: '查看套餐、订单和支付处理状态。',
   },
+}
+
+function isEntityKey(key: NavItem['key']): key is Entity {
+  return key !== 'video'
 }
 
 const adminRememberKey = 'admin.remember'
@@ -392,14 +426,23 @@ function AdminDashboard({
   const visibleTabs = useMemo(
     () =>
       tabs
-        .filter((tab) => tab.key !== 'users' || menuPaths.has('/system/user'))
-        .filter((tab) => tab.key !== 'roles' || menuPaths.has('/system/role'))
-        .filter((tab) => tab.key !== 'menus' || menuPaths.has('/system/menu'))
-        .filter((tab) => tab.key !== 'app-users' || menuPaths.has('/app-users') || menuPaths.size === 0)
-        .filter((tab) => tab.key !== 'categories' || menuPaths.has('/categories') || menuPaths.size === 0)
-        .filter((tab) => tab.key !== 'videos' || menuPaths.has('/videos') || menuPaths.size === 0)
-        .filter((tab) => tab.key !== 'payments' || menuPaths.has('/payments') || menuPaths.size === 0),
+        .map((tab) => {
+          if (!tab.children) return tab
+          const children = menuPaths.size === 0 || menuPaths.has(tab.path)
+            ? tab.children
+            : tab.children.filter((child) => menuPaths.has(child.path))
+          return children.length > 0 ? { ...tab, children } : tab
+        })
+        .filter((tab) => menuPaths.size === 0 || menuPaths.has(tab.path) || Boolean(tab.children?.length)),
     [menuPaths],
+  )
+  const flatVisibleTabs = useMemo<ChildNavItem[]>(
+    () =>
+      visibleTabs.flatMap((tab) => {
+        if (tab.children?.length) return tab.children
+        return isEntityKey(tab.key) ? [{ key: tab.key, label: tab.label, icon: tab.icon, path: tab.path }] : []
+      }),
+    [visibleTabs],
   )
   const activeHeader = pageHeaders[active]
   const can = (permission: string) => permissions.has(permission)
@@ -430,10 +473,10 @@ function AdminDashboard({
   }, [])
 
   useEffect(() => {
-    if (visibleTabs.length > 0 && !visibleTabs.some((tab) => tab.key === active)) {
-      setActive(visibleTabs[0].key)
+    if (flatVisibleTabs.length > 0 && !flatVisibleTabs.some((tab) => tab.key === active)) {
+      setActive(flatVisibleTabs[0].key)
     }
-  }, [active, visibleTabs])
+  }, [active, flatVisibleTabs])
 
   useEffect(() => {
     if (!userMenuOpen) return
@@ -640,17 +683,42 @@ function AdminDashboard({
         <nav className="nav-tabs" aria-label="系统管理">
           {visibleTabs.map((tab) => {
             const Icon = tab.icon
+            const children = tab.children ?? []
+            const activeChild = children.some((child) => child.key === active)
             return (
-              <button
-                className={active === tab.key ? 'active' : ''}
-                key={tab.key}
-                type="button"
-                onClick={() => setActive(tab.key)}
-              >
-                <Icon size={16} />
-                <span>{tab.label}</span>
-                <ChevronRight className="nav-chevron" size={15} />
-              </button>
+              <div className="nav-group" key={tab.key}>
+                <button
+                  className={active === tab.key || activeChild ? 'active' : ''}
+                  type="button"
+                  onClick={() => {
+                    if (children[0]) {
+                      setActive(children[0].key)
+                      return
+                    }
+                    if (isEntityKey(tab.key)) {
+                      setActive(tab.key)
+                    }
+                  }}
+                >
+                  <Icon size={16} />
+                  <span>{tab.label}</span>
+                  <ChevronRight className="nav-chevron" size={15} />
+                </button>
+                {children.length > 0 && (
+                  <div className="nav-subtabs">
+                    {children.map((child) => (
+                      <button
+                        className={active === child.key ? 'active' : ''}
+                        key={child.key}
+                        type="button"
+                        onClick={() => setActive(child.key)}
+                      >
+                        <span>{child.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             )
           })}
         </nav>
@@ -766,6 +834,10 @@ function AdminDashboard({
 
         {active === 'videos' && (
           <VideoManagementSection token={session.token} can={can} />
+        )}
+
+        {active === 'video-transcodes' && (
+          <VideoTranscodeHistorySection token={session.token} can={can} />
         )}
 
         {active === 'payments' && (
