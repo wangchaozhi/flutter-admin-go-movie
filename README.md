@@ -25,6 +25,14 @@
 
 - [播放器与 HLS 链路优化记录](docs/player_optimization.md)
 
+## 功能概览
+
+- 管理端 RBAC：管理员、角色、菜单和按钮权限管理，主界面菜单会根据 `admin_menus` 的父子关系、排序和图标编码动态渲染。
+- 内容管理：视频、类别、转码任务、转码历史记录和多清晰度 HLS 资源管理。
+- App 管理：移动端用户资料、状态和登录密码维护。
+- 支付管理：会员套餐、单片套餐、订单列表和订单删除，订单列表会展示 App 用户名。
+- 移动端：视频浏览、播放、收藏、观看历史、个人设置、商品和订单。
+
 ## 环境要求
 
 - Docker / Docker Compose
@@ -136,7 +144,25 @@ role:delete
 menu:create
 menu:edit
 menu:delete
+app-user:create
+app-user:edit
+app-user:delete
+category:create
+category:edit
+category:delete
+payment:product
+payment:order
+payment:refund
+video:create
+video:edit
+video:delete
+video:upload
+video:cover
+video:transcode
+video:transcode-history:delete
 ```
+
+管理端菜单由数据库表 `admin_menus` 驱动，支持 `icon` 图标编码和 `sort_order` 排序。默认结构包含 `系统管理`、`App 管理 / 用户`、`视频管理 / 视频列表 / 类别 / 转码历史` 和 `支付`。
 
 ## 启动移动端
 
@@ -197,11 +223,16 @@ PUT|DELETE        /api/admin/app-users/{id}
 GET|POST          /api/admin/products
 PUT|DELETE        /api/admin/products/{id}
 GET               /api/admin/orders
+DELETE            /api/admin/orders/{id}
 GET|POST          /api/admin/videos
 GET|PUT|DELETE    /api/admin/videos/{id}
 POST              /api/admin/videos/{id}/upload
 POST              /api/admin/videos/{id}/cover
 GET|POST          /api/admin/videos/{id}/transcode
+GET               /api/admin/videos/{id}/tasks
+DELETE            /api/admin/videos/{id}/tasks/{quality}
+GET               /api/admin/video/transcode-tasks
+DELETE            /api/admin/video/transcode-tasks/{id}
 GET|POST          /api/admin/categories
 PUT|DELETE        /api/admin/categories/{id}
 ```
