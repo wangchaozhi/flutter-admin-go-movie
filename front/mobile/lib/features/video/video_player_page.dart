@@ -33,6 +33,10 @@ class _MediaTrackOption {
   final bool isDefault;
   final bool isForced;
 
+  /// Position of this track within its type in the source stream order. On web
+  /// this matches the hls.js audio-rendition index used to switch tracks.
+  final int streamPosition;
+
   const _MediaTrackOption({
     required this.id,
     required this.label,
@@ -42,6 +46,7 @@ class _MediaTrackOption {
     required this.codec,
     required this.isDefault,
     required this.isForced,
+    required this.streamPosition,
   });
 }
 
@@ -340,6 +345,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
             codec: item['codec']?.toString() ?? '',
             isDefault: item['default'] == true,
             isForced: item['forced'] == true,
+            streamPosition: _parseInt(item['stream_position']),
           );
         })
         .whereType<_MediaTrackOption>()
@@ -426,7 +432,10 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
               .firstOrNull;
 
     if (audioOption == null) {
-      if (!kIsWeb) {
+      if (kIsWeb) {
+        // hls.js: rendition index 0 is the default (muxed) audio track.
+        await _player.setAudioTrack(_webHlsAudioTrack(0));
+      } else {
         await _player.setAudioTrack(AudioTrack.auto());
       }
     } else if (audioOption.audioTrack != null) {
@@ -435,13 +444,18 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       }
     } else {
       final apiTrack = audioOption.apiTrack!;
-      await _player.setAudioTrack(
-        AudioTrack.uri(
-          apiTrack.url,
-          title: apiTrack.title.isEmpty ? apiTrack.label : apiTrack.title,
-          language: apiTrack.language.isEmpty ? null : apiTrack.language,
-        ),
-      );
+      if (kIsWeb) {
+        // hls.js switches by rendition index, which matches stream_position.
+        await _player.setAudioTrack(_webHlsAudioTrack(apiTrack.streamPosition));
+      } else {
+        await _player.setAudioTrack(
+          AudioTrack.uri(
+            apiTrack.url,
+            title: apiTrack.title.isEmpty ? apiTrack.label : apiTrack.title,
+            language: apiTrack.language.isEmpty ? null : apiTrack.language,
+          ),
+        );
+      }
     }
 
     if (kIsWeb) {
@@ -477,11 +491,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       _selectedAudioTrackValue = nextValue;
     });
     try {
-      if (kIsWeb && nextValue == null && previousValue != null) {
-        await _reloadCurrentMediaPreservingPlayback();
-      } else {
-        await _applySelectedMediaTracks();
-      }
+      await _applySelectedMediaTracks();
     } catch (e) {
       if (mounted) {
         setState(() => _selectedAudioTrackValue = previousValue);
@@ -522,6 +532,13 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     } finally {
       if (mounted) setState(() => _switchingTrack = false);
     }
+  }
+
+  /// Builds an [AudioTrack] whose id is the hls.js rendition index. The
+  /// vendored media_kit fork interprets a numeric, non-uri [AudioTrack.id] on
+  /// web as `hls.audioTrack = index`. See packages/media_kit/README_FORK.md.
+  AudioTrack _webHlsAudioTrack(int index) {
+    return AudioTrack(index.toString(), null, null);
   }
 
   Future<void> _applyWebSubtitleTrack(_TrackMenuOption? option) async {
@@ -719,30 +736,6 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     }
   }
 
-  Future<void> _reloadCurrentMediaPreservingPlayback() async {
-    final option =
-        _qualities
-            .where((quality) => quality.name == _selectedQuality)
-            .firstOrNull ??
-        _qualities.firstOrNull;
-    if (option == null) return;
-
-    final position = _player.state.position;
-    final wasPlaying = _player.state.playing;
-    await _player.open(Media(option.url), play: false);
-    await _player.setRate(_playbackRate);
-    await _waitForMediaReady();
-    _syncDetectedTracks(_player.state.tracks);
-    await _applySelectedMediaTracks();
-    if (position > Duration.zero) {
-      await _player.seek(position);
-    }
-    if (wasPlaying) {
-      await _resumePlayback();
-    } else {
-      await _player.pause();
-    }
-  }
 
   Future<void> _waitForMediaReady() async {
     if (_player.state.duration > Duration.zero) return;

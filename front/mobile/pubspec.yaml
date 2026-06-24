@@ -23,5 +23,11 @@ dev_dependencies:
     sdk: flutter
   flutter_lints: ^6.0.0
 
+# Vendored fork of media_kit 1.2.6 that enables HLS (hls.js) audio-track
+# switching on the web. See packages/media_kit/README_FORK.md.
+dependency_overrides:
+  media_kit:
+    path: packages/media_kit
+
 flutter:
   uses-material-design: true
