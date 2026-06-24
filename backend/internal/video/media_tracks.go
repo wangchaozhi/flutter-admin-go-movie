@@ -48,7 +48,7 @@ func ensureVideoMediaTracksForSource(ctx context.Context, videoID int64, srcKey,
 		Find(&existing).Error; err != nil {
 		return nil, err
 	}
-	if len(existing) > 0 {
+	if len(existing) > 0 && !hasUnfinishedMediaTrack(existing) {
 		return readyMediaTracks(existing), nil
 	}
 
@@ -272,6 +272,20 @@ func markMediaTrackFailed(id int64, err error) {
 		"error_message": err.Error(),
 		"updated_at":    time.Now(),
 	})
+}
+
+// hasUnfinishedMediaTrack reports whether any track still needs (re)processing.
+// "failed" tracks were typically interrupted mid-extraction (e.g. a request or
+// task context was canceled) and "processing" tracks never completed, so the
+// source should be re-extracted. "ready" and "unsupported" are terminal and do
+// not warrant a retry.
+func hasUnfinishedMediaTrack(tracks []store.VideoMediaTrack) bool {
+	for _, t := range tracks {
+		if t.Status == "failed" || t.Status == "processing" {
+			return true
+		}
+	}
+	return false
 }
 
 func readyMediaTracks(tracks []store.VideoMediaTrack) []store.VideoMediaTrack {

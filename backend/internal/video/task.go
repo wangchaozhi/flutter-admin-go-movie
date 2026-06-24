@@ -9,9 +9,13 @@ import (
 )
 
 const TypeTranscode = "video:transcode"
+const TypeExtractTracks = "video:extract_tracks"
 
 const transcodeTaskTimeout = 6 * time.Hour
 const transcodeTaskMaxRetry = 2
+
+const extractTracksTaskTimeout = 2 * time.Hour
+const extractTracksTaskMaxRetry = 1
 
 type TranscodePayload struct {
 	VideoID        int64    `json:"video_id"`
@@ -58,5 +62,43 @@ func EnqueueTranscode(ctx context.Context, videoID, taskID, batchID int64, quali
 	client := AsynqClient()
 	defer client.Close()
 	_, err = client.EnqueueContext(ctx, task, asynq.Timeout(transcodeTaskTimeout), asynq.MaxRetry(transcodeTaskMaxRetry))
+	return err
+}
+
+type ExtractTracksPayload struct {
+	VideoID   int64  `json:"video_id"`
+	SourceKey string `json:"source_key"`
+}
+
+func NewExtractTracksTask(videoID int64, sourceKey string) (*asynq.Task, error) {
+	payload, err := json.Marshal(ExtractTracksPayload{
+		VideoID:   videoID,
+		SourceKey: sourceKey,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return asynq.NewTask(TypeExtractTracks, payload), nil
+}
+
+func ParseExtractTracksPayload(t *asynq.Task) (*ExtractTracksPayload, error) {
+	var p ExtractTracksPayload
+	if err := json.Unmarshal(t.Payload(), &p); err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+// EnqueueExtractTracks schedules background extraction of the audio/subtitle
+// tracks for a freshly uploaded source. The video is expected to already be in
+// the "extracting" status when this is called.
+func EnqueueExtractTracks(ctx context.Context, videoID int64, sourceKey string) error {
+	task, err := NewExtractTracksTask(videoID, sourceKey)
+	if err != nil {
+		return err
+	}
+	client := AsynqClient()
+	defer client.Close()
+	_, err = client.EnqueueContext(ctx, task, asynq.Timeout(extractTracksTaskTimeout), asynq.MaxRetry(extractTracksTaskMaxRetry))
 	return err
 }

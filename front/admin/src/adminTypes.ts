@@ -1,6 +1,6 @@
 export type Entity = 'users' | 'roles' | 'menus' | 'videos' | 'video-transcodes' | 'categories' | 'app-users' | 'payments'
 
-export type VideoStatus = 'uploading' | 'uploaded' | 'transcoding' | 'ready' | 'failed' | 'offline'
+export type VideoStatus = 'uploading' | 'extracting' | 'uploaded' | 'transcoding' | 'ready' | 'failed' | 'offline'
 
 export type Category = {
   id: number

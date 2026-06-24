@@ -132,12 +132,6 @@ func AdminUploadVideoHandler(w http.ResponseWriter, r *http.Request) {
 			duration = probeDuration(srcPath)
 		}
 	}
-	if srcPath != "" {
-		if _, err := ensureVideoMediaTracks(r.Context(), videoID, key, srcPath); err != nil {
-			log.Printf("prepare media tracks failed for video %d: %v", videoID, err)
-		}
-	}
-
 	now := time.Now()
 	store.DB().Model(&v).Updates(map[string]interface{}{
 		"original_key":   key,
@@ -146,9 +140,22 @@ func AdminUploadVideoHandler(w http.ResponseWriter, r *http.Request) {
 		"size":           header.Size,
 		"source_width":   sourceSize.width,
 		"source_height":  sourceSize.height,
-		"status":         "uploaded",
+		"status":         videoStatusExtracting,
 		"updated_at":     now,
 	})
+
+	// Extract audio/subtitle tracks in the background so the upload request
+	// returns immediately; the video shows as "extracting" until the worker
+	// finishes and releases it to "uploaded".
+	if err := EnqueueExtractTracks(r.Context(), videoID, key); err != nil {
+		log.Printf("enqueue track extraction failed for video %d, running inline: %v", videoID, err)
+		if srcPath != "" {
+			if _, err := ensureVideoMediaTracks(r.Context(), videoID, key, srcPath); err != nil {
+				log.Printf("prepare media tracks failed for video %d: %v", videoID, err)
+			}
+		}
+		releaseExtractingVideo(videoID)
+	}
 
 	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: map[string]interface{}{
 		"video_id":      videoID,

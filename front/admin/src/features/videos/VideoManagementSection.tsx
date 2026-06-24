@@ -33,6 +33,7 @@ const emptyForm: VideoForm = {
 
 const STATUS_LABEL: Record<string, string> = {
   uploading: '上传中',
+  extracting: '处理音轨中',
   uploaded: '待转码',
   transcoding: '转码中',
   ready: '可播放',
@@ -42,6 +43,7 @@ const STATUS_LABEL: Record<string, string> = {
 
 const STATUS_CLASS: Record<string, string> = {
   uploading: 'status-uploading',
+  extracting: 'status-transcoding',
   uploaded: 'status-uploaded',
   transcoding: 'status-transcoding',
   ready: 'status-ready',
@@ -149,10 +151,22 @@ export function VideoManagementSection({
   const authHeader = { Authorization: `Bearer ${token}` }
   const jsonHeaders = { ...authHeader, 'Content-Type': 'application/json' }
 
-  async function loadVideos() {
+  async function loadVideos(): Promise<Video[]> {
     const res = await fetch('/api/admin/videos', { headers: jsonHeaders })
     const json: ApiResponse<Video[]> = await res.json()
-    if (json.code === 0) setVideos(json.data ?? [])
+    const list = json.code === 0 ? (json.data ?? []) : []
+    if (json.code === 0) setVideos(list)
+    return list
+  }
+
+  // After upload the source's audio/subtitle tracks are extracted in the
+  // background (status "extracting"); refresh the list until it settles.
+  function pollExtractionStatus(videoId: number) {
+    setTimeout(async () => {
+      const list = await loadVideos()
+      const v = list.find(item => item.id === videoId)
+      if (v && v.status === 'extracting') pollExtractionStatus(videoId)
+    }, 3000)
   }
 
   async function loadCategories() {
@@ -226,7 +240,7 @@ export function VideoManagementSection({
       }
     }
 
-    xhr.onload = () => {
+    xhr.onload = async () => {
       setUploadProgress(null)
       try {
         const json = JSON.parse(xhr.responseText)
@@ -234,7 +248,9 @@ export function VideoManagementSection({
           setUploadError('上传失败：' + json.msg)
         } else {
           if (mp4Ref.current) mp4Ref.current.value = ''
-          loadVideos()
+          const list = await loadVideos()
+          const v = list.find(item => item.id === videoId)
+          if (v && v.status === 'extracting') pollExtractionStatus(videoId)
         }
       } catch {
         setUploadError('响应解析失败，请刷新后重试')
