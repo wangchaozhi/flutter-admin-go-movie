@@ -572,8 +572,63 @@ input:disabled {
 }
 
 .searchable-select {
+  position: relative;
   display: grid;
   gap: 7px;
+}
+
+.searchable-options {
+  position: absolute;
+  z-index: 15;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  max-height: 190px;
+  overflow: auto;
+  display: grid;
+  gap: 2px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  padding: 4px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.searchable-options button {
+  min-height: 34px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  justify-content: stretch;
+  gap: 8px;
+  border: 0;
+  padding: 0 8px;
+  color: var(--text);
+  background: transparent;
+  text-align: left;
+}
+
+.searchable-options button:hover,
+.searchable-options button.active {
+  background: var(--surface-subtle);
+}
+
+.searchable-options button span {
+  color: var(--text-subtle);
+  font-size: 12px;
+}
+
+.searchable-options button strong {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.searchable-empty {
+  padding: 8px;
+  color: var(--text-faint);
+  font-size: 12px;
 }
 
 .remember-row {

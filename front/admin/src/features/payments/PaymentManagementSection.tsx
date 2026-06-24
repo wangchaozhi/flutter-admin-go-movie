@@ -138,6 +138,7 @@ export function PaymentManagementSection({
   const [videos, setVideos] = useState<Video[]>([])
   const [productForm, setProductForm] = useState<ProductForm>(emptyProductForm)
   const [videoKeyword, setVideoKeyword] = useState('')
+  const [videoPickerOpen, setVideoPickerOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [savingProduct, setSavingProduct] = useState(false)
   const [error, setError] = useState('')
@@ -189,6 +190,10 @@ export function PaymentManagementSection({
   async function handleSaveProduct(event: FormEvent) {
     event.preventDefault()
     if (!canManageProducts) return
+    if (productForm.kind === 'video' && !productForm.video_id) {
+      setError('请选择影片')
+      return
+    }
     setSavingProduct(true)
     setError('')
     try {
@@ -233,11 +238,19 @@ export function PaymentManagementSection({
     setProductForm(nextForm)
     const selected = videos.find((video) => String(video.id) === nextForm.video_id)
     setVideoKeyword(selected?.title ?? nextForm.video_id)
+    setVideoPickerOpen(false)
   }
 
   function resetProductForm() {
     setProductForm(emptyProductForm)
     setVideoKeyword('')
+    setVideoPickerOpen(false)
+  }
+
+  function selectVideo(video: Video) {
+    setProductForm({ ...productForm, video_id: String(video.id) })
+    setVideoKeyword(video.title)
+    setVideoPickerOpen(false)
   }
 
   async function handleDeleteOrder(order: Order) {
@@ -384,9 +397,12 @@ export function PaymentManagementSection({
                     ...productForm,
                     kind,
                     video_id: kind === 'video' ? productForm.video_id : '',
-                    duration_days: kind === 'video' ? '0' : productForm.duration_days,
+                    duration_days: kind === 'video' ? '0' : productForm.duration_days || '30',
                   })
-                  if (kind !== 'video') setVideoKeyword('')
+                  if (kind !== 'video') {
+                    setVideoKeyword('')
+                    setVideoPickerOpen(false)
+                  }
                 }}
               >
                 <option value="vip">会员</option>
@@ -428,42 +444,59 @@ export function PaymentManagementSection({
               </select>
             </label>
           </div>
-          <div className="form-split">
+          {productForm.kind === 'vip' && (
             <label>
               有效期（天）
               <input
                 type="number"
-                min="0"
+                min="1"
                 value={productForm.duration_days}
                 onChange={(event) => setProductForm({ ...productForm, duration_days: event.target.value })}
-                disabled={productForm.kind === 'video'}
+                required
               />
             </label>
+          )}
+          {productForm.kind === 'video' && (
             <label>
               影片
-              <div className="searchable-select">
+              <div
+                className="searchable-select"
+                onBlur={(event) => {
+                  if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                    setVideoPickerOpen(false)
+                  }
+                }}
+              >
                 <input
                   value={videoKeyword}
-                  onChange={(event) => setVideoKeyword(event.target.value)}
-                  disabled={productForm.kind !== 'video'}
+                  onChange={(event) => {
+                    setVideoKeyword(event.target.value)
+                    setVideoPickerOpen(true)
+                  }}
+                  onFocus={() => setVideoPickerOpen(true)}
                   placeholder="搜索影片名称或 ID"
                 />
-                <select
-                  value={productForm.video_id}
-                  onChange={(event) => setProductForm({ ...productForm, video_id: event.target.value })}
-                  disabled={productForm.kind !== 'video'}
-                  required={productForm.kind === 'video'}
-                >
-                  <option value="">选择影片</option>
-                  {filteredVideos.map((video) => (
-                    <option key={video.id} value={video.id}>
-                      #{video.id} {video.title}
-                    </option>
-                  ))}
-                </select>
+                {videoPickerOpen && (
+                  <div className="searchable-options" role="listbox" aria-label="影片列表">
+                    {filteredVideos.map((video) => (
+                      <button
+                        className={productForm.video_id === String(video.id) ? 'active' : ''}
+                        key={video.id}
+                        type="button"
+                        onClick={() => selectVideo(video)}
+                      >
+                        <span>#{video.id}</span>
+                        <strong>{video.title}</strong>
+                      </button>
+                    ))}
+                    {filteredVideos.length === 0 && (
+                      <span className="searchable-empty">没有匹配影片</span>
+                    )}
+                  </div>
+                )}
               </div>
             </label>
-          </div>
+          )}
           <div className="form-actions">
             {canManageProducts && (
               <button className="primary-button" type="submit" disabled={savingProduct}>
