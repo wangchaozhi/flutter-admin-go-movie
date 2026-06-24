@@ -61,6 +61,18 @@ class _TrackMenuOption {
   });
 }
 
+class _SubtitleCue {
+  final Duration start;
+  final Duration end;
+  final String text;
+
+  const _SubtitleCue({
+    required this.start,
+    required this.end,
+    required this.text,
+  });
+}
+
 class _PlaybackSource {
   final String url;
   final List<_QualityOption> qualities;
@@ -97,6 +109,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   StreamSubscription<String>? _playerErrorSubscription;
   StreamSubscription<bool>? _playerCompletedSubscription;
   StreamSubscription<Tracks>? _playerTracksSubscription;
+  StreamSubscription<Duration>? _playerPositionSubscription;
   bool _loading = true;
   bool _switchingQuality = false;
   bool _switchingTrack = false;
@@ -110,6 +123,9 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   List<_MediaTrackOption> _subtitleTracks = const [];
   List<AudioTrack> _hlsAudioTracks = const [];
   List<SubtitleTrack> _hlsSubtitleTracks = const [];
+  List<_SubtitleCue> _webSubtitleCues = const [];
+  String _webSubtitleText = '';
+  int _webSubtitleLoadSerial = 0;
   bool _mediaTracksScanned = false;
   bool _hasMultipleAudioTracks = false;
   bool _hasSubtitleTracks = false;
@@ -135,6 +151,9 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     _playerTracksSubscription = _player.stream.tracks.listen(
       _syncDetectedTracks,
     );
+    _playerPositionSubscription = _player.stream.position.listen(
+      _syncWebSubtitleCue,
+    );
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.landscapeLeft,
       DeviceOrientation.landscapeRight,
@@ -151,6 +170,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     _playerErrorSubscription?.cancel();
     _playerCompletedSubscription?.cancel();
     _playerTracksSubscription?.cancel();
+    _playerPositionSubscription?.cancel();
     unawaited(_saveProgress(force: true));
     unawaited(_restoreSystemUi());
     _player.dispose();
@@ -187,6 +207,9 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
           _hasSubtitleTracks = source.hasSubtitleTracks;
           _hlsAudioTracks = const [];
           _hlsSubtitleTracks = const [];
+          _webSubtitleCues = const [];
+          _webSubtitleText = '';
+          _webSubtitleLoadSerial++;
           _selectedQuality = 'auto';
           _selectedAudioTrackValue = null;
           _selectedSubtitleTrackValue = null;
@@ -421,7 +444,9 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       );
     }
 
-    if (subtitleOption == null) {
+    if (kIsWeb) {
+      await _applyWebSubtitleTrack(subtitleOption);
+    } else if (subtitleOption == null) {
       await _player.setSubtitleTrack(SubtitleTrack.no());
     } else if (subtitleOption.subtitleTrack != null) {
       await _player.setSubtitleTrack(subtitleOption.subtitleTrack!);
@@ -497,6 +522,130 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     } finally {
       if (mounted) setState(() => _switchingTrack = false);
     }
+  }
+
+  Future<void> _applyWebSubtitleTrack(_TrackMenuOption? option) async {
+    final serial = ++_webSubtitleLoadSerial;
+    _setWebSubtitleCues(const []);
+    if (option == null) return;
+
+    final apiTrack = option.apiTrack;
+    if (apiTrack == null) return;
+
+    final response = await http.get(Uri.parse(apiTrack.url));
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw Exception('subtitle http ${response.statusCode}');
+    }
+    final cues = _parseWebVTT(response.body);
+    if (serial != _webSubtitleLoadSerial) return;
+    _setWebSubtitleCues(cues);
+    _syncWebSubtitleCue(_player.state.position);
+  }
+
+  void _setWebSubtitleCues(List<_SubtitleCue> cues) {
+    if (!kIsWeb) return;
+    if (!mounted) {
+      _webSubtitleCues = cues;
+      _webSubtitleText = '';
+      return;
+    }
+    setState(() {
+      _webSubtitleCues = cues;
+      _webSubtitleText = '';
+    });
+  }
+
+  void _syncWebSubtitleCue(Duration position) {
+    if (!kIsWeb || _webSubtitleCues.isEmpty) {
+      if (kIsWeb && _webSubtitleText.isNotEmpty && mounted) {
+        setState(() => _webSubtitleText = '');
+      }
+      return;
+    }
+    final cue = _webSubtitleCues.where((item) {
+      return position >= item.start && position <= item.end;
+    }).firstOrNull;
+    final nextText = cue?.text ?? '';
+    if (nextText == _webSubtitleText) return;
+    if (!mounted) {
+      _webSubtitleText = nextText;
+      return;
+    }
+    setState(() => _webSubtitleText = nextText);
+  }
+
+  List<_SubtitleCue> _parseWebVTT(String body) {
+    final normalized = body
+        .replaceFirst('\uFEFF', '')
+        .replaceAll('\r\n', '\n')
+        .replaceAll('\r', '\n');
+    final cues = <_SubtitleCue>[];
+    for (final block in normalized.split(RegExp(r'\n{2,}'))) {
+      final lines = block
+          .split('\n')
+          .map((line) => line.trim())
+          .where((line) => line.isNotEmpty)
+          .toList();
+      if (lines.isEmpty || lines.first.startsWith('WEBVTT')) continue;
+      if (lines.first.startsWith('NOTE') ||
+          lines.first == 'STYLE' ||
+          lines.first == 'REGION') {
+        continue;
+      }
+
+      final timingIndex = lines.indexWhere((line) => line.contains('-->'));
+      if (timingIndex < 0) continue;
+      final timingParts = lines[timingIndex].split('-->');
+      if (timingParts.length < 2) continue;
+
+      final start = _parseWebVTTTimestamp(timingParts[0].trim());
+      final endToken = timingParts[1].trim().split(RegExp(r'\s+')).first;
+      final end = _parseWebVTTTimestamp(endToken);
+      if (start == null || end == null || end <= start) continue;
+
+      final text = lines
+          .skip(timingIndex + 1)
+          .map(_cleanWebVTTText)
+          .where((line) => line.isNotEmpty)
+          .join('\n');
+      if (text.isEmpty) continue;
+      cues.add(_SubtitleCue(start: start, end: end, text: text));
+    }
+    cues.sort((a, b) => a.start.compareTo(b.start));
+    return cues;
+  }
+
+  Duration? _parseWebVTTTimestamp(String value) {
+    final parts = value.replaceAll(',', '.').split(':');
+    if (parts.length < 2 || parts.length > 3) return null;
+    final secondsPart = parts.last.split('.');
+    final seconds = int.tryParse(secondsPart.first);
+    if (seconds == null) return null;
+    var milliseconds = 0;
+    if (secondsPart.length > 1) {
+      final fraction = secondsPart[1].padRight(3, '0').substring(0, 3);
+      milliseconds = int.tryParse(fraction) ?? 0;
+    }
+    final minutes = int.tryParse(parts[parts.length - 2]);
+    if (minutes == null) return null;
+    final hours = parts.length == 3 ? int.tryParse(parts.first) : 0;
+    if (hours == null) return null;
+    return Duration(
+      hours: hours,
+      minutes: minutes,
+      seconds: seconds,
+      milliseconds: milliseconds,
+    );
+  }
+
+  String _cleanWebVTTText(String value) {
+    return value
+        .replaceAll(RegExp(r'<[^>]+>'), '')
+        .replaceAll('&amp;', '&')
+        .replaceAll('&lt;', '<')
+        .replaceAll('&gt;', '>')
+        .replaceAll('&nbsp;', ' ')
+        .trim();
   }
 
   Future<void> _switchQuality(String name) async {
@@ -700,7 +849,6 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   }
 
   List<SubtitleTrack> _selectableHLSSubtitleTracks(List<SubtitleTrack> tracks) {
-    if (kIsWeb) return const [];
     return tracks
         .where(
           (track) =>
@@ -732,6 +880,9 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     if (_mediaTracksScanned && !_hasMultipleAudioTracks) {
       return const [];
     }
+    if (kIsWeb) {
+      return _apiTrackMenuOptions(apiTracks);
+    }
     if (hlsTracks.isNotEmpty) {
       return [
         for (var i = 0; i < hlsTracks.length; i++)
@@ -742,14 +893,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
           ),
       ];
     }
-    return [
-      for (final track in apiTracks)
-        _TrackMenuOption(
-          value: 'api:${track.id}',
-          label: track.label,
-          apiTrack: track,
-        ),
-    ];
+    return _apiTrackMenuOptions(apiTracks);
   }
 
   List<_TrackMenuOption> _subtitleMenuOptionsFor(
@@ -758,6 +902,9 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   ) {
     if (_mediaTracksScanned && !_hasSubtitleTracks) {
       return const [];
+    }
+    if (kIsWeb) {
+      return _apiTrackMenuOptions(apiTracks);
     }
     if (hlsTracks.isNotEmpty) {
       return [
@@ -769,6 +916,12 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
           ),
       ];
     }
+    return _apiTrackMenuOptions(apiTracks);
+  }
+
+  List<_TrackMenuOption> _apiTrackMenuOptions(
+    List<_MediaTrackOption> apiTracks,
+  ) {
     return [
       for (final track in apiTracks)
         _TrackMenuOption(
@@ -1073,6 +1226,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
         _buildBufferingIndicator(),
         _buildCenterPlayButton(),
         _buildCompletedOverlay(),
+        _buildWebSubtitleOverlay(),
         Positioned(left: 48, bottom: 4, child: _buildPlaybackTools()),
         Positioned(right: 48, bottom: 4, child: _buildTrackAndQualityMenus()),
         Positioned(right: 8, top: 8, child: _buildFullscreenButton()),
@@ -1197,6 +1351,49 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
           ),
         );
       },
+    );
+  }
+
+  Widget _buildWebSubtitleOverlay() {
+    if (!kIsWeb || _webSubtitleText.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Positioned(
+      left: 24,
+      right: 24,
+      bottom: 54,
+      child: IgnorePointer(
+        child: Center(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.62),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+              child: Text(
+                _webSubtitleText,
+                textAlign: TextAlign.center,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 17,
+                  height: 1.28,
+                  fontWeight: FontWeight.w700,
+                  shadows: [
+                    Shadow(
+                      blurRadius: 4,
+                      color: Colors.black,
+                      offset: Offset(0, 1),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 
