@@ -5,6 +5,7 @@ import '../../core/session.dart';
 import '../../models/video.dart';
 import 'models/home_models.dart';
 import 'widgets/home_widgets.dart';
+import 'widgets/video_rail.dart';
 
 class MobileHomePage extends StatefulWidget {
   const MobileHomePage({super.key});
@@ -19,6 +20,9 @@ class _MobileHomePageState extends State<MobileHomePage> {
 
   List<Category> _categories = [];
   List<Video> _videos = [];
+  List<Video> _railPopular = [];
+  List<Video> _railLatest = [];
+  List<Video> _railVip = [];
   List<OrderSummary> _orders = [];
   List<HistoryEntry> _history = [];
   List<FavoriteEntry> _favorites = [];
@@ -45,7 +49,33 @@ class _MobileHomePageState extends State<MobileHomePage> {
   Future<void> _loadAll() async {
     final username = await Session.username();
     if (mounted) setState(() => _username = username);
-    await Future.wait([_loadCategories(), _loadVideos(categoryId: 0)]);
+    await Future.wait([
+      _loadCategories(),
+      _loadVideos(categoryId: 0),
+      _loadHomeRails(),
+    ]);
+  }
+
+  // Aggregated recommendation rails shown on the 全部 channel.
+  Future<void> _loadHomeRails() async {
+    try {
+      final resp = await ApiClient().get('/api/home');
+      if (!mounted) return;
+      if (resp['code'] == 0) {
+        final data = resp['data'] as Map<String, dynamic>? ?? {};
+        List<Video> parse(String key) =>
+            (data[key] as List<dynamic>? ?? [])
+                .map((e) => Video.fromJson(e as Map<String, dynamic>))
+                .toList();
+        setState(() {
+          _railPopular = parse('popular');
+          _railLatest = parse('latest');
+          _railVip = parse('vip');
+        });
+      }
+    } catch (_) {
+      // rails are optional; ignore network errors
+    }
   }
 
   Future<void> _loadCategories() async {
@@ -433,6 +463,29 @@ class _MobileHomePageState extends State<MobileHomePage> {
             SliverToBoxAdapter(
               child: FeaturedBanner(video: featuredVideo, onPlay: _openVideo),
             ),
+          if (_selectedCategoryIndex == 0) ...[
+            SliverToBoxAdapter(
+              child: VideoRail(
+                title: '热门',
+                videos: _railPopular,
+                onOpenVideo: _openVideo,
+              ),
+            ),
+            SliverToBoxAdapter(
+              child: VideoRail(
+                title: '最新上架',
+                videos: _railLatest,
+                onOpenVideo: _openVideo,
+              ),
+            ),
+            SliverToBoxAdapter(
+              child: VideoRail(
+                title: 'VIP 精选',
+                videos: _railVip,
+                onOpenVideo: _openVideo,
+              ),
+            ),
+          ],
           if (_loadingVideos)
             const SliverToBoxAdapter(
               child: Padding(

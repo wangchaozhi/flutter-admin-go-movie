@@ -157,6 +157,7 @@ func NewRouter() http.Handler {
 	mux.HandleFunc("/api/products", payment.ProductsHandler)
 	mux.Handle("/api/orders", mobileBanGuard(http.HandlerFunc(payment.OrdersHandler)))
 	mux.Handle("/api/orders/", mobileBanGuard(http.HandlerFunc(payment.OrderByNoHandler)))
+	mux.HandleFunc("/api/home", video.AppHomeHandler)
 	mux.HandleFunc("/api/videos", video.AppListVideosHandler)
 	mux.Handle("/api/videos/", mobileBanGuard(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
