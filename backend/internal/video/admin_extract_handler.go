@@ -41,35 +41,48 @@ func AdminExtractHistoryHandler(w http.ResponseWriter, r *http.Request) {
 	status := strings.TrimSpace(r.URL.Query().Get("status"))
 	keyword := strings.TrimSpace(r.URL.Query().Get("q"))
 
-	query := store.DB().
+	dataQuery := store.DB().
 		Table("video_extract_track_tasks AS t").
 		Select(`t.id, t.video_id, COALESCE(v.title, '') AS video_title, t.source_key,
 			t.status, t.status_message, t.audio_count, t.subtitle_count, t.ready_count,
 			t.failed_count, t.error_message, t.started_at, t.finished_at, t.created_at`).
 		Joins("LEFT JOIN videos AS v ON v.id = t.video_id").
-		Order("t.created_at DESC, t.id DESC").
-		Limit(300)
-	if status != "" && status != "all" {
-		query = query.Where("t.status = ?", status)
+		Order("t.created_at DESC, t.id DESC")
+	countQuery := store.DB().
+		Table("video_extract_track_tasks AS t").
+		Joins("LEFT JOIN videos AS v ON v.id = t.video_id")
+	if status == "active" {
+		dataQuery = dataQuery.Where("t.status = ?", "processing")
+		countQuery = countQuery.Where("t.status = ?", "processing")
+	} else if status != "" && status != "all" {
+		dataQuery = dataQuery.Where("t.status = ?", status)
+		countQuery = countQuery.Where("t.status = ?", status)
 	}
 	if keyword != "" {
 		like := "%" + keyword + "%"
-		query = query.Where(
-			"CAST(t.video_id AS TEXT) LIKE ? OR COALESCE(v.title, '') ILIKE ? OR t.source_key ILIKE ? OR t.status_message ILIKE ? OR t.error_message ILIKE ?",
-			like,
-			like,
-			like,
-			like,
-			like,
-		)
+		const cond = "CAST(t.video_id AS TEXT) LIKE ? OR COALESCE(v.title, '') ILIKE ? OR t.source_key ILIKE ? OR t.status_message ILIKE ? OR t.error_message ILIKE ?"
+		dataQuery = dataQuery.Where(cond, like, like, like, like, like)
+		countQuery = countQuery.Where(cond, like, like, like, like, like)
 	}
 
-	var result []adminExtractHistoryItem
-	if err := query.Scan(&result).Error; err != nil {
+	if !common.HasPagination(r) {
+		result := make([]adminExtractHistoryItem, 0)
+		if err := dataQuery.Limit(300).Scan(&result).Error; err != nil {
+			common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
+			return
+		}
+		common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: result})
+		return
+	}
+	p := common.ParsePagination(r, 20, 100)
+	var total int64
+	countQuery.Count(&total)
+	result := make([]adminExtractHistoryItem, 0)
+	if err := dataQuery.Offset(p.Offset).Limit(p.PerPage).Scan(&result).Error; err != nil {
 		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
 		return
 	}
-	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: result})
+	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: common.PageResponse(result, total, p)})
 }
 
 // AdminExtractHistoryByIDHandler deletes one extraction task history record.

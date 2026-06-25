@@ -7,12 +7,15 @@ import type {
   CurrencyCode,
   Order,
   OrderStatus,
+  Paged,
   Product,
   ProductKind,
   ProductStatus,
   Video,
 } from '../../adminTypes'
-import { PanelTitle } from '../../components/shared'
+import { PanelTitle, Pagination } from '../../components/shared'
+
+const ORDERS_PER_PAGE = 20
 
 type ProductForm = {
   id?: number
@@ -146,6 +149,9 @@ export function PaymentManagementSection({
 }) {
   const [products, setProducts] = useState<Product[]>([])
   const [orders, setOrders] = useState<Order[]>([])
+  const [orderPage, setOrderPage] = useState(1)
+  const [orderTotal, setOrderTotal] = useState(0)
+  const [paidTotal, setPaidTotal] = useState(0)
   const [videos, setVideos] = useState<Video[]>([])
   const [productForm, setProductForm] = useState<ProductForm>(emptyProductForm)
   const [videoKeyword, setVideoKeyword] = useState('')
@@ -179,18 +185,34 @@ export function PaymentManagementSection({
     setLoading(true)
     setError('')
     try {
-      const [nextProducts, nextOrders, nextVideos] = await Promise.all([
+      // Products and videos stay full lists (videos feed the product picker);
+      // the paid stat is a count-only paged query so the overview is accurate.
+      const [nextProducts, nextVideos, paidStat] = await Promise.all([
         request<Product[]>('/api/admin/products', token),
-        request<Order[]>('/api/admin/orders', token),
         request<Video[]>('/api/admin/videos', token),
+        request<Paged<Order>>('/api/admin/orders?status=paid&per_page=1', token),
       ])
       setProducts(nextProducts ?? [])
-      setOrders(nextOrders ?? [])
       setVideos(nextVideos ?? [])
+      setPaidTotal(paidStat?.total ?? 0)
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载支付数据失败')
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function loadOrders() {
+    const params = new URLSearchParams({
+      page: String(orderPage),
+      per_page: String(ORDERS_PER_PAGE),
+    })
+    try {
+      const data = await request<Paged<Order>>(`/api/admin/orders?${params.toString()}`, token)
+      setOrders(data?.items ?? [])
+      setOrderTotal(data?.total ?? 0)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '加载订单失败')
     }
   }
 
@@ -199,6 +221,12 @@ export function PaymentManagementSection({
     // reload when token changes; `loadPayments` is recreated each render
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token])
+
+  useEffect(() => {
+    void loadOrders()
+    // reload the order page when the page or token changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orderPage, token])
 
   async function handleSaveProduct(event: FormEvent) {
     event.preventDefault()
@@ -272,7 +300,7 @@ export function PaymentManagementSection({
     setError('')
     try {
       await request<unknown>(`/api/admin/orders/${order.id}`, token, { method: 'DELETE' })
-      await loadPayments()
+      await Promise.all([loadOrders(), loadPayments()])
     } catch (err) {
       setError(err instanceof Error ? err.message : '删除订单失败')
     }
@@ -296,11 +324,11 @@ export function PaymentManagementSection({
           </div>
           <div className="summary-card">
             <small>订单</small>
-            <strong>{orders.length}</strong>
+            <strong>{orderTotal}</strong>
           </div>
           <div className="summary-card">
             <small>已支付</small>
-            <strong>{orders.filter((order) => order.status === 'paid').length}</strong>
+            <strong>{paidTotal}</strong>
           </div>
         </div>
       </section>
@@ -525,7 +553,7 @@ export function PaymentManagementSection({
       </section>
 
       <section className="table-panel">
-        <PanelTitle title="订单" count={orders.length} />
+        <PanelTitle title="订单" count={orderTotal} />
         <div className="table-wrap">
           <table>
             <thead>
@@ -578,6 +606,7 @@ export function PaymentManagementSection({
             </tbody>
           </table>
         </div>
+        <Pagination page={orderPage} perPage={ORDERS_PER_PAGE} total={orderTotal} onPage={setOrderPage} />
       </section>
     </div>
   )

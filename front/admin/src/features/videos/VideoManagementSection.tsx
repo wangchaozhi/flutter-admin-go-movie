@@ -18,13 +18,16 @@ import {
 import type {
   ApiResponse,
   Category,
+  Paged,
   TranscodeTask,
   Video,
   VideoAIMetadata,
   VideoForm,
   VideoQualityTask,
 } from '../../adminTypes'
-import { PanelTitle } from '../../components/shared'
+import { PanelTitle, Pagination } from '../../components/shared'
+
+const PER_PAGE = 20
 
 const emptyForm: VideoForm = {
   title: '',
@@ -181,6 +184,8 @@ export function VideoManagementSection({
   can: (permission: string) => boolean
 }) {
   const [videos, setVideos] = useState<Video[]>([])
+  const [page, setPage] = useState(1)
+  const [total, setTotal] = useState(0)
   const [categories, setCategories] = useState<Category[]>([])
   const [form, setForm] = useState<VideoForm>(emptyForm)
   const [saving, setSaving] = useState(false)
@@ -213,10 +218,14 @@ export function VideoManagementSection({
   const jsonHeaders = { ...authHeader, 'Content-Type': 'application/json' }
 
   async function loadVideos(): Promise<Video[]> {
-    const res = await fetch('/api/admin/videos', { headers: jsonHeaders })
-    const json: ApiResponse<Video[]> = await res.json()
-    const list = json.code === 0 ? (json.data ?? []) : []
-    if (json.code === 0) setVideos(list)
+    const params = new URLSearchParams({ page: String(page), per_page: String(PER_PAGE) })
+    const res = await fetch(`/api/admin/videos?${params.toString()}`, { headers: jsonHeaders })
+    const json: ApiResponse<Paged<Video>> = await res.json()
+    const list = json.code === 0 && json.data ? (json.data.items ?? []) : []
+    if (json.code === 0 && json.data) {
+      setVideos(list)
+      setTotal(json.data.total ?? 0)
+    }
     return list
   }
 
@@ -236,9 +245,13 @@ export function VideoManagementSection({
     if (json.code === 0) setCategories(json.data ?? [])
   }
 
-  // mount-only load; loaders are recreated each render so they stay out of deps
+  // mount-only category load; loaders are recreated each render so they stay out of deps
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { loadVideos(); loadCategories() }, [])
+  useEffect(() => { loadCategories() }, [])
+
+  // (Re)load the video list on mount and whenever the page changes.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { loadVideos() }, [page])
 
   // If the page is refreshed during a merge re-transcode, videos can stay
   // "ready" while the list API reports the active transcode separately.
@@ -611,7 +624,7 @@ export function VideoManagementSection({
   return (
     <section className="content-grid">
       <section className="table-panel">
-        <PanelTitle title="视频列表" count={videos.length} />
+        <PanelTitle title="视频列表" count={total} />
         <div className="table-wrap">
           <table>
             <thead>
@@ -830,6 +843,7 @@ export function VideoManagementSection({
             </tbody>
           </table>
         </div>
+        <Pagination page={page} perPage={PER_PAGE} total={total} onPage={setPage} />
 
         {playUrl && activeVideoId && (
           <div className="play-url-box">

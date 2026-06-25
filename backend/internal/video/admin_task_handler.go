@@ -53,38 +53,52 @@ func AdminTranscodeHistoryHandler(w http.ResponseWriter, r *http.Request) {
 	quality := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("quality")))
 	keyword := strings.TrimSpace(r.URL.Query().Get("q"))
 
-	query := store.DB().
+	dataQuery := store.DB().
 		Table("video_transcode_tasks AS t").
 		Select(`t.id, t.video_id, COALESCE(v.title, '') AS video_title, t.batch_id, t.quality,
 			t.previous_status, t.status, t.status_message, t.progress, t.attempt, t.error_message,
 			t.started_at, t.finished_at, t.created_at`).
 		Joins("LEFT JOIN videos AS v ON v.id = t.video_id").
-		Order("t.created_at DESC, t.id DESC").
-		Limit(300)
-	if status != "" && status != "all" {
-		query = query.Where("t.status = ?", status)
+		Order("t.created_at DESC, t.id DESC")
+	countQuery := store.DB().
+		Table("video_transcode_tasks AS t").
+		Joins("LEFT JOIN videos AS v ON v.id = t.video_id")
+	if status == "active" {
+		dataQuery = dataQuery.Where("t.status IN ?", activeTranscodeStatuses())
+		countQuery = countQuery.Where("t.status IN ?", activeTranscodeStatuses())
+	} else if status != "" && status != "all" {
+		dataQuery = dataQuery.Where("t.status = ?", status)
+		countQuery = countQuery.Where("t.status = ?", status)
 	}
 	if quality != "" && quality != "all" {
-		query = query.Where("t.quality = ?", quality)
+		dataQuery = dataQuery.Where("t.quality = ?", quality)
+		countQuery = countQuery.Where("t.quality = ?", quality)
 	}
 	if keyword != "" {
 		like := "%" + keyword + "%"
-		query = query.Where(
-			"CAST(t.video_id AS TEXT) LIKE ? OR COALESCE(v.title, '') ILIKE ? OR t.quality ILIKE ? OR t.status_message ILIKE ? OR t.error_message ILIKE ?",
-			like,
-			like,
-			like,
-			like,
-			like,
-		)
+		const cond = "CAST(t.video_id AS TEXT) LIKE ? OR COALESCE(v.title, '') ILIKE ? OR t.quality ILIKE ? OR t.status_message ILIKE ? OR t.error_message ILIKE ?"
+		dataQuery = dataQuery.Where(cond, like, like, like, like, like)
+		countQuery = countQuery.Where(cond, like, like, like, like, like)
 	}
 
-	var result []adminTranscodeHistoryItem
-	if err := query.Scan(&result).Error; err != nil {
+	if !common.HasPagination(r) {
+		result := make([]adminTranscodeHistoryItem, 0)
+		if err := dataQuery.Limit(300).Scan(&result).Error; err != nil {
+			common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
+			return
+		}
+		common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: result})
+		return
+	}
+	p := common.ParsePagination(r, 20, 100)
+	var total int64
+	countQuery.Count(&total)
+	result := make([]adminTranscodeHistoryItem, 0)
+	if err := dataQuery.Offset(p.Offset).Limit(p.PerPage).Scan(&result).Error; err != nil {
 		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
 		return
 	}
-	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: result})
+	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: common.PageResponse(result, total, p)})
 }
 
 // AdminTranscodeHistoryByIDHandler deletes one transcode task history record.

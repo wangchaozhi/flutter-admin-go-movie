@@ -689,10 +689,20 @@ func AdminListVideosHandler(w http.ResponseWriter, r *http.Request) {
 		common.WriteJSON(w, http.StatusMethodNotAllowed, common.APIResponse{Code: 405, Msg: "method not allowed"})
 		return
 	}
+	if !common.HasPagination(r) {
+		var videos []store.Video
+		store.DB().Order("id desc").Find(&videos)
+		attachVideoTranscodeMetadata(r.Context(), videos)
+		common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: videos})
+		return
+	}
+	p := common.ParsePagination(r, 20, 100)
+	var total int64
+	store.DB().Model(&store.Video{}).Count(&total)
 	var videos []store.Video
-	store.DB().Order("id desc").Find(&videos)
+	store.DB().Order("id desc").Offset(p.Offset).Limit(p.PerPage).Find(&videos)
 	attachVideoTranscodeMetadata(r.Context(), videos)
-	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: videos})
+	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: common.PageResponse(videos, total, p)})
 }
 
 // GET /api/admin/videos/{id}

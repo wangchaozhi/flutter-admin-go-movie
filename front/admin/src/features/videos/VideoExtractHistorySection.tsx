@@ -11,8 +11,10 @@ import {
   XCircle,
 } from 'lucide-react'
 
-import type { ApiResponse, ExtractHistoryItem, ExtractTaskStatus } from '../../adminTypes'
-import { PanelTitle } from '../../components/shared'
+import type { ApiResponse, ExtractHistoryItem, ExtractTaskStatus, Paged } from '../../adminTypes'
+import { PanelTitle, Pagination } from '../../components/shared'
+
+const PER_PAGE = 20
 
 const STATUS_LABEL: Record<ExtractTaskStatus, string> = {
   processing: '提取中',
@@ -76,6 +78,9 @@ export function VideoExtractHistorySection({
   const [tasks, setTasks] = useState<ExtractHistoryItem[]>([])
   const [status, setStatus] = useState<'all' | ExtractTaskStatus>('all')
   const [keyword, setKeyword] = useState('')
+  const [page, setPage] = useState(1)
+  const [total, setTotal] = useState(0)
+  const [counts, setCounts] = useState({ active: 0, success: 0, failed: 0 })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [deletingId, setDeletingId] = useState<number | null>(null)
@@ -88,20 +93,42 @@ export function VideoExtractHistorySection({
     setLoading(true)
     setError('')
     try {
-      const params = new URLSearchParams()
+      const params = new URLSearchParams({ page: String(page), per_page: String(PER_PAGE) })
       if (status !== 'all') params.set('status', status)
       if (keyword.trim()) params.set('q', keyword.trim())
-      const query = params.toString()
-      const res = await fetch(`/api/admin/video/extract-tasks${query ? `?${query}` : ''}`, { headers })
-      const json: ApiResponse<ExtractHistoryItem[]> = await res.json()
+      const res = await fetch(`/api/admin/video/extract-tasks?${params.toString()}`, { headers })
+      const json: ApiResponse<Paged<ExtractHistoryItem>> = await res.json()
       if (json.code !== 0) throw new Error(json.msg)
-      setTasks(json.data ?? [])
+      setTasks(json.data?.items ?? [])
+      setTotal(json.data?.total ?? 0)
     } catch (err) {
       setError(err instanceof Error ? err.message : '提取历史加载失败')
     } finally {
       setLoading(false)
     }
-  }, [headers, keyword, status])
+  }, [headers, keyword, status, page])
+
+  // Status-breakdown totals for the summary cards, scoped to the current
+  // keyword filter but independent of the selected status tab and page.
+  const loadCounts = useCallback(async () => {
+    const fetchCount = async (statusValue: string) => {
+      const params = new URLSearchParams({ page: '1', per_page: '1', status: statusValue })
+      if (keyword.trim()) params.set('q', keyword.trim())
+      const res = await fetch(`/api/admin/video/extract-tasks?${params.toString()}`, { headers })
+      const json: ApiResponse<Paged<ExtractHistoryItem>> = await res.json()
+      return json.code === 0 && json.data ? json.data.total : 0
+    }
+    try {
+      const [active, success, failed] = await Promise.all([
+        fetchCount('active'),
+        fetchCount('success'),
+        fetchCount('failed'),
+      ])
+      setCounts({ active, success, failed })
+    } catch {
+      // summary is best-effort; ignore errors
+    }
+  }, [headers, keyword])
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -110,9 +137,11 @@ export function VideoExtractHistorySection({
     return () => window.clearTimeout(timer)
   }, [loadTasks])
 
-  const activeCount = tasks.filter((task) => isActiveStatus(task.status)).length
-  const successCount = tasks.filter((task) => task.status === 'success').length
-  const failedCount = tasks.filter((task) => task.status === 'failed').length
+  useEffect(() => {
+    void loadCounts()
+  }, [loadCounts])
+
+  const { active: activeCount, success: successCount, failed: failedCount } = counts
 
   async function deleteTask(task: ExtractHistoryItem) {
     if (isActiveStatus(task.status)) return
@@ -128,6 +157,7 @@ export function VideoExtractHistorySection({
       const json: ApiResponse<unknown> = await res.json()
       if (json.code !== 0) throw new Error(json.msg)
       await loadTasks()
+      void loadCounts()
     } catch (err) {
       setError(err instanceof Error ? err.message : '删除提取记录失败')
     } finally {
@@ -139,7 +169,7 @@ export function VideoExtractHistorySection({
     <section className="stack">
       <section className="panel">
         <div className="section-header">
-          <PanelTitle title="提取历史" count={tasks.length} />
+          <PanelTitle title="提取历史" count={total} />
           <button className="ghost-button" disabled={loading} type="button" onClick={loadTasks}>
             <RefreshCw size={15} className={loading ? 'spin' : undefined} />
             刷新
@@ -157,7 +187,7 @@ export function VideoExtractHistorySection({
                 className={status === option.value ? 'active' : ''}
                 key={option.value}
                 type="button"
-                onClick={() => setStatus(option.value)}
+                onClick={() => { setStatus(option.value); setPage(1) }}
               >
                 {option.label}
               </button>
@@ -167,7 +197,7 @@ export function VideoExtractHistorySection({
             <Search size={14} />
             <input
               value={keyword}
-              onChange={(event) => setKeyword(event.target.value)}
+              onChange={(event) => { setKeyword(event.target.value); setPage(1) }}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') void loadTasks()
               }}
@@ -262,6 +292,7 @@ export function VideoExtractHistorySection({
             </tbody>
           </table>
         </div>
+        <Pagination page={page} perPage={PER_PAGE} total={total} onPage={setPage} />
       </section>
     </section>
   )

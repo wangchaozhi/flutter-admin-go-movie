@@ -230,16 +230,31 @@ func AdminOrdersHandler(w http.ResponseWriter, r *http.Request) {
 		common.WriteJSON(w, http.StatusMethodNotAllowed, common.APIResponse{Code: 405, Msg: "method not allowed"})
 		return
 	}
-	var orders []store.Order
-	query := withOrderProduct(store.DB()).Preload("User").Order("id desc").Limit(200)
+	query := withOrderProduct(store.DB()).Preload("User").Order("id desc")
+	countQuery := store.DB().Model(&store.Order{})
 	if status := strings.TrimSpace(r.URL.Query().Get("status")); status != "" {
 		query = query.Where("status = ?", status)
+		countQuery = countQuery.Where("status = ?", status)
 	}
-	if err := query.Find(&orders).Error; err != nil {
+
+	if !common.HasPagination(r) {
+		var orders []store.Order
+		if err := query.Limit(200).Find(&orders).Error; err != nil {
+			common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
+			return
+		}
+		common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: orders})
+		return
+	}
+	p := common.ParsePagination(r, 20, 100)
+	var total int64
+	countQuery.Count(&total)
+	var orders []store.Order
+	if err := query.Offset(p.Offset).Limit(p.PerPage).Find(&orders).Error; err != nil {
 		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
 		return
 	}
-	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: orders})
+	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: common.PageResponse(orders, total, p)})
 }
 
 func AdminOrderByIDHandler(w http.ResponseWriter, r *http.Request) {
