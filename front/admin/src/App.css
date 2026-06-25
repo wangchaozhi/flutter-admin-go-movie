@@ -1220,6 +1220,9 @@ small.danger-text {
   font-weight: 500;
   white-space: nowrap;
 }
+.transcode-status-badge {
+  margin-left: 6px;
+}
 .status-uploading  { background: var(--surface-subtle); color: var(--text-muted); }
 .status-uploaded   { background: #eff6ff; color: #1d4ed8; }
 .status-transcoding { background: #fefce8; color: #854d0e; }

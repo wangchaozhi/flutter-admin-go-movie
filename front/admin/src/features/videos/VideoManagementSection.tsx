@@ -163,6 +163,7 @@ export function VideoManagementSection({
   const coverRef = useRef<HTMLInputElement>(null)
   const uploadXhrRef = useRef<XMLHttpRequest | null>(null)
   const uploadVideoIdRef = useRef<number | null>(null)
+  const pollingTranscodesRef = useRef<Set<number>>(new Set())
   // keep the latest expanded set available to the polling closure
   const expandedRef = useRef<Set<number>>(expanded)
   useEffect(() => { expandedRef.current = expanded }, [expanded])
@@ -197,6 +198,18 @@ export function VideoManagementSection({
   // mount-only load; loaders are recreated each render so they stay out of deps
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadVideos(); loadCategories() }, [])
+
+  // If the page is refreshed during a merge re-transcode, videos can stay
+  // "ready" while the list API reports the active transcode separately.
+  useEffect(() => {
+    for (const video of videos) {
+      const task = taskStatus[video.id]
+      if ((video.transcoding || video.status === 'transcoding') && (!task || isActiveTranscodeStatus(task.status))) {
+        startTaskPolling(video.id)
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [videos, taskStatus])
 
   function transcodeCancelKey(videoId: number, quality?: string) {
     return quality ? `${videoId}:${quality}` : `${videoId}:all`
@@ -391,7 +404,7 @@ export function VideoManagementSection({
       if (json.code !== 0) { alert('转码提交失败：' + json.msg); return }
       setTranscodeDialog(null)
       loadVideos()
-      pollTaskStatus(videoId)
+      startTaskPolling(videoId)
     } finally {
       setTranscoding(false)
     }
@@ -420,17 +433,38 @@ export function VideoManagementSection({
   }
 
   async function pollTaskStatus(videoId: number) {
-    const res = await fetch(`/api/admin/videos/${videoId}/transcode`, { headers: jsonHeaders })
-    const json: ApiResponse<TranscodeTask> = await res.json()
-    if (json.code === 0 && json.data) {
+    try {
+      const res = await fetch(`/api/admin/videos/${videoId}/transcode`, { headers: jsonHeaders })
+      const json: ApiResponse<TranscodeTask> = await res.json()
+      if (json.code !== 0 || !json.data) {
+        pollingTranscodesRef.current.delete(videoId)
+        await loadVideos()
+        return
+      }
       setTaskStatus(prev => ({ ...prev, [videoId]: json.data! }))
       if (expandedRef.current.has(videoId)) loadQualityTasks(videoId)
       if (isActiveTranscodeStatus(json.data.status)) {
-        setTimeout(() => pollTaskStatus(videoId), 3000)
+        setTimeout(() => {
+          pollTaskStatus(videoId).catch(() => {
+            pollingTranscodesRef.current.delete(videoId)
+          })
+        }, 3000)
       } else {
+        pollingTranscodesRef.current.delete(videoId)
         await loadVideos()
       }
+    } catch (error) {
+      pollingTranscodesRef.current.delete(videoId)
+      throw error
     }
+  }
+
+  function startTaskPolling(videoId: number) {
+    if (pollingTranscodesRef.current.has(videoId)) return
+    pollingTranscodesRef.current.add(videoId)
+    pollTaskStatus(videoId).catch(() => {
+      pollingTranscodesRef.current.delete(videoId)
+    })
   }
 
   async function loadQualityTasks(videoId: number) {
@@ -472,7 +506,7 @@ export function VideoManagementSection({
       const json = await res.json()
       if (json.code !== 0) { alert('重转提交失败：' + json.msg); return }
       await loadVideos()
-      pollTaskStatus(videoId)
+      startTaskPolling(videoId)
       loadQualityTasks(videoId)
     } finally {
       setTranscoding(false)
@@ -533,7 +567,11 @@ export function VideoManagementSection({
                 const isExpanded = expanded.has(v.id)
                 const detailTasks = qualityTasks[v.id]
                 const detailLoading = qualityLoading.has(v.id)
-                const activeTranscode = v.status === 'transcoding' || (task ? isActiveTranscodeStatus(task.status) : false)
+                const activeTask = task ? isActiveTranscodeStatus(task.status) : false
+                const activeTranscode = v.transcoding || v.status === 'transcoding' || activeTask
+                const transcodeBadgeLabel = activeTask
+                  ? transcodeStateLabel(task.status, task.status_message || '转码中', task.progress)
+                  : '转码中'
                 const cancelingVideoTranscode = cancelingTranscode.has(transcodeCancelKey(v.id))
                 return (
                   <Fragment key={v.id}>
@@ -545,10 +583,15 @@ export function VideoManagementSection({
                       <span className={`status-badge ${STATUS_CLASS[v.status] ?? ''}`}>
                         {STATUS_LABEL[v.status] ?? v.status}
                       </span>
-                      {task && isActiveTranscodeStatus(task.status) && (
+                      {activeTranscode && v.status !== 'transcoding' && (
+                        <span className="status-badge status-transcoding transcode-status-badge">
+                          {transcodeBadgeLabel}
+                        </span>
+                      )}
+                      {activeTranscode && (
                         <Loader size={12} className="spin" style={{ marginLeft: 4 }} />
                       )}
-                      {task && isActiveTranscodeStatus(task.status) && (
+                      {activeTask && (
                         <div className="transcode-inline-progress">
                           {task.status_message || '等待转码'}{task.progress > 0 ? ` ${task.progress}%` : ''}
                         </div>

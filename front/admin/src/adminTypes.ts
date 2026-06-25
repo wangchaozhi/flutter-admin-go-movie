@@ -35,6 +35,7 @@ export type Video = {
   is_free: boolean
   transcoded_qualities?: string[]
   available_transcode_qualities?: string[]
+  transcoding?: boolean
   created_at: string
   updated_at: string
 }

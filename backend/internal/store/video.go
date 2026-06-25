@@ -25,6 +25,10 @@ type Video struct {
 
 	TranscodedQualities         []string `gorm:"-" json:"transcoded_qualities,omitempty"`
 	AvailableTranscodeQualities []string `gorm:"-" json:"available_transcode_qualities,omitempty"`
+	// Transcoding reports whether the video currently has an active transcode
+	// task. It lets the admin show progress even when the video stays "ready"
+	// during a merge re-transcode (the video is not taken offline for those).
+	Transcoding bool `gorm:"-" json:"transcoding,omitempty"`
 }
 
 func (Video) TableName() string { return "videos" }

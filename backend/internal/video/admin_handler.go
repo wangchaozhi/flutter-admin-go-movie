@@ -314,7 +314,14 @@ func AdminTranscodeHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	store.DB().Model(&v).Updates(map[string]interface{}{"status": "transcoding", "updated_at": time.Now()})
+	// Only take the video offline (status=transcoding) when there is no playable
+	// output yet. For a re-transcode / "transcode remaining" on an already
+	// ready/offline video (mergeExisting), the existing master playlist stays
+	// valid until the worker atomically rewrites it, so keep the current status
+	// so the app keeps showing/playing the video while the new qualities encode.
+	if !mergeExisting {
+		store.DB().Model(&v).Updates(map[string]interface{}{"status": "transcoding", "updated_at": time.Now()})
+	}
 
 	taskIDs := make([]int64, 0, len(tasks))
 	for _, task := range tasks {
@@ -701,10 +708,35 @@ func AdminGetVideoHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func attachVideoTranscodeMetadata(ctx context.Context, videos []store.Video) {
+	transcoding := activeTranscodeVideoIDs(videos)
 	for i := range videos {
 		videos[i].TranscodedQualities = transcodedQualityNames(ctx, videos[i])
 		videos[i].AvailableTranscodeQualities = availableTranscodeQualityNames(videos[i])
+		videos[i].Transcoding = transcoding[videos[i].ID]
 	}
+}
+
+// activeTranscodeVideoIDs returns, in one query, the set of videos that have an
+// active transcode task. Used so the admin list can flag in-progress transcodes
+// even for videos that stay "ready" during a merge re-transcode.
+func activeTranscodeVideoIDs(videos []store.Video) map[int64]bool {
+	result := make(map[int64]bool, len(videos))
+	if len(videos) == 0 {
+		return result
+	}
+	ids := make([]int64, 0, len(videos))
+	for _, v := range videos {
+		ids = append(ids, v.ID)
+	}
+	var activeIDs []int64
+	store.DB().Model(&store.VideoTranscodeTask{}).
+		Where("video_id IN ? AND status IN ?", ids, activeTranscodeStatuses()).
+		Distinct("video_id").
+		Pluck("video_id", &activeIDs)
+	for _, id := range activeIDs {
+		result[id] = true
+	}
+	return result
 }
 
 func transcodedQualityNames(ctx context.Context, v store.Video) []string {
