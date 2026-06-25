@@ -1,8 +1,9 @@
 package main
 
 import (
-	"log"
+	"log/slog"
 	"net/http"
+	"os"
 
 	"flutter-admin-go/internal/config"
 	"flutter-admin-go/internal/server"
@@ -11,13 +12,16 @@ import (
 
 func main() {
 	cfg := config.Load()
+	server.SetupLogging(cfg.Env)
 	if err := store.Init(cfg); err != nil {
-		log.Fatal(err)
+		slog.Error("store init failed", "error", err)
+		os.Exit(1)
 	}
 
 	handler := server.NewRouter()
-	log.Printf("server started, env=%s addr=%s", cfg.Env, cfg.HTTPAddr)
+	slog.Info("server started", "env", cfg.Env, "addr", cfg.HTTPAddr)
 	if err := http.ListenAndServe(cfg.HTTPAddr, handler); err != nil {
-		log.Fatal(err)
+		slog.Error("server stopped", "error", err)
+		os.Exit(1)
 	}
 }

@@ -39,6 +39,35 @@ func TestRequirePermBlocksUnauthenticated(t *testing.T) {
 	}
 }
 
+// withObservability must convert a handler panic into a 500 rather than letting
+// it crash the connection, and always stamp an X-Request-ID header.
+func TestObservabilityRecoversPanic(t *testing.T) {
+	h := withObservability(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic("boom")
+	}))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/admin/users", nil))
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 after panic, got %d", rec.Code)
+	}
+	if rec.Header().Get("X-Request-ID") == "" {
+		t.Fatal("expected X-Request-ID header to be set")
+	}
+}
+
+// The recorder should report the status the handler actually wrote.
+func TestObservabilityCapturesStatus(t *testing.T) {
+	h := withObservability(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTeapot)
+	}))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/health", nil))
+	if rec.Code != http.StatusTeapot {
+		t.Fatalf("expected 418 passthrough, got %d", rec.Code)
+	}
+}
+
 // A method not listed in the permission map still requires a valid admin
 // session: an anonymous GET is rejected, not silently passed through.
 func TestRequirePermUnlistedMethodStillRequiresAuth(t *testing.T) {

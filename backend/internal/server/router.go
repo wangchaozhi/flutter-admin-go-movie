@@ -183,7 +183,9 @@ func NewRouter() http.Handler {
 	mux.HandleFunc("/api/webhooks/stripe", payment.StripeWebhookHandler)
 	mux.HandleFunc("/api/webhooks/paypal", payment.PayPalWebhookHandler)
 
-	return withCORS(mux)
+	// Observability wraps everything (including CORS) so it can trace and recover
+	// from panics in any layer.
+	return withObservability(withCORS(mux))
 }
 
 // mobileBanGuard revokes access for users banned after they logged in: if the

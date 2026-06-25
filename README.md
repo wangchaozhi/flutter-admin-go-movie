@@ -119,6 +119,16 @@ APP_ENV=prod go run ./cmd/server  # 生产环境，需通过环境变量补齐�
 GET /api/health
 ```
 
+## 可观测性
+
+后端在最外层包了一层中间件（`internal/server/middleware.go`）：
+
+- 为每个请求生成 `request_id` 并通过响应头 `X-Request-ID` 返回，同时写入 `context`（`server.RequestID(ctx)` 可取用）。
+- 捕获任意层 panic，返回 `500` 而不是中断连接，并记录 `error` 级日志。
+- 用 `log/slog` 打一条结构化访问日志（method、path、status、bytes、ip、duration）；`4xx` 记 `warn`、`5xx` 记 `error`、`/api/health` 记 `debug`。
+
+日志格式按环境切换：`local`/`dev` 输出彩色文本到 stderr，`prod` 输出 JSON 到 stdout。可用 `LOG_LEVEL=debug|info|warn|error` 覆盖级别。
+
 ## AI 视频信息补全
 
 管理端视频列表和编辑面板提供「AI补全」按钮，用于生成并缓存播放页信息：
