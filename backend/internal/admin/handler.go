@@ -818,6 +818,15 @@ func containsInt(values []int, target int) bool {
 	return false
 }
 
+// EnsurePermission validates the admin session and, when permission is
+// non-empty, that the caller's role grants that button permission. It writes the
+// appropriate 401/403 response and returns false when the check fails, so other
+// packages (router middleware, business handlers) can guard writes server-side
+// rather than relying on the UI hiding buttons.
+func EnsurePermission(w http.ResponseWriter, r *http.Request, permission string) bool {
+	return authorize(w, r, permission)
+}
+
 func authorize(w http.ResponseWriter, r *http.Request, permission string) bool {
 	username, ok := CurrentAdminUsername(r)
 	if !ok {

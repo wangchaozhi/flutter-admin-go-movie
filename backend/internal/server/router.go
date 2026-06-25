@@ -34,20 +34,41 @@ func NewRouter() http.Handler {
 	mux.HandleFunc("/api/admin/menus", admin.MenusHandler)
 	mux.HandleFunc("/api/admin/menus/", admin.MenuByIDHandler)
 
-	// app user management (requires admin auth)
-	mux.Handle("/api/admin/app-users", requireAdminAuth(http.HandlerFunc(admin.AppUsersHandler)))
-	mux.Handle("/api/admin/app-users/", requireAdminAuth(http.HandlerFunc(admin.AppUserByIDHandler)))
-	mux.Handle("/api/admin/products", requireAdminAuth(http.HandlerFunc(payment.AdminProductsHandler)))
-	mux.Handle("/api/admin/products/", requireAdminAuth(http.HandlerFunc(payment.AdminProductByIDHandler)))
+	// app user management (button permissions enforced per method)
+	mux.Handle("/api/admin/app-users", requirePerm(map[string]string{
+		http.MethodPost: "app_user:create",
+	}, http.HandlerFunc(admin.AppUsersHandler)))
+	mux.Handle("/api/admin/app-users/", requirePerm(map[string]string{
+		// PUT edits, POST .../vip grants time (both edits), DELETE removes.
+		http.MethodPut:    "app_user:edit",
+		http.MethodPost:   "app_user:edit",
+		http.MethodDelete: "app_user:delete",
+	}, http.HandlerFunc(admin.AppUserByIDHandler)))
+	mux.Handle("/api/admin/products", requirePerm(map[string]string{
+		http.MethodPost: "payment:product",
+	}, http.HandlerFunc(payment.AdminProductsHandler)))
+	mux.Handle("/api/admin/products/", requirePerm(map[string]string{
+		http.MethodPut:    "payment:product",
+		http.MethodDelete: "payment:product",
+	}, http.HandlerFunc(payment.AdminProductByIDHandler)))
 	mux.Handle("/api/admin/orders", requireAdminAuth(http.HandlerFunc(payment.AdminOrdersHandler)))
-	mux.Handle("/api/admin/orders/", requireAdminAuth(http.HandlerFunc(payment.AdminOrderByIDHandler)))
+	mux.Handle("/api/admin/orders/", requirePerm(map[string]string{
+		http.MethodDelete: "payment:order",
+		http.MethodPost:   "payment:refund",
+	}, http.HandlerFunc(payment.AdminOrderByIDHandler)))
 
-	// admin video management (requires admin auth)
+	// admin video management (button permissions enforced per method)
 	mux.Handle("/api/admin/video/transcode-tasks", requireAdminAuth(http.HandlerFunc(video.AdminTranscodeHistoryHandler)))
-	mux.Handle("/api/admin/video/transcode-tasks/", requireAdminAuth(http.HandlerFunc(video.AdminTranscodeHistoryByIDHandler)))
+	mux.Handle("/api/admin/video/transcode-tasks/", requirePerm(map[string]string{
+		http.MethodDelete: "video:transcode-history",
+	}, http.HandlerFunc(video.AdminTranscodeHistoryByIDHandler)))
 	mux.Handle("/api/admin/video/extract-tasks", requireAdminAuth(http.HandlerFunc(video.AdminExtractHistoryHandler)))
-	mux.Handle("/api/admin/video/extract-tasks/", requireAdminAuth(http.HandlerFunc(video.AdminExtractHistoryByIDHandler)))
-	mux.Handle("/api/admin/videos", requireAdminAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("/api/admin/video/extract-tasks/", requirePerm(map[string]string{
+		http.MethodDelete: "video:extract-history",
+	}, http.HandlerFunc(video.AdminExtractHistoryByIDHandler)))
+	mux.Handle("/api/admin/videos", requirePerm(map[string]string{
+		http.MethodPost: "video:create",
+	}, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			video.AdminCreateVideoHandler(w, r)
 		} else {
@@ -55,30 +76,59 @@ func NewRouter() http.Handler {
 		}
 	})))
 	mux.Handle("/api/admin/videos/", requireAdminAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Sub-actions of a single video. Uploading media/cover, AI metadata and
+		// (re)transcoding are all "editing" the video; deleting tasks or the
+		// video itself requires the delete permission. There is no dedicated
+		// upload/cover/transcode button permission seeded, so they map to
+		// video:edit. GET reads are open to any authenticated admin.
 		path := r.URL.Path
 		switch {
 		case strings.HasSuffix(path, "/upload"):
+			if !admin.EnsurePermission(w, r, "video:edit") {
+				return
+			}
 			video.AdminUploadVideoHandler(w, r)
 		case strings.HasSuffix(path, "/cover"):
+			if !admin.EnsurePermission(w, r, "video:edit") {
+				return
+			}
 			video.AdminUploadCoverHandler(w, r)
 		case strings.HasSuffix(path, "/ai-metadata"):
+			if !admin.EnsurePermission(w, r, "video:edit") {
+				return
+			}
 			video.AdminGenerateAIMetadataHandler(w, r)
 		case strings.Contains(path, "/tasks"):
+			if r.Method == http.MethodDelete && !admin.EnsurePermission(w, r, "video:delete") {
+				return
+			}
 			video.AdminVideoTasksHandler(w, r)
 		case strings.HasSuffix(path, "/transcode"):
 			if r.Method == "GET" {
 				video.AdminTranscodeStatusHandler(w, r)
 			} else if r.Method == "DELETE" {
+				if !admin.EnsurePermission(w, r, "video:edit") {
+					return
+				}
 				video.AdminCancelTranscodeHandler(w, r)
 			} else {
+				if !admin.EnsurePermission(w, r, "video:edit") {
+					return
+				}
 				video.AdminTranscodeHandler(w, r)
 			}
 		default:
 			if r.Method == "GET" {
 				video.AdminGetVideoHandler(w, r)
 			} else if r.Method == "PUT" {
+				if !admin.EnsurePermission(w, r, "video:edit") {
+					return
+				}
 				video.AdminUpdateVideoHandler(w, r)
 			} else if r.Method == "DELETE" {
+				if !admin.EnsurePermission(w, r, "video:delete") {
+					return
+				}
 				video.AdminDeleteVideoHandler(w, r)
 			} else {
 				common.WriteJSON(w, http.StatusMethodNotAllowed, common.APIResponse{Code: 405, Msg: "method not allowed"})
@@ -86,9 +136,14 @@ func NewRouter() http.Handler {
 		}
 	})))
 
-	// admin categories (requires admin auth)
-	mux.Handle("/api/admin/categories", requireAdminAuth(http.HandlerFunc(video.AdminCategoriesHandler)))
-	mux.Handle("/api/admin/categories/", requireAdminAuth(http.HandlerFunc(video.AdminCategoryByIDHandler)))
+	// admin categories (button permissions enforced per method)
+	mux.Handle("/api/admin/categories", requirePerm(map[string]string{
+		http.MethodPost: "category:create",
+	}, http.HandlerFunc(video.AdminCategoriesHandler)))
+	mux.Handle("/api/admin/categories/", requirePerm(map[string]string{
+		http.MethodPut:    "category:edit",
+		http.MethodDelete: "category:delete",
+	}, http.HandlerFunc(video.AdminCategoryByIDHandler)))
 
 	// app: categories + video list / detail / play / cover / progress
 	mux.HandleFunc("/api/categories", video.AppListCategoriesHandler)
@@ -152,6 +207,19 @@ func requireAdminAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if _, ok := admin.CurrentAdminUsername(r); !ok {
 			common.WriteJSON(w, http.StatusUnauthorized, common.APIResponse{Code: 401, Msg: "unauthorized"})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// requirePerm guards a handler with a button permission that depends on the HTTP
+// method. A method absent from byMethod (or mapped to "") only requires a valid
+// admin session, which keeps read (GET) access open to any authenticated admin
+// while gating writes behind the documented permissions.
+func requirePerm(byMethod map[string]string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !admin.EnsurePermission(w, r, byMethod[r.Method]) {
 			return
 		}
 		next.ServeHTTP(w, r)

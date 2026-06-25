@@ -165,35 +165,21 @@ admin / 123456
 operator / 123456
 ```
 
-`admin` 拥有全部菜单和按钮权限。按钮权限包括：
+`admin` 拥有全部菜单和按钮权限。已植入并由后端校验的按钮权限包括：
 
 ```text
-user:create
-user:edit
-user:delete
-role:create
-role:edit
-role:delete
-menu:create
-menu:edit
-menu:delete
-app-user:create
-app-user:edit
-app-user:delete
-category:create
-category:edit
-category:delete
-payment:product
-payment:order
-payment:refund
-video:create
-video:edit
-video:delete
-video:upload
-video:cover
-video:transcode
-video:transcode-history:delete
+user:create / user:edit / user:delete
+role:create / role:edit / role:delete
+menu:create / menu:edit / menu:delete
+app_user:create / app_user:edit / app_user:delete
+category:create / category:edit / category:delete
+payment:product / payment:order / payment:refund
+video:create / video:edit / video:delete
+video:transcode-history    # 转码历史删除
+video:extract-history      # 提取历史删除
 ```
+
+这些权限**在后端按 HTTP 方法逐一校验**（见 `internal/server/router.go` 的 `requirePerm` 与 `admin.EnsurePermission`），不再依赖前端隐藏按钮：缺少权限的管理员即使直接调用接口，写操作也会返回 `403`。GET 读接口对任意已登录管理员开放。视频的上传 / 封面 / AI 补全 / 转码归类为「编辑」，需要 `video:edit`；删除视频或转码产物需要 `video:delete`。
 
 管理端菜单由数据库表 `admin_menus` 驱动，支持 `icon` 图标编码和 `sort_order` 排序。默认结构包含 `系统管理`、`App 管理 / 用户`、`视频管理 / 视频列表 / 类别 / 转码历史` 和 `支付`。
 
@@ -216,6 +202,7 @@ user / 123456
 - 管理端和移动端登录均返回 **签名 JWT**，请求时通过 `Authorization: Bearer <token>` 携带。管理端 token 12 小时过期，移动端 30 天。
 - 密码使用 **bcrypt** 哈希存储；登录时按哈希比对（同时兼容尚未迁移的旧明文行，迁移 `012_hash_passwords.sql` 会把种子密码转为哈希）。
 - 生产环境务必设置 `JWT_SECRET` 与 `HLS_SECRET`。
+- 登录接口带**失败限流**（防爆破）：按客户端 IP 计数，管理端 5 分钟内失败 5 次、移动端 10 次后临时拒绝并返回 `429`（含 `Retry-After`），登录成功即清零。限流为进程内实现，多实例部署应改用 Redis 等共享存储统一计数。
 - CORS 默认在 `local`/`dev` 放开（`allowed_origins: ["*"]`），生产环境应在 `config/prod.yml` 的 `allowed_origins` 或环境变量 `CORS_ALLOWED_ORIGINS`（逗号分隔）中配置白名单。
 
 ## 后端接口

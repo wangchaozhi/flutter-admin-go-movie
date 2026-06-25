@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -11,6 +12,24 @@ import (
 	"flutter-admin-go/internal/common"
 	"flutter-admin-go/internal/store"
 )
+
+// Login brute-force guards. Counts are per client IP and reset on success.
+var (
+	adminLoginLimiter  = common.NewLoginLimiter(5, 5*time.Minute)
+	mobileLoginLimiter = common.NewLoginLimiter(10, 5*time.Minute)
+)
+
+// tooManyLoginAttempts writes a 429 with Retry-After when the caller is blocked,
+// returning true so the handler can stop. It checks before touching the body so
+// a flood of attempts is rejected cheaply.
+func tooManyLoginAttempts(w http.ResponseWriter, limiter *common.LoginLimiter, key string) bool {
+	if blocked, retry := limiter.Blocked(key); blocked {
+		w.Header().Set("Retry-After", strconv.Itoa(int(retry.Seconds())+1))
+		common.WriteJSON(w, http.StatusTooManyRequests, common.APIResponse{Code: 429, Msg: "尝试次数过多，请稍后再试"})
+		return true
+	}
+	return false
+}
 
 type LoginRequest struct {
 	Username string `json:"username"`
@@ -43,6 +62,10 @@ func AdminLoginHandler(w http.ResponseWriter, r *http.Request) {
 		common.WriteJSON(w, http.StatusMethodNotAllowed, common.APIResponse{Code: 405, Msg: "method not allowed"})
 		return
 	}
+	ip := common.ClientIP(r)
+	if tooManyLoginAttempts(w, adminLoginLimiter, ip) {
+		return
+	}
 	var req LoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "invalid body"})
@@ -54,9 +77,11 @@ func AdminLoginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !ok {
+		adminLoginLimiter.Fail(ip)
 		common.WriteJSON(w, http.StatusUnauthorized, common.APIResponse{Code: 401, Msg: "invalid credentials"})
 		return
 	}
+	adminLoginLimiter.Reset(ip)
 	profile, err := admin.BuildProfile(req.Username)
 	if err != nil {
 		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
@@ -84,6 +109,10 @@ func MobileLoginHandler(w http.ResponseWriter, r *http.Request) {
 		common.WriteJSON(w, http.StatusMethodNotAllowed, common.APIResponse{Code: 405, Msg: "method not allowed"})
 		return
 	}
+	ip := common.ClientIP(r)
+	if tooManyLoginAttempts(w, mobileLoginLimiter, ip) {
+		return
+	}
 	var req LoginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "invalid body"})
@@ -99,9 +128,11 @@ func MobileLoginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if user == nil {
+		mobileLoginLimiter.Fail(ip)
 		common.WriteJSON(w, http.StatusUnauthorized, common.APIResponse{Code: 401, Msg: "invalid credentials"})
 		return
 	}
+	mobileLoginLimiter.Reset(ip)
 	token, err := admin.BuildMobileToken(user.ID, user.Username)
 	if err != nil {
 		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: "token generation failed"})
