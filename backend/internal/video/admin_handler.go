@@ -466,7 +466,6 @@ func cancelTranscodeTasks(ctx context.Context, videoID int64, quality string) (i
 		Updates(map[string]interface{}{
 			"status":         "canceled",
 			"status_message": "已取消",
-			"progress":       100,
 			"error_message":  "",
 			"finished_at":    now,
 		}).Error; err != nil {

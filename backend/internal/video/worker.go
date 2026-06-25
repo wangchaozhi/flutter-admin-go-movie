@@ -209,7 +209,6 @@ func markTranscodeTaskCanceled(taskID int64) {
 	store.DB().Model(&store.VideoTranscodeTask{}).Where("id = ?", taskID).Updates(map[string]interface{}{
 		"status":         "canceled",
 		"status_message": "已取消",
-		"progress":       100,
 		"error_message":  "",
 		"finished_at":    time.Now(),
 	})

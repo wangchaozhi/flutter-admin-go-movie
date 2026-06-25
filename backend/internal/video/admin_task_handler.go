@@ -177,30 +177,58 @@ func listVideoTranscodeTasks(w http.ResponseWriter, r *http.Request, videoID int
 		return
 	}
 
-	// keep only the most recent task per quality (tasks are ordered id desc)
-	seen := make(map[string]bool, len(tasks))
-	latest := make([]store.VideoTranscodeTask, 0, len(tasks))
-	for _, task := range tasks {
-		if task.Quality == "" || seen[task.Quality] {
-			continue
-		}
-		seen[task.Quality] = true
-		latest = append(latest, task)
-	}
-	sort.SliceStable(latest, func(i, j int) bool {
-		return qualityHeight(latest[i].Quality) < qualityHeight(latest[j].Quality)
-	})
-
 	transcoded := make(map[string]bool)
 	for _, name := range transcodedQualityNames(r.Context(), v) {
 		transcoded[name] = true
 	}
+	latest := displayTranscodeTasksByQuality(tasks, transcoded)
 
 	items := make([]transcodeTaskItem, 0, len(latest))
 	for _, task := range latest {
 		items = append(items, transcodeTaskItem{VideoTranscodeTask: task, Transcoded: transcoded[task.Quality]})
 	}
 	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: items})
+}
+
+func displayTranscodeTasksByQuality(tasks []store.VideoTranscodeTask, transcoded map[string]bool) []store.VideoTranscodeTask {
+	latestByQuality := make(map[string]store.VideoTranscodeTask, len(tasks))
+	latestSuccessByQuality := make(map[string]store.VideoTranscodeTask, len(tasks))
+	for _, task := range tasks {
+		if task.Quality == "" {
+			continue
+		}
+		if _, ok := latestSuccessByQuality[task.Quality]; !ok && task.Status == "success" {
+			latestSuccessByQuality[task.Quality] = task
+		}
+		if _, seen := latestByQuality[task.Quality]; seen {
+			continue
+		}
+		latestByQuality[task.Quality] = task
+	}
+
+	latest := make([]store.VideoTranscodeTask, 0, len(latestByQuality))
+	for quality, task := range latestByQuality {
+		if task.Status == "canceled" && transcoded[quality] {
+			if previousSuccess, ok := latestSuccessByQuality[quality]; ok {
+				task = previousSuccess
+			} else {
+				task.Status = "success"
+				task.StatusMessage = "完成"
+				task.Progress = 100
+				task.ErrorMessage = ""
+			}
+		}
+		latest = append(latest, task)
+	}
+	sort.SliceStable(latest, func(i, j int) bool {
+		left := qualityHeight(latest[i].Quality)
+		right := qualityHeight(latest[j].Quality)
+		if left == right {
+			return latest[i].Quality < latest[j].Quality
+		}
+		return left < right
+	})
+	return latest
 }
 
 func deleteVideoTranscodeQuality(w http.ResponseWriter, r *http.Request, videoID int64, quality string) {

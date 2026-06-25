@@ -123,6 +123,10 @@ function isActiveTranscodeStatus(status?: string) {
   return status === 'queued' || status === 'pending' || status === 'processing'
 }
 
+function effectiveQualityStatus(status: string | undefined, transcoded?: boolean) {
+  return transcoded && status === 'canceled' ? 'success' : status
+}
+
 function transcodeStateLabel(status: string | undefined, fallback: string, progress?: number) {
   if (status === 'failed') return '失败'
   if (status === 'canceled') return '已取消'
@@ -686,8 +690,9 @@ export function VideoManagementSection({
                               {detailTasks.map(qt => {
                                 const active = isActiveTranscodeStatus(qt.status)
                                 const cancelingQuality = cancelingTranscode.has(transcodeCancelKey(v.id, qt.quality))
-                                const label = QUALITY_STATUS_LABEL[qt.status] ?? qt.status
-                                const statusText = qt.status === 'processing' && qt.progress > 0
+                                const displayStatus = effectiveQualityStatus(qt.status, qt.transcoded)
+                                const label = QUALITY_STATUS_LABEL[displayStatus ?? ''] ?? displayStatus
+                                const statusText = displayStatus === 'processing' && qt.progress > 0
                                   ? `${label} ${qt.progress}%`
                                   : label
                                 return (
@@ -700,7 +705,7 @@ export function VideoManagementSection({
                                     <td className="text-faint">{formatDateTime(qt.finished_at)}</td>
                                     <td className="text-faint">{formatElapsed(qt)}</td>
                                     <td>
-                                      <span className={`status-badge ${QUALITY_STATUS_CLASS[qt.status] ?? ''}`}>
+                                      <span className={`status-badge ${QUALITY_STATUS_CLASS[displayStatus ?? ''] ?? ''}`}>
                                         {statusText}
                                       </span>
                                       {active && <Loader size={11} className="spin" style={{ marginLeft: 4 }} />}
@@ -889,11 +894,12 @@ export function VideoManagementSection({
                 const supported = !available?.length || available.includes(quality)
                 const currentTask = taskStatus[transcodeDialog.video.id]
                 const qualityStatus = currentTask?.quality_statuses?.[quality]
+                const displayStatus = effectiveQualityStatus(qualityStatus, done)
                 const qualityMessage = currentTask?.quality_messages?.[quality] ?? ''
                 const qualityProgress = currentTask?.quality_progress?.[quality]
                 const active = isActiveTranscodeStatus(qualityStatus)
-                const failed = qualityStatus === 'failed'
-                const canceled = qualityStatus === 'canceled'
+                const failed = displayStatus === 'failed'
+                const canceled = displayStatus === 'canceled'
                 const stateLabel = failed
                   ? (qualityMessage || '失败')
                   : canceled
