@@ -1,0 +1,13 @@
+CREATE TABLE IF NOT EXISTS video_ai_metadata (
+  video_id BIGINT PRIMARY KEY REFERENCES videos(id) ON DELETE CASCADE,
+  provider VARCHAR(64) NOT NULL DEFAULT '',
+  model VARCHAR(128) NOT NULL DEFAULT '',
+  status VARCHAR(32) NOT NULL DEFAULT 'ready',
+  synopsis TEXT NOT NULL DEFAULT '',
+  highlights JSONB NOT NULL DEFAULT '[]'::jsonb,
+  tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+  error_message TEXT NOT NULL DEFAULT '',
+  generated_at TIMESTAMP,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

@@ -28,6 +28,7 @@ type Config struct {
 	MinIO          MinIOConfig    `yaml:"minio"`
 	Video          VideoConfig    `yaml:"video"`
 	Auth           AuthConfig     `yaml:"auth"`
+	AI             AIConfig       `yaml:"ai"`
 	Payment        PaymentConfig  `yaml:"payment"`
 	Worker         WorkerConfig   `yaml:"worker"`
 }
@@ -57,6 +58,15 @@ type VideoConfig struct {
 
 type AuthConfig struct {
 	JWTSecret string `yaml:"jwt_secret"`
+}
+
+type AIConfig struct {
+	Enabled        bool   `yaml:"enabled"`
+	Provider       string `yaml:"provider"`
+	APIKey         string `yaml:"api_key"`
+	BaseURL        string `yaml:"base_url"`
+	Model          string `yaml:"model"`
+	TimeoutSeconds int    `yaml:"timeout_seconds"`
 }
 
 type PaymentConfig struct {
@@ -183,6 +193,13 @@ func localDefaults() Config {
 		Auth: AuthConfig{
 			JWTSecret: "dev_jwt_secret_change_in_prod",
 		},
+		AI: AIConfig{
+			Enabled:        false,
+			Provider:       "deepseek",
+			BaseURL:        "https://api.deepseek.com",
+			Model:          "deepseek-v4-flash",
+			TimeoutSeconds: 45,
+		},
 		Payment: PaymentConfig{
 			PublicBaseURL:   "http://localhost:8080",
 			DefaultCurrency: "USD",
@@ -215,6 +232,13 @@ func applyEnvOverrides(cfg *Config) {
 	cfg.Video.APIBaseURL = envOr("API_BASE_URL", cfg.Video.APIBaseURL)
 
 	cfg.Auth.JWTSecret = envOr("JWT_SECRET", cfg.Auth.JWTSecret)
+
+	cfg.AI.Enabled = envBool("AI_ENABLED", cfg.AI.Enabled)
+	cfg.AI.Provider = envOr("AI_PROVIDER", cfg.AI.Provider)
+	cfg.AI.APIKey = envOr("AI_API_KEY", cfg.AI.APIKey)
+	cfg.AI.BaseURL = strings.TrimRight(envOr("AI_BASE_URL", cfg.AI.BaseURL), "/")
+	cfg.AI.Model = envOr("AI_MODEL", cfg.AI.Model)
+	cfg.AI.TimeoutSeconds = envInt("AI_TIMEOUT_SECONDS", cfg.AI.TimeoutSeconds)
 
 	cfg.Payment.MockEnabled = envBool("PAYMENT_MOCK", cfg.Payment.MockEnabled)
 	cfg.Payment.PublicBaseURL = envOr("APP_PUBLIC_BASE_URL", cfg.Payment.PublicBaseURL)

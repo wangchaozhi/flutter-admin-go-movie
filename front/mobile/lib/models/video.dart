@@ -5,13 +5,54 @@ class Category {
   final String name;
   final int sortOrder;
 
-  const Category({required this.id, required this.name, required this.sortOrder});
+  const Category({
+    required this.id,
+    required this.name,
+    required this.sortOrder,
+  });
 
   factory Category.fromJson(Map<String, dynamic> json) => Category(
     id: json['id'] as int,
     name: json['name'] as String? ?? '',
     sortOrder: json['sort_order'] as int? ?? 0,
   );
+}
+
+class VideoAIMetadata {
+  final String synopsis;
+  final List<String> highlights;
+  final List<String> tags;
+  final String provider;
+  final String model;
+
+  const VideoAIMetadata({
+    required this.synopsis,
+    required this.highlights,
+    required this.tags,
+    required this.provider,
+    required this.model,
+  });
+
+  factory VideoAIMetadata.fromJson(Map<String, dynamic> json) =>
+      VideoAIMetadata(
+        synopsis: json['synopsis'] as String? ?? '',
+        highlights: _stringList(json['highlights']),
+        tags: _stringList(json['tags']),
+        provider: json['provider'] as String? ?? '',
+        model: json['model'] as String? ?? '',
+      );
+
+  static List<String> _stringList(dynamic value) {
+    if (value is! List) return const [];
+    return value
+        .whereType<String>()
+        .map((item) => item.trim())
+        .where((item) => item.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  bool get hasContent =>
+      synopsis.trim().isNotEmpty || highlights.isNotEmpty || tags.isNotEmpty;
 }
 
 class Video {
@@ -25,6 +66,7 @@ class Video {
   final String status;
   final bool isVip;
   final bool isFree;
+  final VideoAIMetadata? aiMetadata;
 
   const Video({
     required this.id,
@@ -37,6 +79,7 @@ class Video {
     required this.status,
     required this.isVip,
     required this.isFree,
+    this.aiMetadata,
   });
 
   factory Video.fromJson(Map<String, dynamic> json) => Video(
@@ -50,6 +93,9 @@ class Video {
     status: json['status'] as String? ?? '',
     isVip: json['is_vip'] as bool? ?? false,
     isFree: json['is_free'] as bool? ?? true,
+    aiMetadata: json['ai_metadata'] is Map<String, dynamic>
+        ? VideoAIMetadata.fromJson(json['ai_metadata'] as Map<String, dynamic>)
+        : null,
   );
 
   String get fullCoverUrl =>

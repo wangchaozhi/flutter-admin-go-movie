@@ -47,6 +47,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     with WidgetsBindingObserver {
   late final Player _player;
   late final VideoController _controller;
+  late model.Video _video;
   StreamSubscription<String>? _playerErrorSubscription;
   StreamSubscription<bool>? _playerCompletedSubscription;
   StreamSubscription<Tracks>? _playerTracksSubscription;
@@ -85,6 +86,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _video = widget.video;
     _progressService = VideoProgressService(videoId: widget.video.id);
     _player = Player();
     _controller = VideoController(_player);
@@ -103,6 +105,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       DeviceOrientation.landscapeRight,
       DeviceOrientation.portraitUp,
     ]);
+    unawaited(_loadVideoDetail());
     _init();
   }
 
@@ -207,13 +210,20 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     if (qualities.isEmpty) {
       qualities = await _parseQualitiesFromMaster(url);
     }
-    final audioTracks =
-        TrackParser.parseMediaTracks(data, 'audio_tracks', _absoluteUrl);
-    final subtitleTracks =
-        TrackParser.parseMediaTracks(data, 'subtitle_tracks', _absoluteUrl);
+    final audioTracks = TrackParser.parseMediaTracks(
+      data,
+      'audio_tracks',
+      _absoluteUrl,
+    );
+    final subtitleTracks = TrackParser.parseMediaTracks(
+      data,
+      'subtitle_tracks',
+      _absoluteUrl,
+    );
     final audioTrackCount = TrackParser.parseInt(data?['audio_track_count']);
-    final subtitleTrackCount =
-        TrackParser.parseInt(data?['subtitle_track_count']);
+    final subtitleTrackCount = TrackParser.parseInt(
+      data?['subtitle_track_count'],
+    );
     final mediaTracksScanned = data?['media_tracks_scanned'] == true;
     return _PlaybackSource(
       url: url,
@@ -233,6 +243,19 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
           subtitleTrackCount > 0 ||
           subtitleTracks.isNotEmpty,
     );
+  }
+
+  Future<void> _loadVideoDetail() async {
+    try {
+      final resp = await ApiClient().get('/api/videos/${widget.video.id}');
+      if (resp['code'] != 0 || resp['data'] is! Map<String, dynamic>) return;
+      final next = model.Video.fromJson(resp['data'] as Map<String, dynamic>);
+      if (mounted) {
+        setState(() => _video = next);
+      }
+    } catch (_) {
+      // Playback should not fail just because the detail module could not load.
+    }
   }
 
   String _absoluteUrl(String url) {
@@ -451,7 +474,6 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     }
   }
 
-
   Future<void> _waitForMediaReady() async {
     if (_player.state.duration > Duration.zero) return;
     try {
@@ -595,10 +617,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     }
   }
 
-  Future<void> _saveProgress({
-    bool force = false,
-    Duration? positionOverride,
-  }) {
+  Future<void> _saveProgress({bool force = false, Duration? positionOverride}) {
     final position = positionOverride ?? _player.state.position;
     return _progressService.save(
       position,
@@ -768,7 +787,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                         ),
                         Expanded(
                           child: Text(
-                            widget.video.title,
+                            _video.title,
                             style: const TextStyle(
                               color: Colors.white,
                               fontSize: 17,
@@ -780,34 +799,173 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                         ),
                       ],
                     ),
-                    if (widget.video.categoryName.isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Padding(
-                        padding: const EdgeInsets.only(left: 48),
-                        child: Text(
-                          widget.video.categoryName,
-                          style: const TextStyle(
-                            color: Color(0xFF25D0AB),
-                            fontSize: 13,
-                          ),
-                        ),
-                      ),
-                    ],
-                    if (widget.video.description.isNotEmpty) ...[
-                      const SizedBox(height: 12),
-                      Text(
-                        widget.video.description,
-                        style: const TextStyle(
-                          color: Color(0xFF9CA3AF),
-                          height: 1.5,
-                        ),
-                      ),
-                    ],
+                    const SizedBox(height: 12),
+                    _buildVideoInfoSection(),
                   ],
                 ),
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildVideoInfoSection() {
+    final aiMetadata = _video.aiMetadata;
+    final synopsis = (aiMetadata?.synopsis.trim().isNotEmpty ?? false)
+        ? aiMetadata!.synopsis.trim()
+        : _video.description.trim().isNotEmpty
+        ? _video.description.trim()
+        : '暂无详细简介，已根据当前视频信息整理基础内容。';
+    final highlights = aiMetadata?.highlights ?? const <String>[];
+    final tags = aiMetadata?.tags ?? const <String>[];
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFF0B0F14),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFF1F2937)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                if (_video.categoryName.isNotEmpty)
+                  _buildMetaChip(
+                    Icons.local_movies_rounded,
+                    _video.categoryName,
+                  ),
+                if (_video.durationLabel.isNotEmpty)
+                  _buildMetaChip(Icons.schedule_rounded, _video.durationLabel),
+                _buildMetaChip(
+                  _video.isVip && !_video.isFree
+                      ? Icons.workspace_premium_rounded
+                      : Icons.play_circle_outline_rounded,
+                  _video.isVip && !_video.isFree ? 'VIP' : '免费观看',
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            const Text(
+              '简介',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              synopsis,
+              style: const TextStyle(
+                color: Color(0xFFD1D5DB),
+                fontSize: 14,
+                height: 1.55,
+              ),
+            ),
+            if (highlights.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              const Text(
+                '看点',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 8),
+              ...highlights.map(_buildHighlightItem),
+            ],
+            if (tags.isNotEmpty) ...[
+              const SizedBox(height: 14),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: tags.map(_buildTagChip).toList(),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMetaChip(IconData icon, String label) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFF111827),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: const Color(0xFF243244)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 15, color: const Color(0xFF25D0AB)),
+            const SizedBox(width: 5),
+            Text(
+              label,
+              style: const TextStyle(
+                color: Color(0xFFE5E7EB),
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHighlightItem(String text) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 7),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(
+            Icons.check_circle_rounded,
+            size: 16,
+            color: Color(0xFF25D0AB),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              text,
+              style: const TextStyle(
+                color: Color(0xFFC7D2FE),
+                fontSize: 13,
+                height: 1.35,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTagChip(String tag) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFF101820),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+        child: Text(
+          '#$tag',
+          style: const TextStyle(
+            color: Color(0xFF9CA3AF),
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+          ),
         ),
       ),
     );

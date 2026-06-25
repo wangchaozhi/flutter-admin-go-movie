@@ -10,6 +10,7 @@ import {
   Loader,
   Play,
   RefreshCw,
+  Sparkles,
   Trash2,
   XCircle,
 } from 'lucide-react'
@@ -19,6 +20,7 @@ import type {
   Category,
   TranscodeTask,
   Video,
+  VideoAIMetadata,
   VideoForm,
   VideoQualityTask,
 } from '../../adminTypes'
@@ -150,6 +152,7 @@ export function VideoManagementSection({
   const [saving, setSaving] = useState(false)
   const [uploadProgress, setUploadProgress] = useState<number | null>(null)
   const [transcoding, setTranscoding] = useState(false)
+  const [generatingMetadataId, setGeneratingMetadataId] = useState<number | null>(null)
   const [cancelingTranscode, setCancelingTranscode] = useState<Set<string>>(new Set())
   const [transcodeDialog, setTranscodeDialog] = useState<{
     video: Video
@@ -541,6 +544,31 @@ export function VideoManagementSection({
     }
   }
 
+  async function handleGenerateMetadata(video: Pick<Video, 'id' | 'description'>) {
+    if (!video.id || generatingMetadataId !== null) return
+    const overwrite = video.description.trim() !== ''
+      ? window.confirm('当前简介已有内容，是否用 AI 生成内容覆盖？')
+      : false
+    if (video.description.trim() !== '' && !overwrite) return
+    setGeneratingMetadataId(video.id)
+    try {
+      const res = await fetch(`/api/admin/videos/${video.id}/ai-metadata`, {
+        method: 'POST',
+        headers: jsonHeaders,
+        body: JSON.stringify({ overwrite_description: overwrite }),
+      })
+      const json: ApiResponse<VideoAIMetadata> = await res.json()
+      if (json.code !== 0 || !json.data) {
+        alert('AI 补全失败：' + json.msg)
+        return
+      }
+      setForm(prev => prev.id === video.id ? { ...prev, description: json.data!.synopsis } : prev)
+      await loadVideos()
+    } finally {
+      setGeneratingMetadataId(null)
+    }
+  }
+
   const canCreate = can('video:create')
   const canEdit = can('video:edit')
   const canDelete = can('video:delete')
@@ -621,6 +649,12 @@ export function VideoManagementSection({
                             setForm({ id: v.id, title: v.title, description: v.description, category_id: v.category_id, is_vip: v.is_vip, is_free: v.is_free })
                           }}>
                             <Film size={13} /> 编辑
+                          </button>
+                        )}
+                        {canEdit && (
+                          <button type="button" onClick={() => handleGenerateMetadata(v)} disabled={generatingMetadataId !== null}>
+                            {generatingMetadataId === v.id ? <Loader size={13} className="spin" /> : <Sparkles size={13} />}
+                            AI补全
                           </button>
                         )}
                         {canEdit && v.status === 'uploaded' && (
@@ -782,7 +816,20 @@ export function VideoManagementSection({
             <input value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} placeholder="视频标题" required />
           </label>
           <label>
-            简介
+            <span className="field-heading">
+              简介
+              {form.id && canEdit && (
+                <button
+                  type="button"
+                  className="muted-action"
+                  disabled={generatingMetadataId !== null}
+                  onClick={() => handleGenerateMetadata({ id: form.id!, description: form.description })}
+                >
+                  {generatingMetadataId === form.id ? <Loader size={13} className="spin" /> : <Sparkles size={13} />}
+                  AI补全
+                </button>
+              )}
+            </span>
             <textarea
               value={form.description}
               onChange={e => setForm({ ...form, description: e.target.value })}

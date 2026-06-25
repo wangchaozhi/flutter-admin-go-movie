@@ -117,6 +117,22 @@ type VideoFavorite struct {
 
 func (VideoFavorite) TableName() string { return "video_favorites" }
 
+type VideoAIMetadata struct {
+	VideoID      int64       `gorm:"primaryKey;column:video_id"       json:"video_id"`
+	Provider     string      `gorm:"column:provider"                  json:"provider"`
+	Model        string      `gorm:"column:model"                     json:"model"`
+	Status       string      `gorm:"column:status"                    json:"status"`
+	Synopsis     string      `gorm:"column:synopsis"                  json:"synopsis"`
+	Highlights   StringArray `gorm:"column:highlights;type:jsonb"     json:"highlights"`
+	Tags         StringArray `gorm:"column:tags;type:jsonb"           json:"tags"`
+	ErrorMessage string      `gorm:"column:error_message"             json:"error_message,omitempty"`
+	GeneratedAt  *time.Time  `gorm:"column:generated_at"              json:"generated_at,omitempty"`
+	CreatedAt    time.Time   `gorm:"column:created_at"                json:"created_at"`
+	UpdatedAt    time.Time   `gorm:"column:updated_at"                json:"updated_at"`
+}
+
+func (VideoAIMetadata) TableName() string { return "video_ai_metadata" }
+
 type MobileUserSetting struct {
 	UserID     int64     `gorm:"primaryKey;column:user_id" json:"user_id"`
 	AutoPlay   bool      `gorm:"column:auto_play"          json:"auto_play"`

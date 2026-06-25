@@ -551,6 +551,14 @@ label {
   gap: 7px;
 }
 
+.field-heading {
+  display: flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 input,
 select {
   width: 100%;

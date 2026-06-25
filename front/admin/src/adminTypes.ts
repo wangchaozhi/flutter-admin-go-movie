@@ -40,6 +40,19 @@ export type Video = {
   updated_at: string
 }
 
+export type VideoAIMetadata = {
+  video_id: number
+  provider: string
+  model: string
+  status: string
+  synopsis: string
+  highlights: string[]
+  tags: string[]
+  generated_at?: string | null
+  created_at: string
+  updated_at: string
+}
+
 export type VideoForm = {
   id?: number
   title: string

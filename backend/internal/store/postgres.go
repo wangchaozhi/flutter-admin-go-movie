@@ -62,6 +62,42 @@ func (ids *IntArray) Scan(value interface{}) error {
 	return json.Unmarshal(raw, ids)
 }
 
+type StringArray []string
+
+func (items StringArray) Value() (driver.Value, error) {
+	if items == nil {
+		items = StringArray{}
+	}
+	b, err := json.Marshal(items)
+	if err != nil {
+		return nil, err
+	}
+	return string(b), nil
+}
+
+func (items *StringArray) Scan(value interface{}) error {
+	if value == nil {
+		*items = StringArray{}
+		return nil
+	}
+
+	var raw []byte
+	switch v := value.(type) {
+	case []byte:
+		raw = v
+	case string:
+		raw = []byte(v)
+	default:
+		return fmt.Errorf("unsupported StringArray value %T", value)
+	}
+
+	if len(raw) == 0 {
+		*items = StringArray{}
+		return nil
+	}
+	return json.Unmarshal(raw, items)
+}
+
 type AdminUser struct {
 	ID           int      `gorm:"primaryKey;column:id"`
 	Username     string   `gorm:"column:username"`

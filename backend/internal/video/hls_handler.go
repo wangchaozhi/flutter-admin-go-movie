@@ -735,8 +735,9 @@ func AppCoverHandler(w http.ResponseWriter, r *http.Request) {
 // AppVideoItem is the app-facing video response, extending Video with cover_url and category_name.
 type AppVideoItem struct {
 	store.Video
-	CoverURL     string `json:"cover_url"`
-	CategoryName string `json:"category_name"`
+	CoverURL     string                 `json:"cover_url"`
+	CategoryName string                 `json:"category_name"`
+	AIMetadata   *store.VideoAIMetadata `json:"ai_metadata,omitempty"`
 }
 
 type AppWatchHistoryItem struct {
@@ -1047,6 +1048,7 @@ func AppGetVideoHandler(w http.ResponseWriter, r *http.Request) {
 		Video:        v,
 		CoverURL:     coverURL(v),
 		CategoryName: catName,
+		AIMetadata:   loadVideoAIMetadata(v.ID),
 	}})
 }
 

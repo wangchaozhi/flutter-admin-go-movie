@@ -28,6 +28,14 @@ video:
 auth:
   jwt_secret: ""
 
+ai:
+  enabled: false
+  provider: "deepseek"
+  api_key: ""
+  base_url: "https://api.deepseek.com"
+  model: "deepseek-v4-flash"
+  timeout_seconds: 45
+
 payment:
   mock_enabled: false
   public_base_url: ""
