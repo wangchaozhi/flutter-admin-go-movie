@@ -8,7 +8,7 @@ class LoginHeader extends StatelessWidget {
     final textTheme = Theme.of(context).textTheme;
 
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         Container(
           width: 52,
@@ -37,6 +37,7 @@ class LoginHeader extends StatelessWidget {
         const SizedBox(height: 18),
         Text(
           'Go Movie',
+          textAlign: TextAlign.center,
           style: textTheme.headlineSmall?.copyWith(
             color: Colors.white,
             fontWeight: FontWeight.w900,
@@ -45,6 +46,7 @@ class LoginHeader extends StatelessWidget {
         const SizedBox(height: 6),
         Text(
           '登录继续观看，收藏与会员权益会自动同步。',
+          textAlign: TextAlign.center,
           style: textTheme.bodyMedium?.copyWith(
             color: const Color(0xFF9CA3AF),
             height: 1.45,
