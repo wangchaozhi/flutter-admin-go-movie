@@ -174,6 +174,77 @@ void main() {
     });
   });
 
+  group('TrackMenuBuilder.resolveAudioTrack', () {
+    test('null selection -> auto on native, rendition 0 on web', () {
+      expect(
+        TrackMenuBuilder.resolveAudioTrack(null, isWeb: false)?.id,
+        'auto',
+      );
+      expect(TrackMenuBuilder.resolveAudioTrack(null, isWeb: true)?.id, '0');
+    });
+
+    test('detected HLS track is applied on native but a no-op on web', () {
+      const hls = AudioTrack('a', 'English', 'en');
+      final option = const TrackMenuOption(
+        value: 'hls:a',
+        label: 'English',
+        audioTrack: hls,
+      );
+      expect(
+        TrackMenuBuilder.resolveAudioTrack(option, isWeb: false),
+        same(hls),
+      );
+      expect(TrackMenuBuilder.resolveAudioTrack(option, isWeb: true), isNull);
+    });
+
+    test('backend track -> rendition index on web, uri track on native', () {
+      final option = TrackMenuOption(
+        value: 'api:1',
+        label: 'AC3',
+        apiTrack: _apiTrack(1, label: 'AC3', streamPosition: 3),
+      );
+      expect(
+        TrackMenuBuilder.resolveAudioTrack(option, isWeb: true)?.id,
+        '3',
+      );
+      final native = TrackMenuBuilder.resolveAudioTrack(option, isWeb: false)!;
+      expect(native.uri, isTrue);
+      expect(native.id, 'https://h/1.m3u8');
+      expect(native.title, 'AC3');
+    });
+  });
+
+  group('TrackMenuBuilder.resolveNativeSubtitleTrack', () {
+    test('null selection turns subtitles off', () {
+      expect(TrackMenuBuilder.resolveNativeSubtitleTrack(null).id, 'no');
+    });
+
+    test('detected HLS subtitle is applied directly', () {
+      const hls = SubtitleTrack('s1', 'English', 'en');
+      final option = const TrackMenuOption(
+        value: 'hls:s1',
+        label: 'English',
+        subtitleTrack: hls,
+      );
+      expect(
+        TrackMenuBuilder.resolveNativeSubtitleTrack(option),
+        same(hls),
+      );
+    });
+
+    test('backend subtitle becomes a uri track with title fallback', () {
+      final option = TrackMenuOption(
+        value: 'api:2',
+        label: 'Chinese',
+        apiTrack: _apiTrack(2, label: 'Chinese'),
+      );
+      final track = TrackMenuBuilder.resolveNativeSubtitleTrack(option);
+      expect(track.uri, isTrue);
+      expect(track.id, 'https://h/2.m3u8');
+      expect(track.title, 'Chinese');
+    });
+  });
+
   group('TrackParser.parseInt', () {
     test('handles num, numeric strings and junk', () {
       expect(TrackParser.parseInt(3), 3);

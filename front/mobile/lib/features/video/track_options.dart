@@ -180,6 +180,53 @@ class TrackMenuBuilder {
     }
     return apiOptions(apiTracks);
   }
+
+  /// An [AudioTrack] whose id is the hls.js rendition index. The vendored
+  /// media_kit fork reads a numeric, non-uri [AudioTrack.id] on web as
+  /// `hls.audioTrack = index`. See packages/media_kit/README_FORK.md.
+  static AudioTrack webHlsAudioTrack(int index) {
+    return AudioTrack(index.toString(), null, null);
+  }
+
+  /// The audio track to hand to the player for the given menu [option], or null
+  /// when no `setAudioTrack` call should be made (an HLS-track selection on web,
+  /// where switching goes through the rendition index instead).
+  static AudioTrack? resolveAudioTrack(
+    TrackMenuOption? option, {
+    required bool isWeb,
+  }) {
+    if (option == null) {
+      // hls.js: rendition index 0 is the default (muxed) audio track.
+      return isWeb ? webHlsAudioTrack(0) : AudioTrack.auto();
+    }
+    if (option.audioTrack != null) {
+      return isWeb ? null : option.audioTrack;
+    }
+    final apiTrack = option.apiTrack!;
+    if (isWeb) {
+      // hls.js switches by rendition index, which matches stream_position.
+      return webHlsAudioTrack(apiTrack.streamPosition);
+    }
+    return AudioTrack.uri(
+      apiTrack.url,
+      title: apiTrack.title.isEmpty ? apiTrack.label : apiTrack.title,
+      language: apiTrack.language.isEmpty ? null : apiTrack.language,
+    );
+  }
+
+  /// The subtitle track to hand to the native player for the given menu
+  /// [option]. Web subtitles are rendered separately (parsed WebVTT overlay),
+  /// so this is native-only.
+  static SubtitleTrack resolveNativeSubtitleTrack(TrackMenuOption? option) {
+    if (option == null) return SubtitleTrack.no();
+    if (option.subtitleTrack != null) return option.subtitleTrack!;
+    final apiTrack = option.apiTrack!;
+    return SubtitleTrack.uri(
+      apiTrack.url,
+      title: apiTrack.title.isEmpty ? apiTrack.label : apiTrack.title,
+      language: apiTrack.language.isEmpty ? null : apiTrack.language,
+    );
+  }
 }
 
 /// Pure parsing of the backend `/play` payload into the track models. URL

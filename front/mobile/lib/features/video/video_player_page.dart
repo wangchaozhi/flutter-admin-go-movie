@@ -271,47 +271,19 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
               .where((option) => option.value == _selectedSubtitleTrackValue)
               .firstOrNull;
 
-    if (audioOption == null) {
-      if (kIsWeb) {
-        // hls.js: rendition index 0 is the default (muxed) audio track.
-        await _player.setAudioTrack(_webHlsAudioTrack(0));
-      } else {
-        await _player.setAudioTrack(AudioTrack.auto());
-      }
-    } else if (audioOption.audioTrack != null) {
-      if (!kIsWeb) {
-        await _player.setAudioTrack(audioOption.audioTrack!);
-      }
-    } else {
-      final apiTrack = audioOption.apiTrack!;
-      if (kIsWeb) {
-        // hls.js switches by rendition index, which matches stream_position.
-        await _player.setAudioTrack(_webHlsAudioTrack(apiTrack.streamPosition));
-      } else {
-        await _player.setAudioTrack(
-          AudioTrack.uri(
-            apiTrack.url,
-            title: apiTrack.title.isEmpty ? apiTrack.label : apiTrack.title,
-            language: apiTrack.language.isEmpty ? null : apiTrack.language,
-          ),
-        );
-      }
+    final audioTrack = TrackMenuBuilder.resolveAudioTrack(
+      audioOption,
+      isWeb: kIsWeb,
+    );
+    if (audioTrack != null) {
+      await _player.setAudioTrack(audioTrack);
     }
 
     if (kIsWeb) {
       await _applyWebSubtitleTrack(subtitleOption);
-    } else if (subtitleOption == null) {
-      await _player.setSubtitleTrack(SubtitleTrack.no());
-    } else if (subtitleOption.subtitleTrack != null) {
-      await _player.setSubtitleTrack(subtitleOption.subtitleTrack!);
     } else {
-      final apiTrack = subtitleOption.apiTrack!;
       await _player.setSubtitleTrack(
-        SubtitleTrack.uri(
-          apiTrack.url,
-          title: apiTrack.title.isEmpty ? apiTrack.label : apiTrack.title,
-          language: apiTrack.language.isEmpty ? null : apiTrack.language,
-        ),
+        TrackMenuBuilder.resolveNativeSubtitleTrack(subtitleOption),
       );
     }
   }
@@ -372,13 +344,6 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     } finally {
       if (mounted) setState(() => _switchingTrack = false);
     }
-  }
-
-  /// Builds an [AudioTrack] whose id is the hls.js rendition index. The
-  /// vendored media_kit fork interprets a numeric, non-uri [AudioTrack.id] on
-  /// web as `hls.audioTrack = index`. See packages/media_kit/README_FORK.md.
-  AudioTrack _webHlsAudioTrack(int index) {
-    return AudioTrack(index.toString(), null, null);
   }
 
   Future<void> _applyWebSubtitleTrack(TrackMenuOption? option) async {
