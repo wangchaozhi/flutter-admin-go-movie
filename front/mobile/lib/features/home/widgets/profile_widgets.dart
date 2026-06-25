@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../models/video.dart';
+import '../../search/search_page.dart';
 import '../models/home_models.dart';
 
 class HomeTopBar extends StatelessWidget {
@@ -50,6 +51,13 @@ class HomeTopBar extends StatelessWidget {
                   ),
                 ),
               ],
+            ),
+          ),
+          IconButton(
+            tooltip: '搜索',
+            icon: const Icon(Icons.search, color: Colors.white),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(builder: (_) => const SearchPage()),
             ),
           ),
           PopupMenuButton<_UserMenuAction>(
