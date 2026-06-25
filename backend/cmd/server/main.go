@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"os"
 
 	"flutter-admin-go/internal/config"
+	"flutter-admin-go/internal/payment"
 	"flutter-admin-go/internal/server"
 	"flutter-admin-go/internal/store"
 )
@@ -17,6 +19,9 @@ func main() {
 		slog.Error("store init failed", "error", err)
 		os.Exit(1)
 	}
+
+	// Background lifecycle jobs run for the lifetime of the process.
+	payment.StartOrderExpiryJanitor(context.Background())
 
 	handler := server.NewRouter()
 	slog.Info("server started", "env", cfg.Env, "addr", cfg.HTTPAddr)

@@ -20,12 +20,33 @@ class _VipPageState extends State<VipPage> with WidgetsBindingObserver {
   var _message = '';
   String? _pendingOrderNo;
   List<_Product> _products = [];
+  bool _isVip = false;
+  int _daysRemaining = 0;
+  String? _vipUntil;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _loadProducts();
+    _loadMembership();
+  }
+
+  Future<void> _loadMembership() async {
+    try {
+      final resp = await _api.getAuth('/api/mobile/profile');
+      if (!mounted) return;
+      if (resp['code'] == 0) {
+        final data = resp['data'] as Map<String, dynamic>? ?? {};
+        setState(() {
+          _isVip = data['is_vip'] as bool? ?? false;
+          _daysRemaining = (data['days_remaining'] as num?)?.toInt() ?? 0;
+          _vipUntil = data['vip_until']?.toString();
+        });
+      }
+    } catch (_) {
+      // membership banner is best-effort
+    }
   }
 
   @override
@@ -38,6 +59,7 @@ class _VipPageState extends State<VipPage> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _refreshPendingOrder();
+      _loadMembership();
     }
   }
 
@@ -87,6 +109,8 @@ class _VipPageState extends State<VipPage> with WidgetsBindingObserver {
         await _completeMockCheckout(_mockCheckoutUri(orderNo, uri));
         if (!mounted) return;
         setState(() => _message = '支付成功，VIP 权益已更新。');
+        await _loadMembership();
+        if (!mounted) return;
         await _showPaymentSuccessDialog(product.name);
         return;
       }
@@ -185,6 +209,12 @@ class _VipPageState extends State<VipPage> with WidgetsBindingObserver {
           : ListView(
               padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
               children: [
+                _MembershipStatus(
+                  isVip: _isVip,
+                  daysRemaining: _daysRemaining,
+                  vipUntil: _vipUntil,
+                ),
+                const SizedBox(height: 12),
                 const _VipHero(),
                 const SizedBox(height: 18),
                 Row(
@@ -239,6 +269,66 @@ class _VipPageState extends State<VipPage> with WidgetsBindingObserver {
                 ],
               ],
             ),
+    );
+  }
+}
+
+class _MembershipStatus extends StatelessWidget {
+  const _MembershipStatus({
+    required this.isVip,
+    required this.daysRemaining,
+    required this.vipUntil,
+  });
+
+  final bool isVip;
+  final int daysRemaining;
+  final String? vipUntil;
+
+  String _formatDate(String raw) {
+    final parsed = DateTime.tryParse(raw);
+    if (parsed == null) return raw;
+    final local = parsed.toLocal();
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${local.year}-${two(local.month)}-${two(local.day)}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final expiringSoon = isVip && daysRemaining <= 7;
+    final String label;
+    if (!isVip) {
+      label = '尚未开通会员，开通后可解锁全部 VIP 影片';
+    } else {
+      final until = vipUntil != null ? _formatDate(vipUntil!) : '';
+      final suffix = expiringSoon ? '，即将到期，建议续费' : '';
+      label = '会员有效期至 $until · 剩余 $daysRemaining 天$suffix';
+    }
+    final accent = !isVip
+        ? const Color(0xFF9CA3AF)
+        : (expiringSoon ? const Color(0xFFF7C948) : const Color(0xFF25D0AB));
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF171B24),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: accent.withValues(alpha: 0.5)),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            isVip ? Icons.verified : Icons.lock_outline,
+            color: accent,
+            size: 20,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              label,
+              style: const TextStyle(color: Colors.white, fontSize: 13),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

@@ -37,6 +37,7 @@
 - 评论与评分：移动端播放页可发表评论和 1–5 星评分、查看平均分和他人评论、删除自己的评论；管理端「评论」菜单可搜索并删除违规评论（`comment:delete`）。
 - 视频搜索：管理端视频列表支持按标题/ID 关键字和类别筛选；App 与管理端的视频列表接口均支持 `q` 关键字（标题，忽略大小写）、`category_id`、分页等查询参数。
 - 首页推荐：`GET /api/home` 聚合「热门（按播放量）/ 最新上架 / VIP 精选」三条横向推荐 rail，移动端首页「全部」频道展示。
+- 会员生命周期：`/api/mobile/profile` 返回 `days_remaining`（剩余天数）；移动端 VIP 页展示会员有效期、剩余天数与「即将到期」提醒（≤7 天）。后端有订单过期清扫任务（`payment.StartOrderExpiryJanitor`），定期把超过 `expires_at` 仍未支付的 `pending`/`paying` 订单置为 `cancelled`。会员到期按 `vip_until` 在读取时即时判定，无需额外降级任务。
 
 ## 环境要求
 

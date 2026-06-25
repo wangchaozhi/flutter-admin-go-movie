@@ -48,13 +48,14 @@ type LoginResponse struct {
 }
 
 type MobileProfileResponse struct {
-	ID       int        `json:"id"`
-	Username string     `json:"username"`
-	Nickname string     `json:"nickname"`
-	Email    string     `json:"email"`
-	Status   string     `json:"status"`
-	VIPUntil *time.Time `json:"vip_until"`
-	IsVIP    bool       `json:"is_vip"`
+	ID            int        `json:"id"`
+	Username      string     `json:"username"`
+	Nickname      string     `json:"nickname"`
+	Email         string     `json:"email"`
+	Status        string     `json:"status"`
+	VIPUntil      *time.Time `json:"vip_until"`
+	IsVIP         bool       `json:"is_vip"`
+	DaysRemaining int        `json:"days_remaining"`
 }
 
 func AdminLoginHandler(w http.ResponseWriter, r *http.Request) {
@@ -157,14 +158,21 @@ func MobileProfileHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now()
+	isVIP := user.VIPUntil != nil && user.VIPUntil.After(now)
+	daysRemaining := 0
+	if isVIP {
+		// Round up so the last partial day still counts as 1 remaining.
+		daysRemaining = int(user.VIPUntil.Sub(now).Hours()/24) + 1
+	}
 	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: MobileProfileResponse{
-		ID:       user.ID,
-		Username: user.Username,
-		Nickname: user.Nickname,
-		Email:    user.Email,
-		Status:   user.Status,
-		VIPUntil: user.VIPUntil,
-		IsVIP:    user.VIPUntil != nil && user.VIPUntil.After(now),
+		ID:            user.ID,
+		Username:      user.Username,
+		Nickname:      user.Nickname,
+		Email:         user.Email,
+		Status:        user.Status,
+		VIPUntil:      user.VIPUntil,
+		IsVIP:         isVIP,
+		DaysRemaining: daysRemaining,
 	}})
 }
 
