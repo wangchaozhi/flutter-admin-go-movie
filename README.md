@@ -28,7 +28,8 @@
 ## 功能概览
 
 - 管理端 RBAC：管理员、角色、菜单和按钮权限管理，主界面菜单会根据 `admin_menus` 的父子关系、排序和图标编码动态渲染。
-- 内容管理：视频、类别、转码任务、转码历史记录和多清晰度 HLS 资源管理。
+- 内容管理：视频、类别、影片资料（演员、导演、地区、年份、语言、类型）、转码任务、转码历史记录和多清晰度 HLS 资源管理。
+- AI 元信息补全：管理端可调用 DeepSeek / OpenAI-compatible API 自动生成视频简介、看点和标签；移动端播放页展示简介、看点、标签和结构化影片资料。
 - App 管理：移动端用户资料、状态和登录密码维护。
 - 支付管理：会员套餐、单片套餐、订单列表和订单删除，订单列表会展示 App 用户名。
 - 移动端：视频浏览、播放、收藏、观看历史、个人设置、商品和订单。
@@ -116,6 +117,38 @@ APP_ENV=prod go run ./cmd/server  # 生产环境，需通过环境变量补齐�
 ```text
 GET /api/health
 ```
+
+## AI 视频信息补全
+
+管理端视频列表和编辑面板提供「AI补全」按钮，用于生成并缓存播放页信息：
+
+- `synopsis`：主简介，会在原简介为空时自动写回 `videos.description`。
+- `highlights`：播放页「看点」列表。
+- `tags`：播放页标签。
+
+生成结果保存在 `video_ai_metadata` 表。视频自身的结构化影片资料保存在 `videos` 表，包括：
+
+```text
+actors        # 演员，JSON 数组
+directors     # 导演，JSON 数组
+genres        # 类型，JSON 数组
+region        # 地区
+release_year  # 年份
+language      # 语言
+```
+
+AI provider 目前按 OpenAI-compatible Chat Completions 抽象，默认配置指向 DeepSeek：
+
+```bash
+AI_ENABLED=true
+AI_PROVIDER=deepseek
+AI_API_KEY="<your-api-key>"
+AI_BASE_URL="https://api.deepseek.com"
+AI_MODEL="deepseek-v4-flash"
+AI_TIMEOUT_SECONDS=45
+```
+
+不要把真实 API key 写入 `backend/config/*.yml` 或提交到仓库；请使用环境变量或部署平台 Secret。AI 只会根据标题、已有简介、分类、演职员、地区、年份、类型、语言、时长和分辨率等元数据生成内容；演员、导演、地区、年份、语言为空时提示词要求模型不要编造。
 
 ## 启动管理端
 
@@ -228,6 +261,7 @@ GET|POST          /api/admin/videos
 GET|PUT|DELETE    /api/admin/videos/{id}
 POST              /api/admin/videos/{id}/upload
 POST              /api/admin/videos/{id}/cover
+POST              /api/admin/videos/{id}/ai-metadata
 GET|POST          /api/admin/videos/{id}/transcode
 GET               /api/admin/videos/{id}/tasks
 DELETE            /api/admin/videos/{id}/tasks/{quality}
