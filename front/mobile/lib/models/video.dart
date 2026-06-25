@@ -61,6 +61,12 @@ class Video {
   final String description;
   final int categoryId;
   final String categoryName;
+  final List<String> actors;
+  final List<String> directors;
+  final List<String> genres;
+  final String region;
+  final int releaseYear;
+  final String language;
   final String coverUrl;
   final int duration;
   final String status;
@@ -74,6 +80,12 @@ class Video {
     required this.description,
     required this.categoryId,
     required this.categoryName,
+    required this.actors,
+    required this.directors,
+    required this.genres,
+    required this.region,
+    required this.releaseYear,
+    required this.language,
     required this.coverUrl,
     required this.duration,
     required this.status,
@@ -88,6 +100,12 @@ class Video {
     description: json['description'] as String? ?? '',
     categoryId: json['category_id'] as int? ?? 0,
     categoryName: json['category_name'] as String? ?? '',
+    actors: VideoAIMetadata._stringList(json['actors']),
+    directors: VideoAIMetadata._stringList(json['directors']),
+    genres: VideoAIMetadata._stringList(json['genres']),
+    region: json['region'] as String? ?? '',
+    releaseYear: json['release_year'] as int? ?? 0,
+    language: json['language'] as String? ?? '',
     coverUrl: json['cover_url'] as String? ?? '',
     duration: json['duration'] as int? ?? 0,
     status: json['status'] as String? ?? '',

@@ -843,6 +843,20 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                   ),
                 if (_video.durationLabel.isNotEmpty)
                   _buildMetaChip(Icons.schedule_rounded, _video.durationLabel),
+                if (_video.region.isNotEmpty)
+                  _buildMetaChip(Icons.public_rounded, _video.region),
+                if (_video.releaseYear > 0)
+                  _buildMetaChip(
+                    Icons.calendar_month_rounded,
+                    _video.releaseYear.toString(),
+                  ),
+                if (_video.language.isNotEmpty)
+                  _buildMetaChip(Icons.translate_rounded, _video.language),
+                if (_video.genres.isNotEmpty)
+                  _buildMetaChip(
+                    Icons.category_rounded,
+                    _video.genres.take(3).join(' / '),
+                  ),
                 _buildMetaChip(
                   _video.isVip && !_video.isFree
                       ? Icons.workspace_premium_rounded
@@ -851,6 +865,13 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                 ),
               ],
             ),
+            if (_video.directors.isNotEmpty || _video.actors.isNotEmpty) ...[
+              const SizedBox(height: 14),
+              if (_video.directors.isNotEmpty)
+                _buildInfoLine('导演', _video.directors.join('、')),
+              if (_video.actors.isNotEmpty)
+                _buildInfoLine('主演', _video.actors.join('、')),
+            ],
             const SizedBox(height: 14),
             const Text(
               '简介',
@@ -920,6 +941,38 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildInfoLine(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 7),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 42,
+            child: Text(
+              label,
+              style: const TextStyle(
+                color: Color(0xFF6B7280),
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(
+                color: Color(0xFFE5E7EB),
+                fontSize: 13,
+                height: 1.35,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

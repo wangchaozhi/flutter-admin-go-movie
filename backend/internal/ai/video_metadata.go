@@ -20,14 +20,20 @@ var (
 )
 
 type VideoMetadataInput struct {
-	Title       string `json:"title"`
-	Description string `json:"description,omitempty"`
-	Category    string `json:"category,omitempty"`
-	Duration    int    `json:"duration,omitempty"`
-	Width       int    `json:"width,omitempty"`
-	Height      int    `json:"height,omitempty"`
-	IsVIP       bool   `json:"is_vip"`
-	IsFree      bool   `json:"is_free"`
+	Title       string   `json:"title"`
+	Description string   `json:"description,omitempty"`
+	Category    string   `json:"category,omitempty"`
+	Actors      []string `json:"actors,omitempty"`
+	Directors   []string `json:"directors,omitempty"`
+	Genres      []string `json:"genres,omitempty"`
+	Region      string   `json:"region,omitempty"`
+	ReleaseYear int      `json:"release_year,omitempty"`
+	Language    string   `json:"language,omitempty"`
+	Duration    int      `json:"duration,omitempty"`
+	Width       int      `json:"width,omitempty"`
+	Height      int      `json:"height,omitempty"`
+	IsVIP       bool     `json:"is_vip"`
+	IsFree      bool     `json:"is_free"`
 }
 
 type VideoMetadata struct {
@@ -169,7 +175,8 @@ type chatCompletionResponse struct {
 
 const videoMetadataSystemPrompt = `你是视频网站的内容运营编辑。请为站内视频生成面向观众的信息模块。
 要求：
-- 只根据用户提供的标题、已有简介、分类、时长、分辨率等元数据创作，不要声称识别了画面、演员、导演、年份或剧情细节。
+- 只根据用户提供的标题、已有简介、分类、演职员、地区、年份、类型、语言、时长、分辨率等元数据创作。
+- 演员、导演、地区、年份、语言为空时不要编造；已有时可以自然融入简介或看点。
 - 风格接近主流视频网站：清楚、克制、有吸引力，避免营销腔和夸张承诺。
 - 输出必须是 JSON 对象，字段只有 synopsis、highlights、tags。
 - synopsis 为 80 到 160 个中文字符。

@@ -20,6 +20,12 @@ export type Video = {
   title: string
   description: string
   category_id: number
+  actors: string[]
+  directors: string[]
+  genres: string[]
+  region: string
+  release_year: number
+  language: string
   cover_key: string
   original_key: string
   hls_master_key: string
@@ -58,6 +64,12 @@ export type VideoForm = {
   title: string
   description: string
   category_id: number
+  actors: string[]
+  directors: string[]
+  genres: string[]
+  region: string
+  release_year: number
+  language: string
   is_vip: boolean
   is_free: boolean
 }

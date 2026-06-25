@@ -30,6 +30,12 @@ const emptyForm: VideoForm = {
   title: '',
   description: '',
   category_id: 0,
+  actors: [],
+  directors: [],
+  genres: [],
+  region: '',
+  release_year: 0,
+  language: '',
   is_vip: false,
   is_free: true,
 }
@@ -127,6 +133,34 @@ function isActiveTranscodeStatus(status?: string) {
 
 function effectiveQualityStatus(status: string | undefined, transcoded?: boolean) {
   return transcoded && status === 'canceled' ? 'success' : status
+}
+
+function joinCatalogList(values?: string[]) {
+  return (values ?? []).join('、')
+}
+
+function parseCatalogList(value: string) {
+  return value
+    .split(/[、,，/]/)
+    .map(item => item.trim())
+    .filter(Boolean)
+}
+
+function videoToForm(v: Video): VideoForm {
+  return {
+    id: v.id,
+    title: v.title,
+    description: v.description,
+    category_id: v.category_id,
+    actors: v.actors ?? [],
+    directors: v.directors ?? [],
+    genres: v.genres ?? [],
+    region: v.region ?? '',
+    release_year: v.release_year ?? 0,
+    language: v.language ?? '',
+    is_vip: v.is_vip,
+    is_free: v.is_free,
+  }
 }
 
 function transcodeStateLabel(status: string | undefined, fallback: string, progress?: number) {
@@ -250,7 +284,7 @@ export function VideoManagementSection({
       if (method === 'POST' && json.code === 0 && json.data) {
         const v = json.data
         setMp4FileName('')
-        setForm({ id: v.id, title: v.title, description: v.description, category_id: v.category_id, is_vip: v.is_vip, is_free: v.is_free })
+        setForm(videoToForm(v))
         if (createFile) handleUploadMp4(v.id, createFile)
       } else if (method === 'PUT') {
         setForm(emptyForm)
@@ -646,7 +680,7 @@ export function VideoManagementSection({
                         {canEdit && (
                           <button type="button" onClick={() => {
                             setUploadError('')
-                            setForm({ id: v.id, title: v.title, description: v.description, category_id: v.category_id, is_vip: v.is_vip, is_free: v.is_free })
+                            setForm(videoToForm(v))
                           }}>
                             <Film size={13} /> 编辑
                           </button>
@@ -849,6 +883,40 @@ export function VideoManagementSection({
                 <option key={c.id} value={c.id}>{c.name}</option>
               ))}
             </select>
+          </label>
+          <div className="form-split">
+            <label>
+              地区
+              <input value={form.region} onChange={e => setForm({ ...form, region: e.target.value })} placeholder="中国大陆 / 美国 / 日本" />
+            </label>
+            <label>
+              年份
+              <input
+                type="number"
+                min={0}
+                value={form.release_year || ''}
+                onChange={e => setForm({ ...form, release_year: Number(e.target.value) || 0 })}
+                placeholder="2024"
+              />
+            </label>
+          </div>
+          <div className="form-split">
+            <label>
+              语言
+              <input value={form.language} onChange={e => setForm({ ...form, language: e.target.value })} placeholder="普通话 / 英语" />
+            </label>
+            <label>
+              类型
+              <input value={joinCatalogList(form.genres)} onChange={e => setForm({ ...form, genres: parseCatalogList(e.target.value) })} placeholder="动作、喜剧、动画" />
+            </label>
+          </div>
+          <label>
+            导演
+            <input value={joinCatalogList(form.directors)} onChange={e => setForm({ ...form, directors: parseCatalogList(e.target.value) })} placeholder="多位导演用顿号分隔" />
+          </label>
+          <label>
+            演员
+            <input value={joinCatalogList(form.actors)} onChange={e => setForm({ ...form, actors: parseCatalogList(e.target.value) })} placeholder="多位演员用顿号分隔" />
           </label>
           <div className="checkbox-row">
             <label className="inline-check">

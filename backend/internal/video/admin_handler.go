@@ -36,11 +36,17 @@ func AdminCreateVideoHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Title       string `json:"title"`
-		Description string `json:"description"`
-		CategoryID  int    `json:"category_id"`
-		IsVip       bool   `json:"is_vip"`
-		IsFree      bool   `json:"is_free"`
+		Title       string   `json:"title"`
+		Description string   `json:"description"`
+		CategoryID  int      `json:"category_id"`
+		Actors      []string `json:"actors"`
+		Directors   []string `json:"directors"`
+		Genres      []string `json:"genres"`
+		Region      string   `json:"region"`
+		ReleaseYear int      `json:"release_year"`
+		Language    string   `json:"language"`
+		IsVip       bool     `json:"is_vip"`
+		IsFree      bool     `json:"is_free"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "invalid body"})
@@ -54,6 +60,12 @@ func AdminCreateVideoHandler(w http.ResponseWriter, r *http.Request) {
 		Title:       req.Title,
 		Description: req.Description,
 		CategoryID:  req.CategoryID,
+		Actors:      store.StringArray(normalizeCatalogNames(req.Actors, 16, 40)),
+		Directors:   store.StringArray(normalizeCatalogNames(req.Directors, 8, 40)),
+		Genres:      store.StringArray(normalizeCatalogNames(req.Genres, 12, 24)),
+		Region:      trimCatalogText(req.Region, 128),
+		ReleaseYear: normalizeReleaseYear(req.ReleaseYear),
+		Language:    trimCatalogText(req.Language, 128),
 		IsVip:       req.IsVip,
 		IsFree:      req.IsFree,
 		Status:      "uploading",
@@ -802,6 +814,42 @@ func parseAvailableTranscodeQualityNames(message string) []string {
 	return names
 }
 
+func normalizeCatalogNames(values []string, maxItems, maxRunes int) []string {
+	result := make([]string, 0, len(values))
+	seen := map[string]bool{}
+	for _, value := range values {
+		item := trimCatalogText(value, maxRunes)
+		if item == "" || seen[item] {
+			continue
+		}
+		seen[item] = true
+		result = append(result, item)
+		if len(result) >= maxItems {
+			break
+		}
+	}
+	return result
+}
+
+func trimCatalogText(value string, maxRunes int) string {
+	text := strings.TrimSpace(value)
+	if text == "" {
+		return ""
+	}
+	runes := []rune(text)
+	if len(runes) > maxRunes {
+		return string(runes[:maxRunes])
+	}
+	return text
+}
+
+func normalizeReleaseYear(year int) int {
+	if year < 0 || year > time.Now().Year()+2 {
+		return 0
+	}
+	return year
+}
+
 // PUT /api/admin/videos/{id}
 func AdminUpdateVideoHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPut {
@@ -815,12 +863,18 @@ func AdminUpdateVideoHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Title       *string `json:"title"`
-		Description *string `json:"description"`
-		CategoryID  *int    `json:"category_id"`
-		IsVip       *bool   `json:"is_vip"`
-		IsFree      *bool   `json:"is_free"`
-		Status      *string `json:"status"`
+		Title       *string   `json:"title"`
+		Description *string   `json:"description"`
+		CategoryID  *int      `json:"category_id"`
+		Actors      *[]string `json:"actors"`
+		Directors   *[]string `json:"directors"`
+		Genres      *[]string `json:"genres"`
+		Region      *string   `json:"region"`
+		ReleaseYear *int      `json:"release_year"`
+		Language    *string   `json:"language"`
+		IsVip       *bool     `json:"is_vip"`
+		IsFree      *bool     `json:"is_free"`
+		Status      *string   `json:"status"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "invalid body"})
@@ -835,6 +889,24 @@ func AdminUpdateVideoHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.CategoryID != nil {
 		updates["category_id"] = *req.CategoryID
+	}
+	if req.Actors != nil {
+		updates["actors"] = store.StringArray(normalizeCatalogNames(*req.Actors, 16, 40))
+	}
+	if req.Directors != nil {
+		updates["directors"] = store.StringArray(normalizeCatalogNames(*req.Directors, 8, 40))
+	}
+	if req.Genres != nil {
+		updates["genres"] = store.StringArray(normalizeCatalogNames(*req.Genres, 12, 24))
+	}
+	if req.Region != nil {
+		updates["region"] = trimCatalogText(*req.Region, 128)
+	}
+	if req.ReleaseYear != nil {
+		updates["release_year"] = normalizeReleaseYear(*req.ReleaseYear)
+	}
+	if req.Language != nil {
+		updates["language"] = trimCatalogText(*req.Language, 128)
 	}
 	if req.IsVip != nil {
 		updates["is_vip"] = *req.IsVip

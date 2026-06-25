@@ -3,25 +3,31 @@ package store
 import "time"
 
 type Video struct {
-	ID                 int64     `gorm:"primaryKey;column:id"           json:"id"`
-	Title              string    `gorm:"column:title"                   json:"title"`
-	Description        string    `gorm:"column:description"             json:"description"`
-	CategoryID         int       `gorm:"column:category_id"             json:"category_id"`
-	CoverKey           string    `gorm:"column:cover_key"               json:"cover_key"`
-	OriginalKey        string    `gorm:"column:original_key"            json:"original_key"`
-	HLSMasterKey       string    `gorm:"column:hls_master_key"          json:"hls_master_key"`
-	Duration           int       `gorm:"column:duration"                json:"duration"`
-	Size               int64     `gorm:"column:size"                    json:"size"`
-	SourceWidth        int       `gorm:"column:source_width"            json:"source_width"`
-	SourceHeight       int       `gorm:"column:source_height"           json:"source_height"`
-	AudioTrackCount    int       `gorm:"column:audio_track_count"      json:"audio_track_count"`
-	SubtitleTrackCount int       `gorm:"column:subtitle_track_count"   json:"subtitle_track_count"`
-	MediaTracksScanned bool      `gorm:"column:media_tracks_scanned"   json:"media_tracks_scanned"`
-	Status             string    `gorm:"column:status"                  json:"status"`
-	IsVip              bool      `gorm:"column:is_vip"                  json:"is_vip"`
-	IsFree             bool      `gorm:"column:is_free"                 json:"is_free"`
-	CreatedAt          time.Time `gorm:"column:created_at"              json:"created_at"`
-	UpdatedAt          time.Time `gorm:"column:updated_at"              json:"updated_at"`
+	ID                 int64       `gorm:"primaryKey;column:id"           json:"id"`
+	Title              string      `gorm:"column:title"                   json:"title"`
+	Description        string      `gorm:"column:description"             json:"description"`
+	CategoryID         int         `gorm:"column:category_id"             json:"category_id"`
+	Actors             StringArray `gorm:"column:actors;type:jsonb"       json:"actors"`
+	Directors          StringArray `gorm:"column:directors;type:jsonb"    json:"directors"`
+	Genres             StringArray `gorm:"column:genres;type:jsonb"       json:"genres"`
+	Region             string      `gorm:"column:region"                  json:"region"`
+	ReleaseYear        int         `gorm:"column:release_year"            json:"release_year"`
+	Language           string      `gorm:"column:language"                json:"language"`
+	CoverKey           string      `gorm:"column:cover_key"               json:"cover_key"`
+	OriginalKey        string      `gorm:"column:original_key"            json:"original_key"`
+	HLSMasterKey       string      `gorm:"column:hls_master_key"          json:"hls_master_key"`
+	Duration           int         `gorm:"column:duration"                json:"duration"`
+	Size               int64       `gorm:"column:size"                    json:"size"`
+	SourceWidth        int         `gorm:"column:source_width"            json:"source_width"`
+	SourceHeight       int         `gorm:"column:source_height"           json:"source_height"`
+	AudioTrackCount    int         `gorm:"column:audio_track_count"      json:"audio_track_count"`
+	SubtitleTrackCount int         `gorm:"column:subtitle_track_count"   json:"subtitle_track_count"`
+	MediaTracksScanned bool        `gorm:"column:media_tracks_scanned"   json:"media_tracks_scanned"`
+	Status             string      `gorm:"column:status"                  json:"status"`
+	IsVip              bool        `gorm:"column:is_vip"                  json:"is_vip"`
+	IsFree             bool        `gorm:"column:is_free"                 json:"is_free"`
+	CreatedAt          time.Time   `gorm:"column:created_at"              json:"created_at"`
+	UpdatedAt          time.Time   `gorm:"column:updated_at"              json:"updated_at"`
 
 	TranscodedQualities         []string `gorm:"-" json:"transcoded_qualities,omitempty"`
 	AvailableTranscodeQualities []string `gorm:"-" json:"available_transcode_qualities,omitempty"`
