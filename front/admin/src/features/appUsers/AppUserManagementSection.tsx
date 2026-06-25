@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
-import { Loader, Pencil, ShieldBan, ShieldCheck, Smartphone, Trash2 } from 'lucide-react'
-import type { ApiResponse, AppUser, AppUserForm } from '../../adminTypes'
-import { PanelTitle } from '../../components/shared'
+import { ArrowDown, ArrowUp, CalendarClock, Crown, Loader, Minus, Pencil, Plus, Search, ShieldBan, ShieldCheck, Smartphone, Trash2 } from 'lucide-react'
+import type { ApiResponse, AppUser, AppUserForm, Paged } from '../../adminTypes'
+import { PanelTitle, Pagination } from '../../components/shared'
+
+const PER_PAGE = 20
 
 const emptyForm: AppUserForm = {
   username: '',
@@ -10,6 +12,17 @@ const emptyForm: AppUserForm = {
   nickname: '',
   email: '',
   status: 'active',
+}
+
+function vipExpiry(u: AppUser): Date | null {
+  if (!u.vip_until) return null
+  const until = new Date(u.vip_until)
+  return Number.isNaN(until.getTime()) ? null : until
+}
+
+function isVipActive(u: AppUser): boolean {
+  const until = vipExpiry(u)
+  return until != null && until.getTime() > Date.now()
 }
 
 export function AppUserManagementSection({
@@ -22,18 +35,47 @@ export function AppUserManagementSection({
   const [users, setUsers] = useState<AppUser[]>([])
   const [form, setForm] = useState<AppUserForm>(emptyForm)
   const [saving, setSaving] = useState(false)
+  const [vipDays, setVipDays] = useState(30)
+  const [vipBusy, setVipBusy] = useState(false)
+  const [query, setQuery] = useState('')
+  const [debouncedQuery, setDebouncedQuery] = useState('')
+  const [vipFilter, setVipFilter] = useState<'all' | 'vip' | 'none'>('all')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+  const [page, setPage] = useState(1)
+  const [total, setTotal] = useState(0)
 
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+  const hasFilter = debouncedQuery.trim() !== '' || vipFilter !== 'all'
 
   async function load() {
-    const res = await fetch('/api/admin/app-users', { headers })
-    const json: ApiResponse<AppUser[]> = await res.json()
-    if (json.code === 0) setUsers(json.data ?? [])
+    const params = new URLSearchParams({
+      page: String(page),
+      per_page: String(PER_PAGE),
+      sort: sortDir,
+    })
+    const keyword = debouncedQuery.trim()
+    if (keyword) params.set('q', keyword)
+    if (vipFilter !== 'all') params.set('vip', vipFilter)
+    const res = await fetch(`/api/admin/app-users?${params.toString()}`, { headers })
+    const json: ApiResponse<Paged<AppUser>> = await res.json()
+    if (json.code === 0 && json.data) {
+      setUsers(json.data.items ?? [])
+      setTotal(json.data.total ?? 0)
+    }
   }
 
-  // mount-only load; `load` is recreated each render so it stays out of deps
+  // Debounce the search box and snap back to the first page on a new keyword.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedQuery(query)
+      setPage(1)
+    }, 300)
+    return () => clearTimeout(t)
+  }, [query])
+
+  // Reload whenever the page or the effective query window changes.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { load() }, [])
+  useEffect(() => { load() }, [page, debouncedQuery, vipFilter, sortDir])
 
   async function handleSave(e: FormEvent) {
     e.preventDefault()
@@ -66,14 +108,51 @@ export function AppUserManagementSection({
     load()
   }
 
+  async function adjustVip(id: number, days: number) {
+    if (vipBusy || days === 0) return
+    setVipBusy(true)
+    try {
+      await fetch(`/api/admin/app-users/${id}/vip`, {
+        method: 'POST', headers,
+        body: JSON.stringify({ days }),
+      })
+      await load()
+    } finally {
+      setVipBusy(false)
+    }
+  }
+
   const canCreate = can('app_user:create')
   const canEdit = can('app_user:edit')
   const canDelete = can('app_user:delete')
 
+  const editingUser = form.id ? users.find(u => u.id === form.id) : undefined
+
   return (
     <section className="content-grid">
       <section className="table-panel">
-        <PanelTitle title="App 用户列表" count={users.length} />
+        <PanelTitle title="App 用户列表" count={total} />
+        <div className="table-filters">
+          <div className="table-search">
+            <Search size={14} />
+            <input
+              type="search"
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              placeholder="搜索 ID / 用户名 / 昵称 / 邮箱"
+            />
+          </div>
+          <select
+            className="vip-filter"
+            value={vipFilter}
+            onChange={e => { setVipFilter(e.target.value as 'all' | 'vip' | 'none'); setPage(1) }}
+            aria-label="会员筛选"
+          >
+            <option value="all">全部会员状态</option>
+            <option value="vip">仅会员</option>
+            <option value="none">仅非会员</option>
+          </select>
+        </div>
         <div className="table-wrap">
           <table>
             <thead>
@@ -83,7 +162,14 @@ export function AppUserManagementSection({
                 <th>昵称</th>
                 <th>邮箱</th>
                 <th>状态</th>
-                <th>注册时间</th>
+                <th>会员</th>
+                <th
+                  className="sortable-th"
+                  onClick={() => { setSortDir(d => (d === 'asc' ? 'desc' : 'asc')); setPage(1) }}
+                  title="点击切换注册时间排序"
+                >
+                  注册时间 {sortDir === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />}
+                </th>
                 <th>操作</th>
               </tr>
             </thead>
@@ -98,6 +184,18 @@ export function AppUserManagementSection({
                     <span className={`status-badge ${u.status === 'active' ? 'status-ready' : 'status-offline'}`}>
                       {u.status === 'active' ? '正常' : '封禁'}
                     </span>
+                  </td>
+                  <td>
+                    {isVipActive(u) ? (
+                      <span
+                        className="status-badge status-vip"
+                        title={`会员到期：${vipExpiry(u)!.toLocaleString()}`}
+                      >
+                        <Crown size={12} /> 会员
+                      </span>
+                    ) : (
+                      <span className="text-faint">非会员</span>
+                    )}
                   </td>
                   <td className="text-faint">{u.created_at ? new Date(u.created_at).toLocaleDateString() : '—'}</td>
                   <td>
@@ -125,9 +223,17 @@ export function AppUserManagementSection({
                   </td>
                 </tr>
               ))}
+              {users.length === 0 && (
+                <tr>
+                  <td colSpan={8} className="text-faint" style={{ textAlign: 'center', padding: '18px' }}>
+                    {hasFilter ? '没有匹配的用户' : '暂无 App 用户'}
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
+        <Pagination page={page} perPage={PER_PAGE} total={total} onPage={setPage} />
       </section>
 
       <div className="editor-panel">
@@ -196,6 +302,66 @@ export function AppUserManagementSection({
             <button type="button" className="secondary" onClick={() => setForm(emptyForm)}>重置</button>
           </div>
         </form>
+
+        {canEdit && editingUser && (
+          <div className="vip-panel">
+            <div className="vip-panel-title"><Crown size={14} /> 会员时长</div>
+            <div className="vip-status">
+              {isVipActive(editingUser) ? (
+                <>
+                  当前：
+                  <span className="status-badge status-vip"><Crown size={12} /> 会员</span>
+                  {' '}到期 {vipExpiry(editingUser)!.toLocaleString()}
+                </>
+              ) : (
+                <span className="text-faint">当前：非会员</span>
+              )}
+            </div>
+            <div className="vip-presets">
+              <button type="button" disabled={vipBusy} onClick={() => adjustVip(editingUser.id, 30)}><Plus size={12} /> 1 个月</button>
+              <button type="button" disabled={vipBusy} onClick={() => adjustVip(editingUser.id, 90)}><Plus size={12} /> 3 个月</button>
+              <button type="button" disabled={vipBusy} onClick={() => adjustVip(editingUser.id, 365)}><Plus size={12} /> 1 年</button>
+              <button type="button" disabled={vipBusy} onClick={() => adjustVip(editingUser.id, -30)}><Minus size={12} /> 1 个月</button>
+            </div>
+            <div className="vip-custom">
+              <CalendarClock size={14} />
+              <input
+                type="number"
+                value={vipDays}
+                onChange={e => setVipDays(parseInt(e.target.value, 10) || 0)}
+              />
+              <span className="text-faint">天</span>
+              <button
+                type="button"
+                disabled={vipBusy || vipDays === 0}
+                onClick={() => adjustVip(editingUser.id, Math.abs(vipDays))}
+              >
+                {vipBusy ? <Loader size={12} className="spin" /> : <Plus size={12} />} 增加
+              </button>
+              <button
+                type="button"
+                disabled={vipBusy || vipDays === 0}
+                onClick={() => adjustVip(editingUser.id, -Math.abs(vipDays))}
+              >
+                <Minus size={12} /> 减少
+              </button>
+            </div>
+            {isVipActive(editingUser) && (
+              <div className="vip-presets" style={{ marginTop: 6 }}>
+                <button
+                  type="button"
+                  className="danger"
+                  disabled={vipBusy}
+                  onClick={() => {
+                    if (window.confirm('确认清除该用户的会员资格？')) adjustVip(editingUser.id, -100000)
+                  }}
+                >
+                  <Trash2 size={12} /> 清除会员
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </section>
   )

@@ -1,5 +1,6 @@
 export { CheckboxGroup } from './CheckboxGroup'
 export { FormActions } from './FormActions'
 export { PanelTitle } from './PanelTitle'
+export { Pagination } from './Pagination'
 export { RowActions } from './RowActions'
 export { formatNames } from './formatNames'

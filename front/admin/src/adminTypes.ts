@@ -153,6 +153,13 @@ export type ApiResponse<T> = {
   data?: T
 }
 
+export type Paged<T> = {
+  items: T[]
+  total: number
+  page: number
+  per_page: number
+}
+
 export type LoginResponse = {
   token: string
   username: string
@@ -181,6 +188,7 @@ export type AppUser = {
   nickname: string
   email: string
   status: 'active' | 'banned'
+  vip_until: string | null
   created_at: string
   updated_at: string
 }

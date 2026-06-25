@@ -1237,6 +1237,112 @@ small.danger-text {
 .status-ready      { background: var(--success-bg); color: var(--success-text); border: 1px solid var(--success-border); }
 .status-failed     { background: var(--danger-bg); color: var(--danger-text); border: 1px solid var(--danger-border); }
 .status-offline    { background: var(--surface-subtle); color: var(--text-faint); }
+.status-vip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #fef9c3;
+  color: #854d0e;
+  border: 1px solid #fde047;
+}
+:root[data-theme='dark'] .status-vip,
+:root[data-theme='system'] .status-vip {
+  background: #3b2f10;
+  color: #fde68a;
+  border-color: #a16207;
+}
+
+.vip-panel {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-subtle);
+}
+.vip-panel .vip-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.vip-panel .vip-status { margin: 6px 0 10px; font-size: 12px; }
+.vip-panel .vip-presets,
+.vip-panel .vip-custom {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.vip-panel .vip-custom { margin-top: 8px; }
+.vip-panel .vip-custom input { width: 84px; }
+
+.table-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 4px;
+}
+.table-filters .vip-filter {
+  width: auto;
+  min-width: 140px;
+}
+.table-search {
+  display: flex;
+  flex: 1;
+  min-width: 200px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-subtle);
+  color: var(--text-faint);
+}
+.table-search input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  padding: 8px 0;
+  color: var(--text);
+  outline: none;
+}
+.table-search input::placeholder { color: var(--text-faint); }
+
+.sortable-th {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.sortable-th:hover { color: var(--text); }
+.sortable-th svg { vertical-align: middle; margin-left: 2px; }
+
+.pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 14px;
+}
+.pagination-info { font-size: 12px; color: var(--text-faint); }
+.pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pagination-controls button {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.pagination-page {
+  font-size: 12px;
+  color: var(--text-muted);
+  min-width: 52px;
+  text-align: center;
+}
 
 :root[data-theme='dark'] .status-uploaded,
 :root[data-theme='system'] .status-uploaded {
