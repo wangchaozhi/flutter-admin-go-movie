@@ -11,6 +11,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 import '../../core/api_client.dart';
 import '../../models/video.dart' as model;
 import 'playback_parsers.dart';
+import 'playback_progress_service.dart';
 
 class _QualityOption {
   final String name;
@@ -128,8 +129,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   bool _hasSubtitleTracks = false;
   Timer? _progressTimer;
   Timer? _refreshTimer;
-  Duration _lastSavedPosition = Duration.zero;
-  bool _savingProgress = false;
+  late final VideoProgressService _progressService;
   bool _refreshingSource = false;
   bool _recoveringPlayback = false;
   bool _isFullscreen = false;
@@ -139,6 +139,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _progressService = VideoProgressService(videoId: widget.video.id);
     _player = Player();
     _controller = VideoController(_player);
     _playerErrorSubscription = _player.stream.error.listen(_handlePlayerError);
@@ -213,13 +214,14 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
           _selectedSubtitleTrackValue = null;
         });
       }
-      final resumePosition = await _loadSavedProgress();
+      final resumePosition = await _progressService.load();
       await _player.open(Media(source.url), play: false);
       await _player.setRate(_playbackRate);
       await _waitForMediaReady();
       _syncDetectedTracks(_player.state.tracks);
       await _applySelectedMediaTracks();
-      if (resumePosition > Duration.zero && _canResumeAt(resumePosition)) {
+      if (resumePosition > Duration.zero &&
+          canResumeAt(resumePosition, _player.state.duration)) {
         await _player.seek(resumePosition);
       }
       await _resumePlayback();
@@ -789,29 +791,6 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     return fallback;
   }
 
-  Future<Duration> _loadSavedProgress() async {
-    try {
-      final resp = await ApiClient().getAuth(
-        '/api/videos/${widget.video.id}/progress',
-      );
-      if (resp['code'] != 0) return Duration.zero;
-      final data = resp['data'];
-      final position = data is Map<String, dynamic> ? data['position'] : null;
-      if (position is num && position > 0) {
-        return Duration(seconds: position.toInt());
-      }
-    } catch (_) {
-      // Progress is a comfort feature; playback should not fail when it is absent.
-    }
-    return Duration.zero;
-  }
-
-  bool _canResumeAt(Duration position) {
-    final duration = _player.state.duration;
-    if (duration <= Duration.zero) return true;
-    return position < duration - const Duration(seconds: 20);
-  }
-
   void _startProgressTimer() {
     _progressTimer?.cancel();
     _progressTimer = Timer.periodic(const Duration(seconds: 10), (_) {
@@ -838,29 +817,14 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   Future<void> _saveProgress({
     bool force = false,
     Duration? positionOverride,
-  }) async {
-    if (_savingProgress) return;
+  }) {
     final position = positionOverride ?? _player.state.position;
-    final duration = _player.state.duration;
-    if (position < Duration.zero) return;
-    if (position == Duration.zero && positionOverride == null) return;
-    if (!force &&
-        (position - _lastSavedPosition).abs() < const Duration(seconds: 5)) {
-      return;
-    }
-
-    _savingProgress = true;
-    try {
-      await ApiClient().postAuth('/api/videos/${widget.video.id}/progress', {
-        'position': position.inSeconds,
-        'duration': duration.inSeconds,
-      });
-      _lastSavedPosition = position;
-    } catch (_) {
-      // Network blips are expected during playback; the next tick will retry.
-    } finally {
-      _savingProgress = false;
-    }
+    return _progressService.save(
+      position,
+      _player.state.duration,
+      force: force,
+      isExplicitPosition: positionOverride != null,
+    );
   }
 
   void _startRefreshTimer() {
