@@ -12,67 +12,13 @@ import '../../core/api_client.dart';
 import '../../models/video.dart' as model;
 import 'playback_parsers.dart';
 import 'playback_progress_service.dart';
-
-class _QualityOption {
-  final String name;
-  final String label;
-  final String url;
-
-  const _QualityOption({
-    required this.name,
-    required this.label,
-    required this.url,
-  });
-}
-
-class _MediaTrackOption {
-  final int id;
-  final String label;
-  final String url;
-  final String language;
-  final String title;
-  final String codec;
-  final bool isDefault;
-  final bool isForced;
-
-  /// Position of this track within its type in the source stream order. On web
-  /// this matches the hls.js audio-rendition index used to switch tracks.
-  final int streamPosition;
-
-  const _MediaTrackOption({
-    required this.id,
-    required this.label,
-    required this.url,
-    required this.language,
-    required this.title,
-    required this.codec,
-    required this.isDefault,
-    required this.isForced,
-    required this.streamPosition,
-  });
-}
-
-class _TrackMenuOption {
-  final String value;
-  final String label;
-  final AudioTrack? audioTrack;
-  final SubtitleTrack? subtitleTrack;
-  final _MediaTrackOption? apiTrack;
-
-  const _TrackMenuOption({
-    required this.value,
-    required this.label,
-    this.audioTrack,
-    this.subtitleTrack,
-    this.apiTrack,
-  });
-}
+import 'track_options.dart';
 
 class _PlaybackSource {
   final String url;
-  final List<_QualityOption> qualities;
-  final List<_MediaTrackOption> audioTracks;
-  final List<_MediaTrackOption> subtitleTracks;
+  final List<QualityOption> qualities;
+  final List<MediaTrackOption> audioTracks;
+  final List<MediaTrackOption> subtitleTracks;
   final bool mediaTracksScanned;
   final bool hasMultipleAudioTracks;
   final bool hasSubtitleTracks;
@@ -111,11 +57,11 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   bool _showResumePlaybackButton = false;
   String? _error;
   String _selectedQuality = 'auto';
-  List<_QualityOption> _qualities = const [];
+  List<QualityOption> _qualities = const [];
   String? _selectedAudioTrackValue;
   String? _selectedSubtitleTrackValue;
-  List<_MediaTrackOption> _audioTracks = const [];
-  List<_MediaTrackOption> _subtitleTracks = const [];
+  List<MediaTrackOption> _audioTracks = const [];
+  List<MediaTrackOption> _subtitleTracks = const [];
   List<AudioTrack> _hlsAudioTracks = const [];
   List<SubtitleTrack> _hlsSubtitleTracks = const [];
   List<SubtitleCue> _webSubtitleCues = const [];
@@ -257,19 +203,22 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     // backend returns a relative signed path; prepend baseUrl so it works on
     // emulator (10.0.2.2), simulator (localhost), and physical device (LAN IP)
     final url = _absoluteUrl(rawUrl);
-    var qualities = _parseQualities(data);
+    var qualities = TrackParser.parseQualities(data, _absoluteUrl);
     if (qualities.isEmpty) {
       qualities = await _parseQualitiesFromMaster(url);
     }
-    final audioTracks = _parseMediaTracks(data, 'audio_tracks');
-    final subtitleTracks = _parseMediaTracks(data, 'subtitle_tracks');
-    final audioTrackCount = _parseInt(data?['audio_track_count']);
-    final subtitleTrackCount = _parseInt(data?['subtitle_track_count']);
+    final audioTracks =
+        TrackParser.parseMediaTracks(data, 'audio_tracks', _absoluteUrl);
+    final subtitleTracks =
+        TrackParser.parseMediaTracks(data, 'subtitle_tracks', _absoluteUrl);
+    final audioTrackCount = TrackParser.parseInt(data?['audio_track_count']);
+    final subtitleTrackCount =
+        TrackParser.parseInt(data?['subtitle_track_count']);
     final mediaTracksScanned = data?['media_tracks_scanned'] == true;
     return _PlaybackSource(
       url: url,
       qualities: [
-        _QualityOption(name: 'auto', label: '自动', url: url),
+        QualityOption(name: 'auto', label: '自动', url: url),
         ...qualities,
       ],
       audioTracks: audioTracks,
@@ -290,64 +239,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     return url.startsWith('http') ? url : '${ApiClient.baseUrl}$url';
   }
 
-  int _parseInt(dynamic value) {
-    if (value is num) return value.toInt();
-    return int.tryParse(value?.toString() ?? '') ?? 0;
-  }
-
-  List<_QualityOption> _parseQualities(Map<String, dynamic>? data) {
-    final rawQualities = data?['qualities'];
-    if (rawQualities is! List) return const [];
-    return rawQualities
-        .whereType<Map<String, dynamic>>()
-        .map((item) {
-          final name = item['name']?.toString() ?? '';
-          final label = item['label']?.toString() ?? name;
-          final url = item['url']?.toString() ?? '';
-          if (name.isEmpty || url.isEmpty) return null;
-          return _QualityOption(
-            name: name,
-            label: label.isEmpty ? name : label,
-            url: _absoluteUrl(url),
-          );
-        })
-        .whereType<_QualityOption>()
-        .toList();
-  }
-
-  List<_MediaTrackOption> _parseMediaTracks(
-    Map<String, dynamic>? data,
-    String key,
-  ) {
-    final rawTracks = data?[key];
-    if (rawTracks is! List) return const [];
-    return rawTracks
-        .whereType<Map<String, dynamic>>()
-        .map((item) {
-          final idValue = item['id'];
-          final id = idValue is num
-              ? idValue.toInt()
-              : int.tryParse(idValue?.toString() ?? '');
-          final label = item['label']?.toString() ?? '';
-          final url = item['url']?.toString() ?? '';
-          if (id == null || url.isEmpty) return null;
-          return _MediaTrackOption(
-            id: id,
-            label: label.isEmpty ? 'Track ${id.toString()}' : label,
-            url: _absoluteUrl(url),
-            language: item['language']?.toString() ?? '',
-            title: item['title']?.toString() ?? '',
-            codec: item['codec']?.toString() ?? '',
-            isDefault: item['default'] == true,
-            isForced: item['forced'] == true,
-            streamPosition: _parseInt(item['stream_position']),
-          );
-        })
-        .whereType<_MediaTrackOption>()
-        .toList();
-  }
-
-  Future<List<_QualityOption>> _parseQualitiesFromMaster(String url) async {
+  Future<List<QualityOption>> _parseQualitiesFromMaster(String url) async {
     try {
       final response = await http.get(Uri.parse(url));
       if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -355,7 +247,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       }
       return HlsMasterParser.parse(response.body, Uri.parse(url))
           .map(
-            (variant) => _QualityOption(
+            (variant) => QualityOption(
               name: variant.name,
               label: variant.label,
               url: _absoluteUrl(variant.url),
@@ -489,7 +381,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     return AudioTrack(index.toString(), null, null);
   }
 
-  Future<void> _applyWebSubtitleTrack(_TrackMenuOption? option) async {
+  Future<void> _applyWebSubtitleTrack(TrackMenuOption? option) async {
     final serial = ++_webSubtitleLoadSerial;
     _setWebSubtitleCues(const []);
     if (option == null) return;
@@ -571,7 +463,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   }
 
   Future<void> _restoreQuality(
-    _QualityOption option,
+    QualityOption option,
     Duration position,
     bool shouldPlay,
   ) async {
@@ -652,19 +544,31 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   }
 
   void _syncDetectedTracks(Tracks tracks) {
-    final audioTracks = _selectableHLSAudioTracks(tracks.audio);
-    final subtitleTracks = _selectableHLSSubtitleTracks(tracks.subtitle);
+    final audioTracks = TrackMenuBuilder.selectableHlsAudio(tracks.audio);
+    final subtitleTracks = TrackMenuBuilder.selectableHlsSubtitle(
+      tracks.subtitle,
+    );
     final nextAudioValue =
-        _trackValueExists(
+        TrackMenuBuilder.valueExists(
           _selectedAudioTrackValue,
-          _audioMenuOptionsFor(audioTracks, _audioTracks),
+          TrackMenuBuilder.audioOptions(
+            hlsTracks: audioTracks,
+            apiTracks: _audioTracks,
+            mediaTracksScanned: _mediaTracksScanned,
+            hasMultipleAudioTracks: _hasMultipleAudioTracks,
+          ),
         )
         ? _selectedAudioTrackValue
         : null;
     final nextSubtitleValue =
-        _trackValueExists(
+        TrackMenuBuilder.valueExists(
           _selectedSubtitleTrackValue,
-          _subtitleMenuOptionsFor(subtitleTracks, _subtitleTracks),
+          TrackMenuBuilder.subtitleOptions(
+            hlsTracks: subtitleTracks,
+            apiTracks: _subtitleTracks,
+            mediaTracksScanned: _mediaTracksScanned,
+            hasSubtitleTracks: _hasSubtitleTracks,
+          ),
         )
         ? _selectedSubtitleTrackValue
         : null;
@@ -685,110 +589,22 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     });
   }
 
-  List<AudioTrack> _selectableHLSAudioTracks(List<AudioTrack> tracks) {
-    if (kIsWeb) return const [];
-    final selectable = tracks
-        .where(
-          (track) =>
-              track.id != 'auto' &&
-              track.id != 'no' &&
-              track.id.trim().isNotEmpty &&
-              !track.uri,
-        )
-        .toList();
-    return selectable.length > 1 ? selectable : const [];
+  List<TrackMenuOption> _audioMenuOptions() {
+    return TrackMenuBuilder.audioOptions(
+      hlsTracks: _hlsAudioTracks,
+      apiTracks: _audioTracks,
+      mediaTracksScanned: _mediaTracksScanned,
+      hasMultipleAudioTracks: _hasMultipleAudioTracks,
+    );
   }
 
-  List<SubtitleTrack> _selectableHLSSubtitleTracks(List<SubtitleTrack> tracks) {
-    return tracks
-        .where(
-          (track) =>
-              track.id != 'auto' &&
-              track.id != 'no' &&
-              track.id.trim().isNotEmpty &&
-              !track.uri &&
-              !track.data,
-        )
-        .toList();
-  }
-
-  bool _trackValueExists(String? value, List<_TrackMenuOption> options) {
-    return value == null || options.any((option) => option.value == value);
-  }
-
-  List<_TrackMenuOption> _audioMenuOptions() {
-    return _audioMenuOptionsFor(_hlsAudioTracks, _audioTracks);
-  }
-
-  List<_TrackMenuOption> _subtitleMenuOptions() {
-    return _subtitleMenuOptionsFor(_hlsSubtitleTracks, _subtitleTracks);
-  }
-
-  List<_TrackMenuOption> _audioMenuOptionsFor(
-    List<AudioTrack> hlsTracks,
-    List<_MediaTrackOption> apiTracks,
-  ) {
-    if (_mediaTracksScanned && !_hasMultipleAudioTracks) {
-      return const [];
-    }
-    if (kIsWeb) {
-      return _apiTrackMenuOptions(apiTracks);
-    }
-    if (hlsTracks.isNotEmpty) {
-      return [
-        for (var i = 0; i < hlsTracks.length; i++)
-          _TrackMenuOption(
-            value: 'hls:${hlsTracks[i].id}',
-            label: _playerTrackLabel(hlsTracks[i], 'Audio ${i + 1}'),
-            audioTrack: hlsTracks[i],
-          ),
-      ];
-    }
-    return _apiTrackMenuOptions(apiTracks);
-  }
-
-  List<_TrackMenuOption> _subtitleMenuOptionsFor(
-    List<SubtitleTrack> hlsTracks,
-    List<_MediaTrackOption> apiTracks,
-  ) {
-    if (_mediaTracksScanned && !_hasSubtitleTracks) {
-      return const [];
-    }
-    if (kIsWeb) {
-      return _apiTrackMenuOptions(apiTracks);
-    }
-    if (hlsTracks.isNotEmpty) {
-      return [
-        for (var i = 0; i < hlsTracks.length; i++)
-          _TrackMenuOption(
-            value: 'hls:${hlsTracks[i].id}',
-            label: _playerTrackLabel(hlsTracks[i], 'Subtitle ${i + 1}'),
-            subtitleTrack: hlsTracks[i],
-          ),
-      ];
-    }
-    return _apiTrackMenuOptions(apiTracks);
-  }
-
-  List<_TrackMenuOption> _apiTrackMenuOptions(
-    List<_MediaTrackOption> apiTracks,
-  ) {
-    return [
-      for (final track in apiTracks)
-        _TrackMenuOption(
-          value: 'api:${track.id}',
-          label: track.label,
-          apiTrack: track,
-        ),
-    ];
-  }
-
-  String _playerTrackLabel(dynamic track, String fallback) {
-    final title = track.title?.toString().trim() ?? '';
-    if (title.isNotEmpty) return title;
-    final language = track.language?.toString().trim() ?? '';
-    if (language.isNotEmpty) return language;
-    return fallback;
+  List<TrackMenuOption> _subtitleMenuOptions() {
+    return TrackMenuBuilder.subtitleOptions(
+      hlsTracks: _hlsSubtitleTracks,
+      apiTracks: _subtitleTracks,
+      mediaTracksScanned: _mediaTracksScanned,
+      hasSubtitleTracks: _hasSubtitleTracks,
+    );
   }
 
   void _startProgressTimer() {
@@ -1346,7 +1162,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     );
   }
 
-  Widget _buildAudioMenu(List<_TrackMenuOption> options) {
+  Widget _buildAudioMenu(List<TrackMenuOption> options) {
     final selectedValue = _selectedAudioTrackValue ?? 'auto';
     return PopupMenuButton<String>(
       enabled: !_switchingTrack,
@@ -1373,7 +1189,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     );
   }
 
-  Widget _buildSubtitleMenu(List<_TrackMenuOption> options) {
+  Widget _buildSubtitleMenu(List<TrackMenuOption> options) {
     final selectedValue = _selectedSubtitleTrackValue ?? 'off';
     return PopupMenuButton<String>(
       enabled: !_switchingTrack,
