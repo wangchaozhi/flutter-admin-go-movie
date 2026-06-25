@@ -1,4 +1,4 @@
-export type Entity = 'users' | 'roles' | 'menus' | 'videos' | 'video-transcodes' | 'categories' | 'app-users' | 'payments'
+export type Entity = 'users' | 'roles' | 'menus' | 'videos' | 'video-transcodes' | 'video-extracts' | 'categories' | 'app-users' | 'payments'
 
 export type VideoStatus = 'uploading' | 'extracting' | 'uploaded' | 'transcoding' | 'ready' | 'failed' | 'offline'
 
@@ -75,6 +75,25 @@ export type VideoQualityTask = TranscodeTask & { transcoded?: boolean }
 
 export type TranscodeHistoryItem = TranscodeTask & {
   video_title: string
+}
+
+export type ExtractTaskStatus = 'processing' | 'success' | 'failed' | 'canceled'
+
+export type ExtractHistoryItem = {
+  id: number
+  video_id: number
+  video_title: string
+  source_key: string
+  status: ExtractTaskStatus
+  status_message: string
+  audio_count: number
+  subtitle_count: number
+  ready_count: number
+  failed_count: number
+  error_message: string
+  started_at: string | null
+  finished_at: string | null
+  created_at: string
 }
 
 export type User = {

@@ -45,6 +45,8 @@ func NewRouter() http.Handler {
 	// admin video management (requires admin auth)
 	mux.Handle("/api/admin/video/transcode-tasks", requireAdminAuth(http.HandlerFunc(video.AdminTranscodeHistoryHandler)))
 	mux.Handle("/api/admin/video/transcode-tasks/", requireAdminAuth(http.HandlerFunc(video.AdminTranscodeHistoryByIDHandler)))
+	mux.Handle("/api/admin/video/extract-tasks", requireAdminAuth(http.HandlerFunc(video.AdminExtractHistoryHandler)))
+	mux.Handle("/api/admin/video/extract-tasks/", requireAdminAuth(http.HandlerFunc(video.AdminExtractHistoryByIDHandler)))
 	mux.Handle("/api/admin/videos", requireAdminAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			video.AdminCreateVideoHandler(w, r)

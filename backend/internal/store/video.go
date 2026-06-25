@@ -47,6 +47,28 @@ type VideoTranscodeTask struct {
 
 func (VideoTranscodeTask) TableName() string { return "video_transcode_tasks" }
 
+// VideoExtractTrackTask is one background audio/subtitle extraction run for a
+// video source. Unlike a transcode task it has no per-quality concept; it
+// records how many audio/subtitle tracks were detected and how many were
+// successfully extracted versus failed.
+type VideoExtractTrackTask struct {
+	ID            int64      `gorm:"primaryKey;column:id"   json:"id"`
+	VideoID       int64      `gorm:"column:video_id"        json:"video_id"`
+	SourceKey     string     `gorm:"column:source_key"      json:"source_key"`
+	Status        string     `gorm:"column:status"          json:"status"`
+	StatusMessage string     `gorm:"column:status_message"  json:"status_message"`
+	AudioCount    int        `gorm:"column:audio_count"     json:"audio_count"`
+	SubtitleCount int        `gorm:"column:subtitle_count"  json:"subtitle_count"`
+	ReadyCount    int        `gorm:"column:ready_count"     json:"ready_count"`
+	FailedCount   int        `gorm:"column:failed_count"    json:"failed_count"`
+	ErrorMessage  string     `gorm:"column:error_message"   json:"error_message"`
+	StartedAt     *time.Time `gorm:"column:started_at"      json:"started_at"`
+	FinishedAt    *time.Time `gorm:"column:finished_at"     json:"finished_at"`
+	CreatedAt     time.Time  `gorm:"column:created_at"      json:"created_at"`
+}
+
+func (VideoExtractTrackTask) TableName() string { return "video_extract_track_tasks" }
+
 type VideoMediaTrack struct {
 	ID             int64     `gorm:"primaryKey;column:id"       json:"id"`
 	VideoID        int64     `gorm:"column:video_id"            json:"video_id"`

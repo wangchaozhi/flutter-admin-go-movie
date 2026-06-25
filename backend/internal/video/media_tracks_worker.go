@@ -51,19 +51,26 @@ func runExtractTracks(ctx context.Context, videoID int64, srcKey string) {
 	defer stopWatchingCancel()
 	defer releaseExtractingVideo(videoID, srcKey)
 
+	taskID := beginExtractTrackTask(videoID, srcKey)
+
 	tmpRoot := strings.TrimSpace(config.Load().Worker.TranscodeTempDir)
 	srcPath, err := cachedSourcePath(runCtx, videoID, srcKey, tmpRoot)
 	if err != nil {
 		log.Printf("extract tracks: cache source for video %d failed: %v", videoID, err)
+		finishExtractTrackTask(taskID, videoID, srcKey, err)
 		return
 	}
 	if extractTracksCancellationRequested(videoID, srcKey) {
 		log.Printf("extract tracks: canceled before processing video %d", videoID)
+		finishExtractTrackTask(taskID, videoID, srcKey, errExtractTracksCanceled)
 		return
 	}
 	if _, err := ensureVideoMediaTracks(runCtx, videoID, srcKey, srcPath); err != nil {
 		log.Printf("extract tracks: ensure media tracks for video %d failed: %v", videoID, err)
+		finishExtractTrackTask(taskID, videoID, srcKey, err)
+		return
 	}
+	finishExtractTrackTask(taskID, videoID, srcKey, nil)
 }
 
 func watchExtractTracksCancellation(ctx context.Context, videoID int64, srcKey string) (context.Context, context.CancelFunc) {

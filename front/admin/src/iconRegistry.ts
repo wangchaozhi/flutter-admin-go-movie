@@ -1,5 +1,6 @@
 import type { LucideIcon } from 'lucide-react'
 import {
+  AudioLines,
   BadgeCheck,
   Clapperboard,
   CreditCard,
@@ -20,6 +21,7 @@ import {
 } from 'lucide-react'
 
 export const iconRegistry: Record<string, LucideIcon> = {
+  AudioLines,
   BadgeCheck,
   Clapperboard,
   CreditCard,
@@ -48,6 +50,7 @@ export const menuIconOptions = [
   { value: 'Clapperboard', label: 'Clapperboard - 视频' },
   { value: 'FolderOpen', label: 'FolderOpen - 类别' },
   { value: 'History', label: 'History - 历史' },
+  { value: 'AudioLines', label: 'AudioLines - 音轨/提取' },
   { value: 'CreditCard', label: 'CreditCard - 支付' },
   { value: 'LayoutDashboard', label: 'LayoutDashboard - 仪表盘' },
   { value: 'List', label: 'List - 列表' },

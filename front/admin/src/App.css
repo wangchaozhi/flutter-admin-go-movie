@@ -1141,6 +1141,22 @@ td small {
   word-break: break-word;
 }
 
+.track-counts {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.track-counts svg {
+  vertical-align: middle;
+  color: var(--text-subtle);
+}
+
+small.danger-text {
+  color: var(--danger-text);
+}
+
 .danger-confirm {
   background: var(--danger-text);
   border-color: var(--danger-text);

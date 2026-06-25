@@ -847,6 +847,10 @@ func AdminDeleteVideoHandler(w http.ResponseWriter, r *http.Request) {
 		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
 		return
 	}
+	if err := store.DB().Where("video_id = ?", id).Delete(&store.VideoExtractTrackTask{}).Error; err != nil {
+		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
+		return
+	}
 	if err := store.DB().Delete(&store.Video{}, id).Error; err != nil {
 		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
 		return

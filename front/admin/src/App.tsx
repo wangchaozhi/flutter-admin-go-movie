@@ -37,7 +37,11 @@ import type { MenuNodeType } from './features/menus'
 import { PaymentManagementSection } from './features/payments'
 import { RoleManagementSection } from './features/roles'
 import { UserManagementSection } from './features/users'
-import { VideoManagementSection, VideoTranscodeHistorySection } from './features/videos'
+import {
+  VideoManagementSection,
+  VideoTranscodeHistorySection,
+  VideoExtractHistorySection,
+} from './features/videos'
 import { resolveIcon } from './iconRegistry'
 
 const emptyUser: UserForm = {
@@ -110,6 +114,7 @@ const tabs: NavItem[] = [
       { key: 'videos', label: '视频列表', iconCode: 'Clapperboard', path: '/videos' },
       { key: 'categories', label: '类别', iconCode: 'FolderOpen', path: '/categories' },
       { key: 'video-transcodes', label: '转码历史', iconCode: 'History', path: '/videos/transcodes' },
+      { key: 'video-extracts', label: '提取历史', iconCode: 'AudioLines', path: '/videos/extracts' },
     ],
   },
   { key: 'payments', label: '支付', iconCode: 'CreditCard', path: '/payments' },
@@ -151,6 +156,11 @@ const pageHeaders: Record<Entity, { eyebrow: string; title: string; subtitle: st
     title: '转码历史',
     subtitle: '查看视频转码任务、清晰度进度和失败重试记录。',
   },
+  'video-extracts': {
+    eyebrow: '内容中心',
+    title: '提取历史',
+    subtitle: '查看音轨/字幕提取任务、轨道数量和失败记录。',
+  },
   payments: {
     eyebrow: '商业中心',
     title: '支付',
@@ -166,6 +176,7 @@ const routeMetaByPath = new Map<string, { key: Entity; label: string; iconCode: 
   ['/videos', { key: 'videos', label: '视频列表', iconCode: 'Clapperboard' }],
   ['/categories', { key: 'categories', label: '类别', iconCode: 'FolderOpen' }],
   ['/videos/transcodes', { key: 'video-transcodes', label: '转码历史', iconCode: 'History' }],
+  ['/videos/extracts', { key: 'video-extracts', label: '提取历史', iconCode: 'AudioLines' }],
   ['/payments', { key: 'payments', label: '支付', iconCode: 'CreditCard' }],
 ])
 
@@ -179,6 +190,7 @@ const legacyMenuNames = new Set([
   'categories',
   'payments',
   'video:transcode-history',
+  'video:extract-history',
 ])
 
 const groupLabelByPath = new Map([
@@ -193,6 +205,7 @@ const entityKeys = new Set<Entity>([
   'menus',
   'videos',
   'video-transcodes',
+  'video-extracts',
   'categories',
   'app-users',
   'payments',
@@ -437,6 +450,8 @@ function App() {
     if (session?.theme) {
       setTheme(session.theme)
     }
+    // re-sync theme only when the signed-in user changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.username])
 
   if (!session) {
@@ -639,6 +654,8 @@ function AdminDashboard({
 
   useEffect(() => {
     void loadAll()
+    // mount-only load; `loadAll` is recreated each render
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
@@ -1016,6 +1033,10 @@ function AdminDashboard({
 
         {active === 'video-transcodes' && (
           <VideoTranscodeHistorySection token={session.token} can={can} />
+        )}
+
+        {active === 'video-extracts' && (
+          <VideoExtractHistorySection token={session.token} can={can} />
         )}
 
         {active === 'payments' && (

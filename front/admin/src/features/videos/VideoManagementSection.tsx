@@ -107,6 +107,18 @@ function formatBytes(bytes: number) {
   return (bytes / 1024).toFixed(0) + ' KB'
 }
 
+// duration is stored in seconds and probed on upload; 0 means not yet probed.
+function formatDuration(seconds: number) {
+  if (!seconds || seconds <= 0) return '—'
+  const total = Math.round(seconds)
+  const h = Math.floor(total / 3600)
+  const m = Math.floor((total % 3600) / 60)
+  const s = total % 60
+  const mm = String(m).padStart(2, '0')
+  const ss = String(s).padStart(2, '0')
+  return h > 0 ? `${h}:${mm}:${ss}` : `${m}:${ss}`
+}
+
 function isActiveTranscodeStatus(status?: string) {
   return status === 'queued' || status === 'pending' || status === 'processing'
 }
@@ -182,6 +194,8 @@ export function VideoManagementSection({
     if (json.code === 0) setCategories(json.data ?? [])
   }
 
+  // mount-only load; loaders are recreated each render so they stay out of deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadVideos(); loadCategories() }, [])
 
   function transcodeCancelKey(videoId: number, quality?: string) {
@@ -506,6 +520,7 @@ export function VideoManagementSection({
                 <th>标题</th>
                 <th>类别</th>
                 <th>状态</th>
+                <th>时长</th>
                 <th>大小</th>
                 <th>VIP</th>
                 <th>免费</th>
@@ -539,6 +554,7 @@ export function VideoManagementSection({
                         </div>
                       )}
                     </td>
+                    <td className="text-faint">{formatDuration(v.duration)}</td>
                     <td className="text-faint">{formatBytes(v.size)}</td>
                     <td>{v.is_vip ? '✓' : '—'}</td>
                     <td>{v.is_free ? '✓' : '—'}</td>
@@ -606,7 +622,7 @@ export function VideoManagementSection({
                   </tr>
                   {isExpanded && (
                     <tr className="quality-detail-row">
-                      <td colSpan={8}>
+                      <td colSpan={9}>
                         {detailLoading && !detailTasks ? (
                           <div className="quality-empty"><Loader size={13} className="spin" /> 加载中…</div>
                         ) : !detailTasks || detailTasks.length === 0 ? (
