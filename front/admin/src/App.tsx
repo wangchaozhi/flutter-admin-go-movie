@@ -32,6 +32,7 @@ import type {
 import { ConfirmDialog } from './components/confirm'
 import { AppUserManagementSection } from './features/appUsers'
 import { CategoryManagementSection } from './features/categories'
+import { DashboardSection } from './features/dashboard'
 import { MenuManagementSection, buildMenuTree } from './features/menus'
 import type { MenuNodeType } from './features/menus'
 import { PaymentManagementSection } from './features/payments'
@@ -121,6 +122,11 @@ const tabs: NavItem[] = [
 ]
 
 const pageHeaders: Record<Entity, { eyebrow: string; title: string; subtitle: string }> = {
+  dashboard: {
+    eyebrow: '概览',
+    title: '仪表盘',
+    subtitle: '查看内容、用户、订单和收入的整体数据。',
+  },
   users: {
     eyebrow: '权限中心',
     title: '管理员',
@@ -169,6 +175,7 @@ const pageHeaders: Record<Entity, { eyebrow: string; title: string; subtitle: st
 }
 
 const routeMetaByPath = new Map<string, { key: Entity; label: string; iconCode: string }>([
+  ['/dashboard', { key: 'dashboard', label: '仪表盘', iconCode: 'LayoutDashboard' }],
   ['/system/user', { key: 'users', label: '管理员', iconCode: 'Users' }],
   ['/system/role', { key: 'roles', label: '角色', iconCode: 'Shield' }],
   ['/system/menu', { key: 'menus', label: '菜单', iconCode: 'Menu' }],
@@ -200,6 +207,7 @@ const groupLabelByPath = new Map([
 ])
 
 const entityKeys = new Set<Entity>([
+  'dashboard',
   'users',
   'roles',
   'menus',
@@ -975,6 +983,10 @@ function AdminDashboard({
           <span className={error ? 'status error' : 'status'}>{error || notice}</span>
           {loading && <span className="status subtle">加载中...</span>}
         </div>
+
+        {active === 'dashboard' && (
+          <DashboardSection token={session.token} />
+        )}
 
         {active === 'users' && (
           <UserManagementSection

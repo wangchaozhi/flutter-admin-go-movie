@@ -464,6 +464,57 @@ h2 {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.dashboard-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+@media (max-width: 720px) {
+  .dashboard-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.panel-inset {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: var(--surface-muted);
+}
+
+.stat-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+}
+
+.stat-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--border);
+}
+
+.stat-list li:last-child {
+  border-bottom: none;
+}
+
+.stat-list li span {
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stat-list li strong {
+  color: var(--text);
+  flex-shrink: 0;
+}
+
 .history-filter-bar {
   display: flex;
   flex-wrap: wrap;

@@ -1,4 +1,13 @@
-export type Entity = 'users' | 'roles' | 'menus' | 'videos' | 'video-transcodes' | 'video-extracts' | 'categories' | 'app-users' | 'payments'
+export type Entity = 'dashboard' | 'users' | 'roles' | 'menus' | 'videos' | 'video-transcodes' | 'video-extracts' | 'categories' | 'app-users' | 'payments'
+
+export type DashboardStats = {
+  videos: { total: number; vip: number; free: number; by_status: Array<{ key: string; count: number }> }
+  categories: { total: number }
+  users: { total: number; vip: number; banned: number }
+  orders: { total: number; by_status: Array<{ key: string; count: number }> }
+  revenue: Array<{ currency: string; amount_cents: number }>
+  top_videos: Array<{ video_id: number; title: string; plays: number }>
+}
 
 export type VideoStatus = 'uploading' | 'extracting' | 'uploaded' | 'transcoding' | 'ready' | 'failed' | 'offline'
 

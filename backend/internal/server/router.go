@@ -23,6 +23,7 @@ func NewRouter() http.Handler {
 	mux.Handle("/api/mobile/favorites/", mobileBanGuard(http.HandlerFunc(video.AppFavoriteByVideoHandler)))
 	mux.Handle("/api/mobile/settings", mobileBanGuard(http.HandlerFunc(video.AppMobileSettingsHandler)))
 
+	mux.Handle("/api/admin/stats", requireAdminAuth(http.HandlerFunc(admin.StatsHandler)))
 	mux.HandleFunc("/api/admin/profile", admin.ProfileHandler)
 	mux.HandleFunc("/api/admin/profile/theme", admin.ProfileThemeHandler)
 	mux.HandleFunc("/api/admin/profile/avatar", admin.ProfileAvatarHandler)
