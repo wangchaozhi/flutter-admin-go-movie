@@ -10,6 +10,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 
 import '../../core/api_client.dart';
 import '../../models/video.dart' as model;
+import 'playback_parsers.dart';
 
 class _QualityOption {
   final String name;
@@ -66,18 +67,6 @@ class _TrackMenuOption {
   });
 }
 
-class _SubtitleCue {
-  final Duration start;
-  final Duration end;
-  final String text;
-
-  const _SubtitleCue({
-    required this.start,
-    required this.end,
-    required this.text,
-  });
-}
-
 class _PlaybackSource {
   final String url;
   final List<_QualityOption> qualities;
@@ -128,8 +117,11 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   List<_MediaTrackOption> _subtitleTracks = const [];
   List<AudioTrack> _hlsAudioTracks = const [];
   List<SubtitleTrack> _hlsSubtitleTracks = const [];
-  List<_SubtitleCue> _webSubtitleCues = const [];
-  String _webSubtitleText = '';
+  List<SubtitleCue> _webSubtitleCues = const [];
+  // Held in a notifier so a cue change repaints only the subtitle overlay
+  // (via ValueListenableBuilder) instead of rebuilding the whole player tree
+  // on every position tick.
+  final ValueNotifier<String> _webSubtitleText = ValueNotifier<String>('');
   int _webSubtitleLoadSerial = 0;
   bool _mediaTracksScanned = false;
   bool _hasMultipleAudioTracks = false;
@@ -179,6 +171,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     unawaited(_saveProgress(force: true));
     unawaited(_restoreSystemUi());
     _player.dispose();
+    _webSubtitleText.dispose();
     super.dispose();
   }
 
@@ -213,7 +206,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
           _hlsAudioTracks = const [];
           _hlsSubtitleTracks = const [];
           _webSubtitleCues = const [];
-          _webSubtitleText = '';
+          _webSubtitleText.value = '';
           _webSubtitleLoadSerial++;
           _selectedQuality = 'auto';
           _selectedAudioTrackValue = null;
@@ -358,65 +351,18 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       if (response.statusCode < 200 || response.statusCode >= 300) {
         return const [];
       }
-      final qualities = <_QualityOption>[];
-      String resolution = '';
-      for (final rawLine in response.body.split('\n')) {
-        final line = rawLine.trim();
-        if (line.startsWith('#EXT-X-STREAM-INF:')) {
-          resolution = _parseResolution(line);
-          continue;
-        }
-        final lineUri = Uri.tryParse(line);
-        final path = lineUri?.path ?? line;
-        if (line.startsWith('#') || !path.endsWith('.m3u8')) {
-          continue;
-        }
-        final uri = Uri.parse(url).resolve(line).toString();
-        final name = _qualityNameFromUri(uri);
-        if (name.isEmpty) {
-          resolution = '';
-          continue;
-        }
-        qualities.add(
-          _QualityOption(
-            name: name,
-            label: _qualityLabel(name, resolution),
-            url: _absoluteUrl(uri),
-          ),
-        );
-        resolution = '';
-      }
-      return qualities;
+      return HlsMasterParser.parse(response.body, Uri.parse(url))
+          .map(
+            (variant) => _QualityOption(
+              name: variant.name,
+              label: variant.label,
+              url: _absoluteUrl(variant.url),
+            ),
+          )
+          .toList();
     } catch (_) {
       return const [];
     }
-  }
-
-  String _parseResolution(String line) {
-    for (final part in line.split(',')) {
-      final value = part.trim();
-      if (value.startsWith('RESOLUTION=')) {
-        return value.substring('RESOLUTION='.length);
-      }
-    }
-    return '';
-  }
-
-  String _qualityNameFromUri(String uri) {
-    final segments = Uri.parse(uri).pathSegments;
-    if (segments.length >= 2 && segments.last == 'index.m3u8') {
-      return segments[segments.length - 2];
-    }
-    return '';
-  }
-
-  String _qualityLabel(String name, String resolution) {
-    if (name.isNotEmpty) return name;
-    final parts = resolution.split('x');
-    if (parts.length == 2 && parts[1].isNotEmpty) {
-      return '${parts[1]}p';
-    }
-    return resolution.isNotEmpty ? resolution : '清晰度';
   }
 
   Future<void> _applySelectedMediaTracks() async {
@@ -553,116 +499,26 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception('subtitle http ${response.statusCode}');
     }
-    final cues = _parseWebVTT(response.body);
+    final cues = WebVttParser.parse(response.body);
     if (serial != _webSubtitleLoadSerial) return;
     _setWebSubtitleCues(cues);
     _syncWebSubtitleCue(_player.state.position);
   }
 
-  void _setWebSubtitleCues(List<_SubtitleCue> cues) {
+  void _setWebSubtitleCues(List<SubtitleCue> cues) {
     if (!kIsWeb) return;
-    if (!mounted) {
-      _webSubtitleCues = cues;
-      _webSubtitleText = '';
-      return;
-    }
-    setState(() {
-      _webSubtitleCues = cues;
-      _webSubtitleText = '';
-    });
+    _webSubtitleCues = cues;
+    // The notifier ignores no-op writes, so the overlay only repaints when the
+    // visible cue actually changes. Guard against writing after dispose().
+    if (mounted) _webSubtitleText.value = '';
   }
 
   void _syncWebSubtitleCue(Duration position) {
-    if (!kIsWeb || _webSubtitleCues.isEmpty) {
-      if (kIsWeb && _webSubtitleText.isNotEmpty && mounted) {
-        setState(() => _webSubtitleText = '');
-      }
-      return;
-    }
-    final cue = _webSubtitleCues.where((item) {
-      return position >= item.start && position <= item.end;
-    }).firstOrNull;
-    final nextText = cue?.text ?? '';
-    if (nextText == _webSubtitleText) return;
-    if (!mounted) {
-      _webSubtitleText = nextText;
-      return;
-    }
-    setState(() => _webSubtitleText = nextText);
-  }
-
-  List<_SubtitleCue> _parseWebVTT(String body) {
-    final normalized = body
-        .replaceFirst('\uFEFF', '')
-        .replaceAll('\r\n', '\n')
-        .replaceAll('\r', '\n');
-    final cues = <_SubtitleCue>[];
-    for (final block in normalized.split(RegExp(r'\n{2,}'))) {
-      final lines = block
-          .split('\n')
-          .map((line) => line.trim())
-          .where((line) => line.isNotEmpty)
-          .toList();
-      if (lines.isEmpty || lines.first.startsWith('WEBVTT')) continue;
-      if (lines.first.startsWith('NOTE') ||
-          lines.first == 'STYLE' ||
-          lines.first == 'REGION') {
-        continue;
-      }
-
-      final timingIndex = lines.indexWhere((line) => line.contains('-->'));
-      if (timingIndex < 0) continue;
-      final timingParts = lines[timingIndex].split('-->');
-      if (timingParts.length < 2) continue;
-
-      final start = _parseWebVTTTimestamp(timingParts[0].trim());
-      final endToken = timingParts[1].trim().split(RegExp(r'\s+')).first;
-      final end = _parseWebVTTTimestamp(endToken);
-      if (start == null || end == null || end <= start) continue;
-
-      final text = lines
-          .skip(timingIndex + 1)
-          .map(_cleanWebVTTText)
-          .where((line) => line.isNotEmpty)
-          .join('\n');
-      if (text.isEmpty) continue;
-      cues.add(_SubtitleCue(start: start, end: end, text: text));
-    }
-    cues.sort((a, b) => a.start.compareTo(b.start));
-    return cues;
-  }
-
-  Duration? _parseWebVTTTimestamp(String value) {
-    final parts = value.replaceAll(',', '.').split(':');
-    if (parts.length < 2 || parts.length > 3) return null;
-    final secondsPart = parts.last.split('.');
-    final seconds = int.tryParse(secondsPart.first);
-    if (seconds == null) return null;
-    var milliseconds = 0;
-    if (secondsPart.length > 1) {
-      final fraction = secondsPart[1].padRight(3, '0').substring(0, 3);
-      milliseconds = int.tryParse(fraction) ?? 0;
-    }
-    final minutes = int.tryParse(parts[parts.length - 2]);
-    if (minutes == null) return null;
-    final hours = parts.length == 3 ? int.tryParse(parts.first) : 0;
-    if (hours == null) return null;
-    return Duration(
-      hours: hours,
-      minutes: minutes,
-      seconds: seconds,
-      milliseconds: milliseconds,
-    );
-  }
-
-  String _cleanWebVTTText(String value) {
-    return value
-        .replaceAll(RegExp(r'<[^>]+>'), '')
-        .replaceAll('&amp;', '&')
-        .replaceAll('&lt;', '<')
-        .replaceAll('&gt;', '>')
-        .replaceAll('&nbsp;', ' ')
-        .trim();
+    if (!kIsWeb || !mounted) return;
+    final cue = _webSubtitleCues
+        .where((item) => position >= item.start && position <= item.end)
+        .firstOrNull;
+    _webSubtitleText.value = cue?.text ?? '';
   }
 
   Future<void> _switchQuality(String name) async {
@@ -1348,42 +1204,49 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   }
 
   Widget _buildWebSubtitleOverlay() {
-    if (!kIsWeb || _webSubtitleText.isEmpty) {
-      return const SizedBox.shrink();
-    }
+    if (!kIsWeb) return const SizedBox.shrink();
     return Positioned(
       left: 24,
       right: 24,
       bottom: 54,
       child: IgnorePointer(
         child: Center(
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: Colors.black.withValues(alpha: 0.62),
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-              child: Text(
-                _webSubtitleText,
-                textAlign: TextAlign.center,
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 17,
-                  height: 1.28,
-                  fontWeight: FontWeight.w700,
-                  shadows: [
-                    Shadow(
-                      blurRadius: 4,
-                      color: Colors.black,
-                      offset: Offset(0, 1),
-                    ),
-                  ],
+          child: ValueListenableBuilder<String>(
+            valueListenable: _webSubtitleText,
+            builder: (context, text, _) {
+              if (text.isEmpty) return const SizedBox.shrink();
+              return DecoratedBox(
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.62),
+                  borderRadius: BorderRadius.circular(6),
                 ),
-              ),
-            ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 7,
+                  ),
+                  child: Text(
+                    text,
+                    textAlign: TextAlign.center,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 17,
+                      height: 1.28,
+                      fontWeight: FontWeight.w700,
+                      shadows: [
+                        Shadow(
+                          blurRadius: 4,
+                          color: Colors.black,
+                          offset: Offset(0, 1),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
           ),
         ),
       ),

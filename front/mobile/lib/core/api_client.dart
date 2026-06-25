@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -24,73 +25,76 @@ class ApiClient {
     defaultValue: 'http://localhost:8080',
   );
 
-  Future<Map<String, dynamic>> post(
-    String path,
-    Map<String, dynamic> body,
-  ) async {
-    final uri = Uri.parse('$baseUrl$path');
-    final response = await http.post(
-      uri,
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode(body),
-    );
-    return _decode(response, uri);
+  /// Network calls give up after this long so a hung or unreachable server
+  /// surfaces an actionable error instead of an indefinite spinner.
+  static const Duration timeout = Duration(seconds: 10);
+
+  Future<Map<String, dynamic>> post(String path, Map<String, dynamic> body) {
+    return _send('POST', path, body: body);
   }
 
-  Future<Map<String, dynamic>> get(String path) async {
-    final uri = Uri.parse('$baseUrl$path');
-    final response = await http.get(uri);
-    return _decode(response, uri);
+  Future<Map<String, dynamic>> get(String path) {
+    return _send('GET', path);
   }
 
-  Future<Map<String, dynamic>> getAuth(String path) async {
-    final token = await Session.token();
+  Future<Map<String, dynamic>> getAuth(String path) {
+    return _send('GET', path, auth: true);
+  }
+
+  Future<Map<String, dynamic>> postAuth(String path, Map<String, dynamic> body) {
+    return _send('POST', path, body: body, auth: true);
+  }
+
+  Future<Map<String, dynamic>> putAuth(String path, Map<String, dynamic> body) {
+    return _send('PUT', path, body: body, auth: true);
+  }
+
+  Future<Map<String, dynamic>> deleteAuth(String path) {
+    return _send('DELETE', path, auth: true);
+  }
+
+  /// Single entry point for every request: builds the URL, attaches the auth
+  /// header when needed, encodes the JSON body, enforces a [timeout], and
+  /// turns transport failures into a clear [ApiException].
+  Future<Map<String, dynamic>> _send(
+    String method,
+    String path, {
+    Map<String, dynamic>? body,
+    bool auth = false,
+  }) async {
+    final uri = Uri.parse('$baseUrl$path');
     final headers = <String, String>{};
-    if (token != null) headers['Authorization'] = 'Bearer $token';
-    final uri = Uri.parse('$baseUrl$path');
-    final response = await http.get(uri, headers: headers);
-    return _decode(response, uri);
-  }
-
-  Future<Map<String, dynamic>> postAuth(
-    String path,
-    Map<String, dynamic> body,
-  ) async {
-    final token = await Session.token();
-    final headers = <String, String>{'Content-Type': 'application/json'};
-    if (token != null) headers['Authorization'] = 'Bearer $token';
-    final uri = Uri.parse('$baseUrl$path');
-    final response = await http.post(
-      uri,
-      headers: headers,
-      body: jsonEncode(body),
-    );
-    return _decode(response, uri);
-  }
-
-  Future<Map<String, dynamic>> putAuth(
-    String path,
-    Map<String, dynamic> body,
-  ) async {
-    final token = await Session.token();
-    final headers = <String, String>{'Content-Type': 'application/json'};
-    if (token != null) headers['Authorization'] = 'Bearer $token';
-    final uri = Uri.parse('$baseUrl$path');
-    final response = await http.put(
-      uri,
-      headers: headers,
-      body: jsonEncode(body),
-    );
-    return _decode(response, uri);
-  }
-
-  Future<Map<String, dynamic>> deleteAuth(String path) async {
-    final token = await Session.token();
-    final headers = <String, String>{};
-    if (token != null) headers['Authorization'] = 'Bearer $token';
-    final uri = Uri.parse('$baseUrl$path');
-    final response = await http.delete(uri, headers: headers);
-    return _decode(response, uri);
+    if (body != null) headers['Content-Type'] = 'application/json';
+    if (auth) {
+      final token = await Session.token();
+      if (token != null) headers['Authorization'] = 'Bearer $token';
+    }
+    final encodedBody = body == null ? null : jsonEncode(body);
+    try {
+      final Future<http.Response> request;
+      switch (method) {
+        case 'GET':
+          request = http.get(uri, headers: headers);
+          break;
+        case 'POST':
+          request = http.post(uri, headers: headers, body: encodedBody);
+          break;
+        case 'PUT':
+          request = http.put(uri, headers: headers, body: encodedBody);
+          break;
+        case 'DELETE':
+          request = http.delete(uri, headers: headers);
+          break;
+        default:
+          throw ArgumentError('Unsupported HTTP method: $method');
+      }
+      final response = await request.timeout(timeout);
+      return _decode(response, uri);
+    } on TimeoutException {
+      throw ApiException('请求超时，请检查网络或服务器地址：$uri');
+    } on http.ClientException catch (e) {
+      throw ApiException('无法连接服务器 (${e.message})，请检查服务器地址：$uri');
+    }
   }
 
   /// Turns a response body into a JSON map, or throws an [ApiException] with a
