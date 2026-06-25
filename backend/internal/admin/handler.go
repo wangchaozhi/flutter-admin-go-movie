@@ -941,6 +941,11 @@ func MustGetMobileUser(username, password string) (bool, error) {
 }
 
 // GetMobileUser returns the user row on successful credential check.
+// ErrMobileUserBanned is returned by GetMobileUser when the credentials are
+// valid but the account is banned, so callers can surface a clear 403 instead
+// of a generic 500.
+var ErrMobileUserBanned = errors.New("account banned")
+
 func GetMobileUser(username, password string) (*store.MobileUser, error) {
 	var user store.MobileUser
 	err := store.DB().Where("username = ?", username).First(&user).Error
@@ -954,9 +959,19 @@ func GetMobileUser(username, password string) (*store.MobileUser, error) {
 		return nil, nil
 	}
 	if user.Status == "banned" {
-		return nil, fmt.Errorf("account banned")
+		return nil, ErrMobileUserBanned
 	}
 	return &user, nil
+}
+
+// IsMobileUserBanned reports whether the given mobile user is currently banned.
+// Used to revoke access mid-session for users banned after they logged in.
+func IsMobileUserBanned(userID int) bool {
+	var user store.MobileUser
+	if err := store.DB().Select("status").First(&user, userID).Error; err != nil {
+		return false
+	}
+	return user.Status == "banned"
 }
 
 func mobileJWTSecret() []byte {

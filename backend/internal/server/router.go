@@ -17,11 +17,11 @@ func NewRouter() http.Handler {
 
 	mux.HandleFunc("/api/admin/login", auth.AdminLoginHandler)
 	mux.HandleFunc("/api/mobile/login", auth.MobileLoginHandler)
-	mux.HandleFunc("/api/mobile/profile", auth.MobileProfileHandler)
-	mux.HandleFunc("/api/mobile/watch-history", video.AppWatchHistoryHandler)
-	mux.HandleFunc("/api/mobile/favorites", video.AppFavoritesHandler)
-	mux.HandleFunc("/api/mobile/favorites/", video.AppFavoriteByVideoHandler)
-	mux.HandleFunc("/api/mobile/settings", video.AppMobileSettingsHandler)
+	mux.Handle("/api/mobile/profile", mobileBanGuard(http.HandlerFunc(auth.MobileProfileHandler)))
+	mux.Handle("/api/mobile/watch-history", mobileBanGuard(http.HandlerFunc(video.AppWatchHistoryHandler)))
+	mux.Handle("/api/mobile/favorites", mobileBanGuard(http.HandlerFunc(video.AppFavoritesHandler)))
+	mux.Handle("/api/mobile/favorites/", mobileBanGuard(http.HandlerFunc(video.AppFavoriteByVideoHandler)))
+	mux.Handle("/api/mobile/settings", mobileBanGuard(http.HandlerFunc(video.AppMobileSettingsHandler)))
 
 	mux.HandleFunc("/api/admin/profile", admin.ProfileHandler)
 	mux.HandleFunc("/api/admin/profile/theme", admin.ProfileThemeHandler)
@@ -93,10 +93,10 @@ func NewRouter() http.Handler {
 	// app: categories + video list / detail / play / cover / progress
 	mux.HandleFunc("/api/categories", video.AppListCategoriesHandler)
 	mux.HandleFunc("/api/products", payment.ProductsHandler)
-	mux.HandleFunc("/api/orders", payment.OrdersHandler)
-	mux.HandleFunc("/api/orders/", payment.OrderByNoHandler)
+	mux.Handle("/api/orders", mobileBanGuard(http.HandlerFunc(payment.OrdersHandler)))
+	mux.Handle("/api/orders/", mobileBanGuard(http.HandlerFunc(payment.OrderByNoHandler)))
 	mux.HandleFunc("/api/videos", video.AppListVideosHandler)
-	mux.HandleFunc("/api/videos/", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("/api/videos/", mobileBanGuard(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/play"):
 			video.AppPlayHandler(w, r)
@@ -107,7 +107,7 @@ func NewRouter() http.Handler {
 		default:
 			video.AppGetVideoHandler(w, r)
 		}
-	})
+	})))
 
 	// hls m3u8 dynamic rewrite
 	mux.HandleFunc("/api/hls/", func(w http.ResponseWriter, r *http.Request) {
@@ -129,6 +129,23 @@ func NewRouter() http.Handler {
 	mux.HandleFunc("/api/webhooks/paypal", payment.PayPalWebhookHandler)
 
 	return withCORS(mux)
+}
+
+// mobileBanGuard revokes access for users banned after they logged in: if the
+// request carries a valid mobile token whose account is now banned, it responds
+// 403 with code 4030 so the app can force a logout. Requests without a token
+// (anonymous browsing) pass through untouched.
+func mobileBanGuard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw := strings.TrimPrefix(strings.TrimSpace(r.Header.Get("Authorization")), "Bearer ")
+		if raw != "" {
+			if claims, err := admin.ParseMobileToken(raw); err == nil && admin.IsMobileUserBanned(claims.UserID) {
+				common.WriteJSON(w, http.StatusForbidden, common.APIResponse{Code: 4030, Msg: "账号已被封禁，请联系管理员"})
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func requireAdminAuth(next http.Handler) http.Handler {

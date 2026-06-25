@@ -25,6 +25,26 @@ class ApiClient {
     defaultValue: 'http://localhost:8080',
   );
 
+  /// Backend code returned when the authenticated account has been banned
+  /// mid-session. The app reacts by clearing the session and returning to login.
+  static const int bannedCode = 4030;
+
+  /// Invoked once when a banned response is detected, so the app can show a
+  /// message and route back to the login page. Set by [MobileApp].
+  static void Function(String message)? onForcedLogout;
+  static bool _handlingForcedLogout = false;
+
+  static Future<void> _forceLogout(String message) async {
+    if (_handlingForcedLogout) return;
+    _handlingForcedLogout = true;
+    await Session.clear();
+    onForcedLogout?.call(message);
+    // Allow a later ban (after a fresh login) to trigger the flow again.
+    Future<void>.delayed(const Duration(seconds: 2), () {
+      _handlingForcedLogout = false;
+    });
+  }
+
   /// Network calls give up after this long so a hung or unreachable server
   /// surfaces an actionable error instead of an indefinite spinner.
   static const Duration timeout = Duration(seconds: 10);
@@ -89,7 +109,13 @@ class ApiClient {
           throw ArgumentError('Unsupported HTTP method: $method');
       }
       final response = await request.timeout(timeout);
-      return _decode(response, uri);
+      final decoded = _decode(response, uri);
+      if (decoded['code'] == bannedCode) {
+        await _forceLogout(
+          decoded['msg']?.toString() ?? '账号已被封禁，请重新登录',
+        );
+      }
+      return decoded;
     } on TimeoutException {
       throw ApiException('请求超时，请检查网络或服务器地址：$uri');
     } on http.ClientException catch (e) {

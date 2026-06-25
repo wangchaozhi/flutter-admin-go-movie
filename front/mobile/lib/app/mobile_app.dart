@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:forui/forui.dart';
 
+import '../core/api_client.dart';
 import '../core/session.dart';
 import '../features/auth/mobile_login_page.dart';
 import '../features/home/mobile_home_page.dart';
@@ -11,13 +12,31 @@ import '../models/video.dart' as model;
 class MobileApp extends StatelessWidget {
   const MobileApp({super.key});
 
+  // Lets the API layer route back to login from anywhere when the account is
+  // banned mid-session, without holding a BuildContext.
+  static final GlobalKey<NavigatorState> navigatorKey =
+      GlobalKey<NavigatorState>();
+
   @override
   Widget build(BuildContext context) {
     final foruiTheme = FThemes.zinc.light.touch;
 
+    // Forced logout (e.g. account banned while logged in): drop to the login
+    // screen and explain why.
+    ApiClient.onForcedLogout = (message) {
+      final navigator = navigatorKey.currentState;
+      if (navigator == null) return;
+      navigator.pushNamedAndRemoveUntil('/login', (route) => false);
+      final messenger = ScaffoldMessenger.maybeOf(navigator.context);
+      messenger?.showSnackBar(
+        SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
+      );
+    };
+
     return MaterialApp(
       title: 'Go Movie',
       debugShowCheckedModeBanner: false,
+      navigatorKey: navigatorKey,
       localizationsDelegates: FLocalizations.localizationsDelegates,
       supportedLocales: FLocalizations.supportedLocales,
       theme: foruiTheme.toApproximateMaterialTheme().copyWith(
@@ -64,10 +83,21 @@ class _AuthGateState extends State<_AuthGate> {
   Future<void> _check() async {
     final tok = await Session.token();
     if (!mounted) return;
-    if (tok != null && tok.isNotEmpty) {
-      Navigator.pushReplacementNamed(context, '/home');
-    } else {
+    if (tok == null || tok.isEmpty) {
       Navigator.pushReplacementNamed(context, '/login');
+      return;
+    }
+    // Validate the saved session before entering: a banned account makes the
+    // profile call return ApiClient.bannedCode, whose handler routes to /login,
+    // so we must not also push /home in that case.
+    try {
+      final resp = await ApiClient().getAuth('/api/mobile/profile');
+      if (!mounted) return;
+      if (resp['code'] == ApiClient.bannedCode) return;
+      Navigator.pushReplacementNamed(context, '/home');
+    } catch (_) {
+      // Transient/network error: don't lock the user out over a failed check.
+      if (mounted) Navigator.pushReplacementNamed(context, '/home');
     }
   }
 

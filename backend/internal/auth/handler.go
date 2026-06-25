@@ -2,6 +2,7 @@ package auth
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -89,6 +90,10 @@ func MobileLoginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user, err := admin.GetMobileUser(req.Username, req.Password)
+	if errors.Is(err, admin.ErrMobileUserBanned) {
+		common.WriteJSON(w, http.StatusForbidden, common.APIResponse{Code: 403, Msg: "账号已被封禁，请联系管理员"})
+		return
+	}
 	if err != nil {
 		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
 		return
