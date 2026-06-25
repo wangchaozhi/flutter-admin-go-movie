@@ -1,6 +1,9 @@
 name: Manual Release
 
 on:
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
       tag:
@@ -20,8 +23,13 @@ on:
 permissions:
   contents: write
 
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+  RELEASE_NAME: ${{ inputs.release_name || inputs.tag || github.ref_name }}
+  RELEASE_PRERELEASE: ${{ inputs.prerelease || false }}
+
 concurrency:
-  group: release-${{ inputs.tag }}
+  group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -39,7 +47,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          TAG="${{ inputs.tag }}"
+          TAG="${RELEASE_TAG}"
           if [[ ! "$TAG" =~ ^v?[0-9]+(\.[0-9]+){1,2}([.-][0-9A-Za-z.-]+)?$ ]]; then
             echo "Invalid tag: $TAG"
             echo "Recommended format: v1.0.0"
@@ -47,10 +55,11 @@ jobs:
           fi
 
       - name: Create tag when missing
+        if: ${{ github.event_name == 'workflow_dispatch' }}
         shell: bash
         run: |
           set -euo pipefail
-          TAG="${{ inputs.tag }}"
+          TAG="${RELEASE_TAG}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin "refs/tags/${TAG}:refs/tags/${TAG}" || true
@@ -71,7 +80,7 @@ jobs:
       - name: Checkout tag
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -94,11 +103,11 @@ jobs:
           )
           for target in "${targets[@]}"; do
             read -r goos goarch output <<< "$target"
-            out_dir="../dist/backend/flutter-admin-go-${{ inputs.tag }}-${goos}-${goarch}"
+            out_dir="../dist/backend/flutter-admin-go-${RELEASE_TAG}-${goos}-${goarch}"
             mkdir -p "$out_dir"
             GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o "$out_dir/$output" ./cmd/server
             cp ../README.md "$out_dir/"
-            tar -czf "../dist/flutter-admin-go-${{ inputs.tag }}-backend-${goos}-${goarch}.tar.gz" -C "../dist/backend" "$(basename "$out_dir")"
+            tar -czf "../dist/flutter-admin-go-${RELEASE_TAG}-backend-${goos}-${goarch}.tar.gz" -C "../dist/backend" "$(basename "$out_dir")"
           done
 
       - name: Setup Node.js
@@ -118,7 +127,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          tar -czf "dist/flutter-admin-go-${{ inputs.tag }}-admin-web.tar.gz" -C front/admin/dist .
+          tar -czf "dist/flutter-admin-go-${RELEASE_TAG}-admin-web.tar.gz" -C front/admin/dist .
 
       - name: Upload backend and admin assets
         uses: actions/upload-artifact@v4
@@ -138,7 +147,7 @@ jobs:
       - name: Checkout tag
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Install Linux desktop dependencies
         run: |
@@ -172,9 +181,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          cp front/mobile/build/app/outputs/flutter-apk/app-release.apk "dist/flutter-admin-go-${{ inputs.tag }}-mobile-android-release.apk"
-          tar -czf "dist/flutter-admin-go-${{ inputs.tag }}-mobile-web.tar.gz" -C front/mobile/build/web .
-          tar -czf "dist/flutter-admin-go-${{ inputs.tag }}-mobile-linux-x64.tar.gz" -C front/mobile/build/linux/x64/release/bundle .
+          cp front/mobile/build/app/outputs/flutter-apk/app-release.apk "dist/flutter-admin-go-${RELEASE_TAG}-mobile-android-release.apk"
+          tar -czf "dist/flutter-admin-go-${RELEASE_TAG}-mobile-web.tar.gz" -C front/mobile/build/web .
+          tar -czf "dist/flutter-admin-go-${RELEASE_TAG}-mobile-linux-x64.tar.gz" -C front/mobile/build/linux/x64/release/bundle .
 
       - name: Upload Flutter Android, web and Linux assets
         uses: actions/upload-artifact@v4
@@ -193,7 +202,7 @@ jobs:
       - name: Checkout tag
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -212,7 +221,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Compress-Archive -Path front/mobile/build/windows/x64/runner/Release/* -DestinationPath "dist/flutter-admin-go-${{ inputs.tag }}-mobile-windows-x64.zip" -Force
+          Compress-Archive -Path front/mobile/build/windows/x64/runner/Release/* -DestinationPath "dist/flutter-admin-go-${env:RELEASE_TAG}-mobile-windows-x64.zip" -Force
 
       - name: Upload Flutter Windows asset
         uses: actions/upload-artifact@v4
@@ -231,7 +240,7 @@ jobs:
       - name: Checkout tag
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -256,7 +265,7 @@ jobs:
             echo "No macOS .app bundle found"
             exit 1
           fi
-          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "dist/flutter-admin-go-${{ inputs.tag }}-mobile-macos.zip"
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "dist/flutter-admin-go-${RELEASE_TAG}-mobile-macos.zip"
 
       - name: Upload Flutter macOS asset
         uses: actions/upload-artifact@v4
@@ -305,9 +314,9 @@ jobs:
       - name: Create release and upload assets
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.tag }}
-          name: ${{ inputs.release_name || inputs.tag }}
-          prerelease: ${{ inputs.prerelease }}
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_NAME }}
+          prerelease: ${{ env.RELEASE_PRERELEASE }}
           generate_release_notes: true
           overwrite_files: true
           fail_on_unmatched_files: true
