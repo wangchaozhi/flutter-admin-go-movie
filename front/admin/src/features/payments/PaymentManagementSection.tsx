@@ -196,6 +196,8 @@ export function PaymentManagementSection({
 
   useEffect(() => {
     void loadPayments()
+    // reload when token changes; `loadPayments` is recreated each render
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token])
 
   async function handleSaveProduct(event: FormEvent) {

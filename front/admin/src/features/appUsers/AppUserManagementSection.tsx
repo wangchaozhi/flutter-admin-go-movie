@@ -31,6 +31,8 @@ export function AppUserManagementSection({
     if (json.code === 0) setUsers(json.data ?? [])
   }
 
+  // mount-only load; `load` is recreated each render so it stays out of deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load() }, [])
 
   async function handleSave(e: FormEvent) {

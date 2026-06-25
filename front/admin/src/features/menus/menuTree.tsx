@@ -4,8 +4,7 @@ import { ChevronRight } from 'lucide-react'
 import type { Menu } from '../../adminTypes'
 import { RowActions } from '../../components/shared'
 import { resolveIcon } from '../../iconRegistry'
-
-export type MenuNodeType = Menu & { children: MenuNodeType[] }
+import type { MenuNodeType } from './menuTreeModel'
 
 export function MenuNode({
   node,
@@ -75,27 +74,4 @@ export function MenuNode({
       )}
     </div>
   )
-}
-
-export function buildMenuTree(menus: Menu[]): MenuNodeType[] {
-  const map = new Map<number, MenuNodeType>()
-  menus.forEach((menu) => map.set(menu.id, { ...menu, children: [] }))
-  const roots: MenuNodeType[] = []
-
-  map.forEach((node) => {
-    const parent = map.get(node.parentId)
-    if (parent) {
-      parent.children.push(node)
-      return
-    }
-    roots.push(node)
-  })
-
-  sortMenuNodes(roots)
-  return roots
-}
-
-function sortMenuNodes(nodes: MenuNodeType[]) {
-  nodes.sort((left, right) => left.sortOrder - right.sortOrder || left.id - right.id)
-  nodes.forEach((node) => sortMenuNodes(node.children))
 }

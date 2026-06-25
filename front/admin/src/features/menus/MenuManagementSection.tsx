@@ -4,7 +4,7 @@ import type { Menu, MenuForm } from '../../adminTypes'
 import { FormActions, PanelTitle } from '../../components/shared'
 import { menuIconOptions } from '../../iconRegistry'
 import { MenuNode } from './menuTree'
-import type { MenuNodeType } from './menuTree'
+import type { MenuNodeType } from './menuTreeModel'
 
 const emptyMenu: MenuForm = {
   name: '',
