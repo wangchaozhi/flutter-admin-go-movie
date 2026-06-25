@@ -186,6 +186,11 @@ export function VideoManagementSection({
   const [videos, setVideos] = useState<Video[]>([])
   const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
+  // `keyword` is the live input; `appliedKeyword` is the committed search term
+  // that actually drives the query, so typing doesn't fire a request per keystroke.
+  const [keyword, setKeyword] = useState('')
+  const [appliedKeyword, setAppliedKeyword] = useState('')
+  const [categoryFilter, setCategoryFilter] = useState(0)
   const [categories, setCategories] = useState<Category[]>([])
   const [form, setForm] = useState<VideoForm>(emptyForm)
   const [saving, setSaving] = useState(false)
@@ -219,6 +224,8 @@ export function VideoManagementSection({
 
   async function loadVideos(): Promise<Video[]> {
     const params = new URLSearchParams({ page: String(page), per_page: String(PER_PAGE) })
+    if (appliedKeyword.trim()) params.set('q', appliedKeyword.trim())
+    if (categoryFilter > 0) params.set('category_id', String(categoryFilter))
     const res = await fetch(`/api/admin/videos?${params.toString()}`, { headers: jsonHeaders })
     const json: ApiResponse<Paged<Video>> = await res.json()
     const list = json.code === 0 && json.data ? (json.data.items ?? []) : []
@@ -249,9 +256,22 @@ export function VideoManagementSection({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadCategories() }, [])
 
-  // (Re)load the video list on mount and whenever the page changes.
+  // (Re)load the video list on mount and whenever the page or applied filters change.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { loadVideos() }, [page])
+  useEffect(() => { loadVideos() }, [page, appliedKeyword, categoryFilter])
+
+  // Commit the typed keyword and jump back to the first page of results.
+  function applySearch() {
+    setPage(1)
+    setAppliedKeyword(keyword)
+  }
+
+  function resetSearch() {
+    setKeyword('')
+    setAppliedKeyword('')
+    setCategoryFilter(0)
+    setPage(1)
+  }
 
   // If the page is refreshed during a merge re-transcode, videos can stay
   // "ready" while the list API reports the active transcode separately.
@@ -625,6 +645,36 @@ export function VideoManagementSection({
     <section className="content-grid">
       <section className="table-panel">
         <PanelTitle title="视频列表" count={total} />
+        <form
+          className="history-filter-bar"
+          onSubmit={(e) => {
+            e.preventDefault()
+            applySearch()
+          }}
+        >
+          <input
+            className="history-search"
+            value={keyword}
+            onChange={(e) => setKeyword(e.target.value)}
+            placeholder="搜索标题或 ID"
+          />
+          <select
+            value={categoryFilter}
+            onChange={(e) => {
+              setCategoryFilter(Number(e.target.value))
+              setPage(1)
+            }}
+          >
+            <option value={0}>全部类别</option>
+            {categories.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+          <button type="submit">搜索</button>
+          {(appliedKeyword || categoryFilter > 0) && (
+            <button type="button" className="ghost-button" onClick={resetSearch}>重置</button>
+          )}
+        </form>
         <div className="table-wrap">
           <table>
             <thead>

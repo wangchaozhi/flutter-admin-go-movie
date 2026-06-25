@@ -787,6 +787,7 @@ func AppListVideosHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	categoryID, _ := strconv.Atoi(q.Get("category_id"))
 	vipOnly, _ := strconv.ParseBool(q.Get("is_vip"))
+	keyword := strings.TrimSpace(q.Get("q"))
 
 	db := store.DB().Where("status = ?", "ready")
 	if categoryID > 0 {
@@ -797,6 +798,10 @@ func AppListVideosHandler(w http.ResponseWriter, r *http.Request) {
 	if vipOnly {
 		db = db.Where("is_vip = ? AND is_free = ?", true, false)
 	}
+	// Keyword search over the title (case-insensitive). Powers the app search box.
+	if keyword != "" {
+		db = db.Where("LOWER(title) LIKE ?", "%"+strings.ToLower(keyword)+"%")
+	}
 
 	var total int64
 	db.Model(&store.Video{}).Count(&total)
@@ -804,13 +809,26 @@ func AppListVideosHandler(w http.ResponseWriter, r *http.Request) {
 	var videos []store.Video
 	db.Order("id desc").Offset((page - 1) * perPage).Limit(perPage).Find(&videos)
 
-	// load category names in one query
+	// Resolve category names for just the categories on this page, rather than
+	// scanning the whole categories table on every request.
 	catNames := map[int]string{}
 	if len(videos) > 0 {
-		var cats []store.Category
-		store.DB().Find(&cats)
-		for _, c := range cats {
-			catNames[c.ID] = c.Name
+		catIDSet := map[int]struct{}{}
+		for _, v := range videos {
+			if v.CategoryID > 0 {
+				catIDSet[v.CategoryID] = struct{}{}
+			}
+		}
+		if len(catIDSet) > 0 {
+			catIDs := make([]int, 0, len(catIDSet))
+			for id := range catIDSet {
+				catIDs = append(catIDs, id)
+			}
+			var cats []store.Category
+			store.DB().Where("id IN ?", catIDs).Find(&cats)
+			for _, c := range cats {
+				catNames[c.ID] = c.Name
+			}
 		}
 	}
 

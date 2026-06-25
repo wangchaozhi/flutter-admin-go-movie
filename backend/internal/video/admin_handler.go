@@ -16,6 +16,7 @@ import (
 	"flutter-admin-go/internal/store"
 
 	"github.com/minio/minio-go/v7"
+	"gorm.io/gorm"
 )
 
 type transcodeRequest struct {
@@ -689,18 +690,39 @@ func AdminListVideosHandler(w http.ResponseWriter, r *http.Request) {
 		common.WriteJSON(w, http.StatusMethodNotAllowed, common.APIResponse{Code: 405, Msg: "method not allowed"})
 		return
 	}
+	q := r.URL.Query()
+	keyword := strings.TrimSpace(q.Get("q"))
+	categoryID, _ := strconv.Atoi(q.Get("category_id"))
+	status := strings.TrimSpace(q.Get("status"))
+
+	// filtered applies the optional title/id keyword, category and status filters
+	// so the count and page queries stay in sync.
+	filtered := func(db *gorm.DB) *gorm.DB {
+		if keyword != "" {
+			like := "%" + strings.ToLower(keyword) + "%"
+			db = db.Where("CAST(id AS TEXT) LIKE ? OR LOWER(title) LIKE ?", like, like)
+		}
+		if categoryID > 0 {
+			db = db.Where("category_id = ?", categoryID)
+		}
+		if status != "" {
+			db = db.Where("status = ?", status)
+		}
+		return db
+	}
+
 	if !common.HasPagination(r) {
 		var videos []store.Video
-		store.DB().Order("id desc").Find(&videos)
+		filtered(store.DB()).Order("id desc").Find(&videos)
 		attachVideoTranscodeMetadata(r.Context(), videos)
 		common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: videos})
 		return
 	}
 	p := common.ParsePagination(r, 20, 100)
 	var total int64
-	store.DB().Model(&store.Video{}).Count(&total)
+	filtered(store.DB().Model(&store.Video{})).Count(&total)
 	var videos []store.Video
-	store.DB().Order("id desc").Offset(p.Offset).Limit(p.PerPage).Find(&videos)
+	filtered(store.DB()).Order("id desc").Offset(p.Offset).Limit(p.PerPage).Find(&videos)
 	attachVideoTranscodeMetadata(r.Context(), videos)
 	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: common.PageResponse(videos, total, p)})
 }
