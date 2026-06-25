@@ -31,7 +31,7 @@
 - 内容管理：视频、类别、影片资料（演员、导演、地区、年份、语言、类型）、转码任务、转码历史记录和多清晰度 HLS 资源管理。
 - AI 元信息补全：管理端可调用 DeepSeek / OpenAI-compatible API 自动生成视频简介、看点和标签；移动端播放页展示简介、看点、标签和结构化影片资料。
 - App 管理：移动端用户资料、状态和登录密码维护。
-- 支付管理：会员套餐、单片套餐、订单列表和订单删除，订单列表会展示 App 用户名。
+- 支付管理：会员套餐、单片套餐、订单列表、订单删除和**订单退款**（退款会回收会员套餐对应的 VIP 天数并把订单置为 `refunded`），订单列表会展示 App 用户名。
 - 移动端：视频浏览、播放、收藏、观看历史、个人设置、商品和订单。
 
 ## 环境要求
@@ -244,6 +244,7 @@ GET|POST          /api/admin/products
 PUT|DELETE        /api/admin/products/{id}
 GET               /api/admin/orders
 DELETE            /api/admin/orders/{id}
+POST              /api/admin/orders/{id}/refund   # 退款，需 payment:refund
 GET|POST          /api/admin/videos
 GET|PUT|DELETE    /api/admin/videos/{id}
 POST              /api/admin/videos/{id}/upload

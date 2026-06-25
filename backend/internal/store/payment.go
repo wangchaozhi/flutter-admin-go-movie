@@ -37,6 +37,8 @@ type Order struct {
 	ProviderPaymentID string         `gorm:"column:provider_payment_id"   json:"provider_payment_id"`
 	CheckoutURL       string         `gorm:"column:checkout_url"          json:"checkout_url"`
 	PaidAt            *time.Time     `gorm:"column:paid_at"               json:"paid_at"`
+	RefundedAt        *time.Time     `gorm:"column:refunded_at"           json:"refunded_at"`
+	RefundID          string         `gorm:"column:refund_id"             json:"refund_id"`
 	ExpiresAt         *time.Time     `gorm:"column:expires_at"            json:"expires_at"`
 	CreatedAt         time.Time      `gorm:"column:created_at"            json:"created_at"`
 	UpdatedAt         time.Time      `gorm:"column:updated_at"            json:"updated_at"`

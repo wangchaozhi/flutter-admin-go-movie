@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
-import { BadgeCheck, Loader, Pencil, RefreshCw, Trash2 } from 'lucide-react'
+import { BadgeCheck, Loader, Pencil, RefreshCw, Trash2, Undo2 } from 'lucide-react'
 
 import type {
   ApiResponse,
@@ -170,6 +170,7 @@ export function PaymentManagementSection({
   )
   const canManageProducts = can('payment:product')
   const canManageOrders = can('payment:order')
+  const canRefund = can('payment:refund')
   const filteredVideos = useMemo(() => {
     const keyword = videoKeyword.trim().toLowerCase()
     const list = keyword
@@ -303,6 +304,18 @@ export function PaymentManagementSection({
       await Promise.all([loadOrders(), loadPayments()])
     } catch (err) {
       setError(err instanceof Error ? err.message : '删除订单失败')
+    }
+  }
+
+  async function handleRefundOrder(order: Order) {
+    if (!canRefund || order.status !== 'paid') return
+    if (!window.confirm(`确认为订单「${order.order_no}」退款？会员套餐将回收对应天数。`)) return
+    setError('')
+    try {
+      await request<unknown>(`/api/admin/orders/${order.id}/refund`, token, { method: 'POST' })
+      await Promise.all([loadOrders(), loadPayments()])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '退款失败')
     }
   }
 
@@ -586,13 +599,19 @@ export function PaymentManagementSection({
                   <td>{formatDateTime(order.created_at)}</td>
                   <td>
                     <div className="row-actions">
+                      {canRefund && order.status === 'paid' && (
+                        <button className="ghost-button" type="button" onClick={() => void handleRefundOrder(order)}>
+                          <Undo2 size={13} />
+                          退款
+                        </button>
+                      )}
                       {canManageOrders ? (
                         <button className="danger" type="button" onClick={() => void handleDeleteOrder(order)}>
                           <Trash2 size={13} />
                           删除
                         </button>
                       ) : (
-                        <span className="muted-action">无权限</span>
+                        !(canRefund && order.status === 'paid') && <span className="muted-action">无权限</span>
                       )}
                     </div>
                   </td>

@@ -258,26 +258,150 @@ func AdminOrdersHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func AdminOrderByIDHandler(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.Atoi(strings.TrimPrefix(r.URL.Path, "/api/admin/orders/"))
-	if err != nil {
+	id, action := parseAdminOrderPath(r.URL.Path)
+	if id <= 0 {
 		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "invalid id"})
 		return
 	}
-	switch r.Method {
-	case http.MethodDelete:
-		result := store.DB().Delete(&store.Order{}, id)
-		if result.Error != nil {
-			common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: result.Error.Error()})
+	switch action {
+	case "refund":
+		if r.Method != http.MethodPost {
+			common.WriteJSON(w, http.StatusMethodNotAllowed, common.APIResponse{Code: 405, Msg: "method not allowed"})
 			return
 		}
-		if result.RowsAffected == 0 {
+		refundOrder(w, r, id)
+	case "":
+		switch r.Method {
+		case http.MethodDelete:
+			result := store.DB().Delete(&store.Order{}, id)
+			if result.Error != nil {
+				common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: result.Error.Error()})
+				return
+			}
+			if result.RowsAffected == 0 {
+				common.WriteJSON(w, http.StatusNotFound, common.APIResponse{Code: 404, Msg: "order not found"})
+				return
+			}
+			common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok"})
+		default:
+			common.WriteJSON(w, http.StatusMethodNotAllowed, common.APIResponse{Code: 405, Msg: "method not allowed"})
+		}
+	default:
+		common.WriteJSON(w, http.StatusNotFound, common.APIResponse{Code: 404, Msg: "not found"})
+	}
+}
+
+// refundOrder issues a full refund for a paid order: it asks the payment
+// provider to settle the refund, then atomically marks the order refunded and
+// reverses any VIP time the original payment had granted. Only orders in the
+// "paid" state can be refunded.
+func refundOrder(w http.ResponseWriter, r *http.Request, id int) {
+	var order store.Order
+	if err := store.DB().First(&order, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
 			common.WriteJSON(w, http.StatusNotFound, common.APIResponse{Code: 404, Msg: "order not found"})
 			return
 		}
-		common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok"})
-	default:
-		common.WriteJSON(w, http.StatusMethodNotAllowed, common.APIResponse{Code: 405, Msg: "method not allowed"})
+		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
+		return
 	}
+	if order.Status == "refunded" {
+		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "order already refunded"})
+		return
+	}
+	if order.Status != "paid" {
+		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "only paid orders can be refunded"})
+		return
+	}
+
+	provider, err := providerFor(order.Provider, LoadConfig())
+	if err != nil {
+		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: err.Error()})
+		return
+	}
+	result, err := provider.Refund(r.Context(), order)
+	if err != nil {
+		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: err.Error()})
+		return
+	}
+
+	if err := store.DB().Transaction(func(tx *gorm.DB) error {
+		return applyRefundedOrder(tx, order.ID, result.RefundID, time.Now())
+	}); err != nil {
+		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: err.Error()})
+		return
+	}
+
+	var updated store.Order
+	if err := withOrderProduct(store.DB()).Preload("User").First(&updated, id).Error; err != nil {
+		common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok"})
+		return
+	}
+	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: updated})
+}
+
+// applyRefundedOrder marks the order refunded and, for VIP products, claws back
+// the granted days from the user's membership (clearing it entirely if that
+// pulls the expiry to now or earlier). It re-reads the order under a row lock so
+// concurrent refunds are idempotent.
+func applyRefundedOrder(tx *gorm.DB, orderID int, refundID string, now time.Time) error {
+	var order store.Order
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&order, orderID).Error; err != nil {
+		return err
+	}
+	if order.Status == "refunded" {
+		return nil
+	}
+	if order.Status != "paid" {
+		return fmt.Errorf("order cannot be refunded from status %s", order.Status)
+	}
+	if err := tx.Model(&store.Order{}).Where("id = ?", order.ID).Updates(map[string]interface{}{
+		"status":      "refunded",
+		"refunded_at": now,
+		"refund_id":   strings.TrimSpace(refundID),
+		"updated_at":  now,
+	}).Error; err != nil {
+		return err
+	}
+
+	var product store.Product
+	if err := tx.Unscoped().First(&product, order.ProductID).Error; err != nil {
+		return err
+	}
+	if product.Kind != "vip" || product.DurationDays <= 0 {
+		return nil
+	}
+
+	var user store.MobileUser
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&user, order.UserID).Error; err != nil {
+		return err
+	}
+	if user.VIPUntil == nil {
+		return nil
+	}
+	newUntil := user.VIPUntil.AddDate(0, 0, -product.DurationDays)
+	updates := map[string]interface{}{"updated_at": now}
+	if newUntil.After(now) {
+		updates["vip_until"] = newUntil
+	} else {
+		updates["vip_until"] = nil
+	}
+	return tx.Model(&store.MobileUser{}).Where("id = ?", user.ID).Updates(updates).Error
+}
+
+// parseAdminOrderPath splits "/api/admin/orders/{id}[/action]" into its numeric
+// id and optional action. id is 0 when the segment is missing or non-numeric.
+func parseAdminOrderPath(path string) (int, string) {
+	trimmed := strings.Trim(strings.TrimPrefix(path, "/api/admin/orders/"), "/")
+	parts := strings.Split(trimmed, "/")
+	id, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, ""
+	}
+	if len(parts) > 1 {
+		return id, parts[1]
+	}
+	return id, ""
 }
 
 func StripeWebhookHandler(w http.ResponseWriter, r *http.Request) {
