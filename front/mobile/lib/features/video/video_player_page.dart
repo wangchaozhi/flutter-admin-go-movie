@@ -22,6 +22,10 @@ class _PlaybackSource {
   final bool mediaTracksScanned;
   final bool hasMultipleAudioTracks;
   final bool hasSubtitleTracks;
+  // VIP preview gating: when vipLocked is true the viewer is not a VIP member,
+  // so playback is limited to the first previewSeconds before the paywall shows.
+  final bool vipLocked;
+  final int previewSeconds;
 
   const _PlaybackSource({
     required this.url,
@@ -31,6 +35,8 @@ class _PlaybackSource {
     required this.mediaTracksScanned,
     required this.hasMultipleAudioTracks,
     required this.hasSubtitleTracks,
+    required this.vipLocked,
+    required this.previewSeconds,
   });
 }
 
@@ -81,6 +87,12 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   bool _recoveringPlayback = false;
   bool _isFullscreen = false;
   double _playbackRate = 1.0;
+  // VIP preview gating. When _vipLocked is set, playback is capped at
+  // _previewLimit; reaching it pauses and flips _previewBlocked to show the
+  // paywall overlay.
+  bool _vipLocked = false;
+  Duration _previewLimit = Duration.zero;
+  bool _previewBlocked = false;
 
   @override
   void initState() {
@@ -98,7 +110,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       _syncDetectedTracks,
     );
     _playerPositionSubscription = _player.stream.position.listen(
-      _syncWebSubtitleCue,
+      _onPositionChanged,
     );
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.landscapeLeft,
@@ -141,6 +153,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
         _loading = true;
         _error = null;
         _showResumePlaybackButton = false;
+        _previewBlocked = false;
       });
     }
     try {
@@ -153,6 +166,11 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
           _mediaTracksScanned = source.mediaTracksScanned;
           _hasMultipleAudioTracks = source.hasMultipleAudioTracks;
           _hasSubtitleTracks = source.hasSubtitleTracks;
+          _vipLocked = source.vipLocked;
+          _previewLimit = source.vipLocked && source.previewSeconds > 0
+              ? Duration(seconds: source.previewSeconds)
+              : Duration.zero;
+          _previewBlocked = false;
           _hlsAudioTracks = const [];
           _hlsSubtitleTracks = const [];
           _webSubtitleCues = const [];
@@ -169,8 +187,10 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       await _waitForMediaReady();
       _syncDetectedTracks(_player.state.tracks);
       await _applySelectedMediaTracks();
+      // Don't resume past the preview window for a locked video.
       if (resumePosition > Duration.zero &&
-          canResumeAt(resumePosition, _player.state.duration)) {
+          canResumeAt(resumePosition, _player.state.duration) &&
+          !_isBeyondPreview(resumePosition)) {
         await _player.seek(resumePosition);
       }
       await _resumePlayback();
@@ -242,6 +262,8 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
           data?['has_subtitle_tracks'] == true ||
           subtitleTrackCount > 0 ||
           subtitleTracks.isNotEmpty,
+      vipLocked: data?['vip_locked'] == true,
+      previewSeconds: TrackParser.parseInt(data?['preview_seconds']),
     );
   }
 
@@ -403,6 +425,45 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     _webSubtitleText.value = cue?.text ?? '';
   }
 
+  void _onPositionChanged(Duration position) {
+    _syncWebSubtitleCue(position);
+    _enforcePreviewLimit(position);
+  }
+
+  bool _isBeyondPreview(Duration position) {
+    return _vipLocked &&
+        _previewLimit > Duration.zero &&
+        position >= _previewLimit;
+  }
+
+  // Caps a locked video at the preview window: once the boundary is reached the
+  // player pauses, snaps back to the limit, and the paywall overlay appears.
+  void _enforcePreviewLimit(Duration position) {
+    if (!_vipLocked || _previewLimit <= Duration.zero) return;
+    if (position < _previewLimit) {
+      if (_previewBlocked && mounted) {
+        setState(() => _previewBlocked = false);
+      }
+      return;
+    }
+    unawaited(_player.pause());
+    if (position > _previewLimit) {
+      unawaited(_player.seek(_previewLimit));
+    }
+    if (!_previewBlocked && mounted) {
+      setState(() => _previewBlocked = true);
+    }
+  }
+
+  Future<void> _openVipUpgrade() async {
+    await _player.pause();
+    if (!mounted) return;
+    await Navigator.pushNamed(context, '/vip');
+    if (!mounted) return;
+    // Membership may have changed; re-fetch the source to lift the gate.
+    await _init();
+  }
+
   Future<void> _switchQuality(String name) async {
     if (name == _selectedQuality || _switchingQuality) return;
     final option = _qualities.where((q) => q.name == name).firstOrNull;
@@ -486,6 +547,10 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   }
 
   Future<void> _resumePlayback() async {
+    if (_isBeyondPreview(_player.state.position) && !_player.state.completed) {
+      if (mounted) setState(() => _previewBlocked = true);
+      return;
+    }
     try {
       if (_player.state.completed) {
         await _player.seek(Duration.zero);
@@ -1035,8 +1100,160 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
         Positioned(left: 48, bottom: 4, child: _buildPlaybackTools()),
         Positioned(right: 48, bottom: 4, child: _buildTrackAndQualityMenus()),
         Positioned(right: 8, top: 8, child: _buildFullscreenButton()),
+        if (_vipLocked && !_previewBlocked)
+          Positioned(left: 8, top: 8, child: _buildPreviewBadge()),
+        if (_previewBlocked) _buildVipPaywallOverlay(),
       ],
     );
+  }
+
+  // Small "VIP 试看" pill shown during the preview window; tapping it opens the
+  // upgrade page (the "开通VIP 图标" the viewer sees while previewing).
+  Widget _buildPreviewBadge() {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: () => unawaited(_openVipUpgrade()),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(20),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: const Color(0xCC1B1300),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: const Color(0xFFF7C948)),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.workspace_premium_rounded,
+                      color: Color(0xFFF7C948),
+                      size: 16,
+                    ),
+                    const SizedBox(width: 5),
+                    StreamBuilder<Duration>(
+                      stream: _player.stream.position,
+                      initialData: _player.state.position,
+                      builder: (context, snapshot) {
+                        final remaining =
+                            _previewLimit - (snapshot.data ?? Duration.zero);
+                        final label = remaining > Duration.zero
+                            ? '试看 ${_formatRemaining(remaining)}'
+                            : 'VIP 试看';
+                        return Text(
+                          label,
+                          style: const TextStyle(
+                            color: Color(0xFFF7C948),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        );
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildVipPaywallOverlay() {
+    return Positioned.fill(
+      // Opaque barrier so taps can't reach the player controls behind the gate.
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () {},
+        child: DecoratedBox(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              colors: [Color(0xE6000000), Color(0xF20B0F14)],
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+            ),
+          ),
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.workspace_premium_rounded,
+                    color: Color(0xFFF7C948),
+                    size: 44,
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'VIP 专属内容',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '试看已结束，开通 VIP 继续观看完整影片',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Color(0xFFD1D5DB),
+                      fontSize: 13,
+                      height: 1.4,
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  FilledButton.icon(
+                    onPressed: () => unawaited(_openVipUpgrade()),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xFFF7C948),
+                      foregroundColor: const Color(0xFF101318),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 22,
+                        vertical: 12,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                    icon: const Icon(Icons.lock_open_rounded, size: 18),
+                    label: const Text(
+                      '开通 VIP',
+                      style: TextStyle(fontWeight: FontWeight.w900),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text(
+                      '返回',
+                      style: TextStyle(color: Color(0xFF9CA3AF)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _formatRemaining(Duration remaining) {
+    final totalSeconds = remaining.inSeconds;
+    final minutes = totalSeconds ~/ 60;
+    final seconds = totalSeconds % 60;
+    return '$minutes:${seconds.toString().padLeft(2, '0')}';
   }
 
   Widget _buildBufferingIndicator() {
@@ -1075,7 +1292,8 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       builder: (context, snapshot) {
         final isPlaying = snapshot.data ?? false;
         final shouldShow =
-            _showResumePlaybackButton || (!isPlaying && !_switchingQuality);
+            !_previewBlocked &&
+            (_showResumePlaybackButton || (!isPlaying && !_switchingQuality));
         if (!shouldShow) return const SizedBox.shrink();
 
         return Positioned.fill(

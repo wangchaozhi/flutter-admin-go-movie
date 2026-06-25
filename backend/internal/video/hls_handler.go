@@ -50,6 +50,10 @@ const hlsSignedURLTTLSeconds = 6 * 60 * 60
 const hlsAudioGroupID = "audio"
 const hlsSubtitleGroupID = "subs"
 
+// vipPreviewSeconds is how long a non-VIP viewer may preview a VIP-only video
+// before the app shows the paywall (mainstream "first few minutes" trial).
+const vipPreviewSeconds = 5 * 60
+
 // GET /api/hls/{videoId}/master.m3u8?expires=xxx&sign=xxx
 func HLSMasterHandler(w http.ResponseWriter, r *http.Request) {
 	videoID, path, ok := parseHLSRequest(r, w)
@@ -461,18 +465,23 @@ func AppPlayHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// VIP-only videos require a valid mobile token
+	// VIP-only videos are previewable: a non-VIP (or anonymous) viewer may watch
+	// the first few minutes, after which the app shows a paywall. VIP members get
+	// full access. vipLocked tells the app to enforce the preview window.
+	vipLocked := false
 	if v.IsVip && !v.IsFree {
-		userID, ok := parseMobileAuth(r)
-		if !ok {
-			common.WriteJSON(w, http.StatusForbidden, common.APIResponse{Code: 403, Msg: "vip required"})
-			return
+		vipLocked = true
+		if userID, ok := parseMobileAuth(r); ok {
+			var user store.MobileUser
+			if err := store.DB().First(&user, userID).Error; err == nil &&
+				user.VIPUntil != nil && user.VIPUntil.After(time.Now()) {
+				vipLocked = false
+			}
 		}
-		var user store.MobileUser
-		if err := store.DB().First(&user, userID).Error; err != nil || user.VIPUntil == nil || user.VIPUntil.Before(time.Now()) {
-			common.WriteJSON(w, http.StatusForbidden, common.APIResponse{Code: 403, Msg: "vip required"})
-			return
-		}
+	}
+	previewSeconds := 0
+	if vipLocked {
+		previewSeconds = vipPreviewSeconds
 	}
 
 	masterPath := fmt.Sprintf("/api/hls/%d/master.m3u8", id)
@@ -495,6 +504,8 @@ func AppPlayHandler(w http.ResponseWriter, r *http.Request) {
 		"has_multiple_audio_tracks": trackSummary.AudioCount > 1,
 		"has_subtitle_tracks":       trackSummary.SubtitleCount > 0,
 		"auto_label":                "自动",
+		"vip_locked":                vipLocked,
+		"preview_seconds":           previewSeconds,
 	}})
 }
 
@@ -775,10 +786,16 @@ func AppListVideosHandler(w http.ResponseWriter, r *http.Request) {
 		perPage = 20
 	}
 	categoryID, _ := strconv.Atoi(q.Get("category_id"))
+	vipOnly, _ := strconv.ParseBool(q.Get("is_vip"))
 
 	db := store.DB().Where("status = ?", "ready")
 	if categoryID > 0 {
 		db = db.Where("category_id = ?", categoryID)
+	}
+	// VIP channel: only videos that carry the "VIP 专属" badge, i.e. vip and
+	// not free (matches the app's video.isVip && !video.isFree definition).
+	if vipOnly {
+		db = db.Where("is_vip = ? AND is_free = ?", true, false)
 	}
 
 	var total int64

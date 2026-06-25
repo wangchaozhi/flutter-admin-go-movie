@@ -9,14 +9,20 @@ class ChannelTabs extends StatelessWidget {
     required this.tabs,
     required this.selectedIndex,
     required this.onSelected,
+    this.vipIndex = -1,
   });
 
   final List<String> tabs;
   final int selectedIndex;
   final ValueChanged<int> onSelected;
 
+  /// Index of the VIP channel tab, or -1 if none. The VIP tab keeps a gold
+  /// accent even when unselected so it reads as a premium zone.
+  final int vipIndex;
+
   @override
   Widget build(BuildContext context) {
+    const gold = Color(0xFFF7C948);
     return SizedBox(
       height: 48,
       child: ListView.separated(
@@ -24,22 +30,31 @@ class ChannelTabs extends StatelessWidget {
         scrollDirection: Axis.horizontal,
         itemBuilder: (context, index) {
           final selected = selectedIndex == index;
+          final isVip = index == vipIndex;
+          final foreground = selected
+              ? const Color(0xFF101318)
+              : (isVip ? gold : const Color(0xFFD1D5DB));
           return ChoiceChip(
             selected: selected,
             showCheckmark: false,
+            avatar: isVip
+                ? Icon(
+                    Icons.workspace_premium_rounded,
+                    size: 16,
+                    color: foreground,
+                  )
+                : null,
             label: Text(tabs[index]),
             labelStyle: TextStyle(
-              color: selected
-                  ? const Color(0xFF101318)
-                  : const Color(0xFFD1D5DB),
-              fontWeight: selected ? FontWeight.w800 : FontWeight.w600,
+              color: foreground,
+              fontWeight: selected || isVip ? FontWeight.w800 : FontWeight.w600,
             ),
-            selectedColor: const Color(0xFFF7C948),
-            backgroundColor: const Color(0xFF1B1F2A),
+            selectedColor: gold,
+            backgroundColor: isVip
+                ? const Color(0x1AF7C948)
+                : const Color(0xFF1B1F2A),
             side: BorderSide(
-              color: selected
-                  ? const Color(0xFFF7C948)
-                  : const Color(0xFF2B3140),
+              color: selected || isVip ? gold : const Color(0xFF2B3140),
             ),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(8),

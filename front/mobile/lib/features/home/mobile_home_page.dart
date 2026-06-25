@@ -66,13 +66,14 @@ class _MobileHomePageState extends State<MobileHomePage> {
     }
   }
 
-  Future<void> _loadVideos({required int categoryId}) async {
+  Future<void> _loadVideos({int categoryId = 0, bool vipOnly = false}) async {
     if (!mounted) return;
     setState(() => _loadingVideos = true);
     try {
-      final path = categoryId > 0
-          ? '/api/videos?category_id=$categoryId&per_page=50'
-          : '/api/videos?per_page=50';
+      final params = <String>['per_page=50'];
+      if (categoryId > 0) params.add('category_id=$categoryId');
+      if (vipOnly) params.add('is_vip=1');
+      final path = '/api/videos?${params.join('&')}';
       final resp = await ApiClient().get(path);
       if (!mounted) return;
       if (resp['code'] == 0) {
@@ -95,10 +96,17 @@ class _MobileHomePageState extends State<MobileHomePage> {
     Navigator.pushReplacementNamed(context, '/login');
   }
 
+  // Home channel tabs are [全部, VIP, ...categories]. Index 0 = all, index 1 =
+  // VIP channel (vip-only), index >= 2 = the category at index - 2.
   void _onCategorySelected(int index) {
     setState(() => _selectedCategoryIndex = index);
-    final categoryId = index == 0 ? 0 : _categories[index - 1].id;
-    _loadVideos(categoryId: categoryId);
+    if (index == 0) {
+      _loadVideos();
+    } else if (index == 1) {
+      _loadVideos(vipOnly: true);
+    } else {
+      _loadVideos(categoryId: _categories[index - 2].id);
+    }
   }
 
   void _openVideo(Video video) {
@@ -336,7 +344,7 @@ class _MobileHomePageState extends State<MobileHomePage> {
 
   @override
   Widget build(BuildContext context) {
-    final tabs = ['全部', ..._categories.map((c) => c.name)];
+    final tabs = ['全部', 'VIP', ..._categories.map((c) => c.name)];
     final featuredVideo = _videos.where((v) => v.isReady).firstOrNull;
     final favoriteVideoIds = _favorites.map((entry) => entry.video.id).toSet();
 
@@ -418,6 +426,7 @@ class _MobileHomePageState extends State<MobileHomePage> {
                     tabs: tabs,
                     selectedIndex: _selectedCategoryIndex,
                     onSelected: _onCategorySelected,
+                    vipIndex: 1,
                   ),
           ),
           if (featuredVideo != null)
@@ -434,13 +443,13 @@ class _MobileHomePageState extends State<MobileHomePage> {
               ),
             )
           else if (_videos.isEmpty)
-            const SliverToBoxAdapter(
+            SliverToBoxAdapter(
               child: Padding(
-                padding: EdgeInsets.all(48),
+                padding: const EdgeInsets.all(48),
                 child: Center(
                   child: Text(
-                    '暂无视频',
-                    style: TextStyle(color: Color(0xFF9CA3AF)),
+                    _selectedCategoryIndex == 1 ? '暂无 VIP 影片' : '暂无视频',
+                    style: const TextStyle(color: Color(0xFF9CA3AF)),
                   ),
                 ),
               ),
