@@ -18,6 +18,6 @@ void main() {
     // The app should build without throwing and land on the login screen.
     expect(tester.takeException(), isNull);
     expect(find.byType(MaterialApp), findsOneWidget);
-    expect(find.text('登录'), findsWidgets);
+    expect(find.text('立即登录'), findsOneWidget);
   });
 }
