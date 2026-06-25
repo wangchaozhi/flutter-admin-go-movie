@@ -32,6 +32,7 @@ import type {
 import { ConfirmDialog } from './components/confirm'
 import { AppUserManagementSection } from './features/appUsers'
 import { CategoryManagementSection } from './features/categories'
+import { CommentModerationSection } from './features/comments'
 import { DashboardSection } from './features/dashboard'
 import { MenuManagementSection, buildMenuTree } from './features/menus'
 import type { MenuNodeType } from './features/menus'
@@ -172,6 +173,11 @@ const pageHeaders: Record<Entity, { eyebrow: string; title: string; subtitle: st
     title: '支付',
     subtitle: '查看套餐、订单和支付处理状态。',
   },
+  comments: {
+    eyebrow: '内容中心',
+    title: '评论',
+    subtitle: '查看用户评论与评分，删除违规内容。',
+  },
 }
 
 const routeMetaByPath = new Map<string, { key: Entity; label: string; iconCode: string }>([
@@ -185,6 +191,7 @@ const routeMetaByPath = new Map<string, { key: Entity; label: string; iconCode: 
   ['/videos/transcodes', { key: 'video-transcodes', label: '转码历史', iconCode: 'History' }],
   ['/videos/extracts', { key: 'video-extracts', label: '提取历史', iconCode: 'AudioLines' }],
   ['/payments', { key: 'payments', label: '支付', iconCode: 'CreditCard' }],
+  ['/comments', { key: 'comments', label: '评论', iconCode: 'MessageSquare' }],
 ])
 
 const legacyMenuNames = new Set([
@@ -217,6 +224,7 @@ const entityKeys = new Set<Entity>([
   'categories',
   'app-users',
   'payments',
+  'comments',
 ])
 
 function isEntityKey(key: string): key is Entity {
@@ -1053,6 +1061,10 @@ function AdminDashboard({
 
         {active === 'payments' && (
           <PaymentManagementSection token={session.token} can={can} />
+        )}
+
+        {active === 'comments' && (
+          <CommentModerationSection token={session.token} can={can} />
         )}
       </section>
 

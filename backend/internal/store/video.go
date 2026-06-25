@@ -123,6 +123,18 @@ type VideoFavorite struct {
 
 func (VideoFavorite) TableName() string { return "video_favorites" }
 
+type VideoComment struct {
+	ID        int64     `gorm:"primaryKey;column:id"   json:"id"`
+	VideoID   int64     `gorm:"column:video_id"        json:"video_id"`
+	UserID    int64     `gorm:"column:user_id"         json:"user_id"`
+	Content   string    `gorm:"column:content"         json:"content"`
+	Rating    int       `gorm:"column:rating"          json:"rating"`
+	CreatedAt time.Time `gorm:"column:created_at"      json:"created_at"`
+	UpdatedAt time.Time `gorm:"column:updated_at"      json:"updated_at"`
+}
+
+func (VideoComment) TableName() string { return "video_comments" }
+
 type VideoAIMetadata struct {
 	VideoID      int64       `gorm:"primaryKey;column:video_id"       json:"video_id"`
 	Provider     string      `gorm:"column:provider"                  json:"provider"`

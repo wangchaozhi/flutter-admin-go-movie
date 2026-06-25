@@ -515,6 +515,13 @@ h2 {
   flex-shrink: 0;
 }
 
+.rating-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #d98b00;
+}
+
 .history-filter-bar {
   display: flex;
   flex-wrap: wrap;

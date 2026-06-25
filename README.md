@@ -34,6 +34,7 @@
 - App 管理：移动端用户资料、状态和登录密码维护。
 - 支付管理：会员套餐、单片套餐、订单列表、订单删除和**订单退款**（退款会回收会员套餐对应的 VIP 天数并把订单置为 `refunded`），订单列表会展示 App 用户名。
 - 移动端：视频浏览、搜索（带本地搜索历史）、播放、收藏、观看历史、个人设置、商品和订单。
+- 评论与评分：移动端播放页可发表评论和 1–5 星评分、查看平均分和他人评论、删除自己的评论；管理端「评论」菜单可搜索并删除违规评论（`comment:delete`）。
 - 视频搜索：管理端视频列表支持按标题/ID 关键字和类别筛选；App 与管理端的视频列表接口均支持 `q` 关键字（标题，忽略大小写）、`category_id`、分页等查询参数。
 
 ## 环境要求
@@ -275,6 +276,8 @@ GET               /api/admin/video/transcode-tasks
 DELETE            /api/admin/video/transcode-tasks/{id}
 GET|POST          /api/admin/categories
 PUT|DELETE        /api/admin/categories/{id}
+GET               /api/admin/comments              # 评论审核列表，支持 q 搜索
+DELETE            /api/admin/comments/{id}         # 删除评论，需 comment:delete
 ```
 
 移动端（需移动端 JWT）：
@@ -299,6 +302,9 @@ GET    /api/videos/{id}
 GET    /api/videos/{id}/play
 GET    /api/videos/{id}/cover
 POST   /api/videos/{id}/progress
+GET    /api/videos/{id}/comments          # 评论列表 + 评分汇总（公开）
+POST   /api/videos/{id}/comments          # 发表评论/评分（移动端 JWT）
+DELETE /api/mobile/comments/{id}          # 删除自己的评论（移动端 JWT）
 GET    /api/hls/{...}/master.m3u8
 GET    /api/hls/{...}/index.m3u8
 POST   /api/webhooks/stripe

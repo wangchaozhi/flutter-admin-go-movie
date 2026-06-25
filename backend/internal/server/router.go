@@ -146,6 +146,12 @@ func NewRouter() http.Handler {
 		http.MethodDelete: "category:delete",
 	}, http.HandlerFunc(video.AdminCategoryByIDHandler)))
 
+	// admin comment moderation
+	mux.Handle("/api/admin/comments", requireAdminAuth(http.HandlerFunc(video.AdminListCommentsHandler)))
+	mux.Handle("/api/admin/comments/", requirePerm(map[string]string{
+		http.MethodDelete: "comment:delete",
+	}, http.HandlerFunc(video.AdminDeleteCommentHandler)))
+
 	// app: categories + video list / detail / play / cover / progress
 	mux.HandleFunc("/api/categories", video.AppListCategoriesHandler)
 	mux.HandleFunc("/api/products", payment.ProductsHandler)
@@ -160,10 +166,13 @@ func NewRouter() http.Handler {
 			video.AppCoverHandler(w, r)
 		case strings.HasSuffix(r.URL.Path, "/progress"):
 			video.AppProgressHandler(w, r)
+		case strings.HasSuffix(r.URL.Path, "/comments"):
+			video.AppVideoCommentsHandler(w, r)
 		default:
 			video.AppGetVideoHandler(w, r)
 		}
 	})))
+	mux.Handle("/api/mobile/comments/", mobileBanGuard(http.HandlerFunc(video.AppCommentByIDHandler)))
 
 	// hls m3u8 dynamic rewrite
 	mux.HandleFunc("/api/hls/", func(w http.ResponseWriter, r *http.Request) {

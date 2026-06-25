@@ -1,4 +1,16 @@
-export type Entity = 'dashboard' | 'users' | 'roles' | 'menus' | 'videos' | 'video-transcodes' | 'video-extracts' | 'categories' | 'app-users' | 'payments'
+export type Entity = 'dashboard' | 'users' | 'roles' | 'menus' | 'videos' | 'video-transcodes' | 'video-extracts' | 'categories' | 'app-users' | 'payments' | 'comments'
+
+export type AdminComment = {
+  id: number
+  video_id: number
+  user_id: number
+  content: string
+  rating: number
+  created_at: string
+  nickname: string
+  username: string
+  video_title: string
+}
 
 export type DashboardStats = {
   videos: { total: number; vip: number; free: number; by_status: Array<{ key: string; count: number }> }

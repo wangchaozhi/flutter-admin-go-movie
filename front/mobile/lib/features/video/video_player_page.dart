@@ -10,6 +10,7 @@ import 'package:media_kit_video/media_kit_video.dart';
 
 import '../../core/api_client.dart';
 import '../../models/video.dart' as model;
+import 'comments_section.dart';
 import 'playback_parsers.dart';
 import 'playback_progress_service.dart';
 import 'track_options.dart';
@@ -866,6 +867,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                     ),
                     const SizedBox(height: 12),
                     _buildVideoInfoSection(),
+                    CommentsSection(videoId: _video.id),
                   ],
                 ),
               ),
