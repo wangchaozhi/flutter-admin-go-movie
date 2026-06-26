@@ -111,7 +111,7 @@ class _CommentsSectionState extends State<CommentsSection> {
   Future<void> _submit() async {
     final content = _controller.text.trim();
     if (content.isEmpty && _draftRating == 0) {
-      _snack('请填写评论或选择评分');
+      _snack('写点短评或选择一个评分');
       return;
     }
     setState(() => _submitting = true);
@@ -167,7 +167,7 @@ class _CommentsSectionState extends State<CommentsSection> {
         Row(
           children: [
             const Text(
-              '评论',
+              '短评与评分',
               style: TextStyle(
                 color: Colors.white,
                 fontSize: 16,
@@ -181,7 +181,7 @@ class _CommentsSectionState extends State<CommentsSection> {
               const Icon(Icons.star, color: Color(0xFFFFC857), size: 16),
               const SizedBox(width: 4),
               Text(
-                '${_average.toStringAsFixed(1)} · $_ratingCount 人评分',
+                '${_average.toStringAsFixed(1)} · $_ratingCount 人打分',
                 style: const TextStyle(color: _muted, fontSize: 12),
               ),
             ],
@@ -193,15 +193,13 @@ class _CommentsSectionState extends State<CommentsSection> {
         if (_loading)
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 24),
-            child: Center(
-              child: CircularProgressIndicator(color: _accent),
-            ),
+            child: Center(child: CircularProgressIndicator(color: _accent)),
           )
         else if (_comments.isEmpty)
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 24),
             child: Center(
-              child: Text('还没有评论，来说点什么吧', style: TextStyle(color: _muted)),
+              child: Text('还没有短评，写下第一条观后感', style: TextStyle(color: _muted)),
             ),
           )
         else
@@ -215,12 +213,25 @@ class _CommentsSectionState extends State<CommentsSection> {
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: _surface,
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFF2B3140)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildStarSelector(),
+          Row(
+            children: [
+              const Text(
+                '给影片评分',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const Spacer(),
+              _buildStarSelector(),
+            ],
+          ),
           const SizedBox(height: 8),
           TextField(
             controller: _controller,
@@ -230,7 +241,7 @@ class _CommentsSectionState extends State<CommentsSection> {
             style: const TextStyle(color: Colors.white),
             cursorColor: _accent,
             decoration: const InputDecoration(
-              hintText: '写下你的评论…',
+              hintText: '写下观后感，或只给一个评分',
               hintStyle: TextStyle(color: _muted),
               border: InputBorder.none,
               counterStyle: TextStyle(color: _muted),
@@ -244,7 +255,7 @@ class _CommentsSectionState extends State<CommentsSection> {
                 backgroundColor: _accent,
                 foregroundColor: Colors.black,
               ),
-              child: Text(_submitting ? '提交中…' : '发表'),
+              child: Text(_submitting ? '提交中...' : '发布'),
             ),
           ),
         ],
@@ -254,6 +265,7 @@ class _CommentsSectionState extends State<CommentsSection> {
 
   Widget _buildStarSelector() {
     return Row(
+      mainAxisSize: MainAxisSize.min,
       children: List.generate(5, (i) {
         final filled = i < _draftRating;
         return IconButton(
@@ -276,56 +288,65 @@ class _CommentsSectionState extends State<CommentsSection> {
         comment.username == _username;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: const Color(0xFF101318),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: const Color(0xFF232838)),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                comment.displayName,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(width: 8),
-              if (comment.rating > 0)
-                Row(
-                  children: List.generate(
-                    comment.rating,
-                    (_) => const Icon(
-                      Icons.star,
-                      size: 13,
-                      color: Color(0xFFFFC857),
+              Row(
+                children: [
+                  Text(
+                    comment.displayName,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
+                  const SizedBox(width: 8),
+                  if (comment.rating > 0)
+                    Row(
+                      children: List.generate(
+                        comment.rating,
+                        (_) => const Icon(
+                          Icons.star,
+                          size: 13,
+                          color: Color(0xFFFFC857),
+                        ),
+                      ),
+                    ),
+                  const Spacer(),
+                  if (isOwn)
+                    GestureDetector(
+                      onTap: () => _delete(comment),
+                      child: const Icon(
+                        Icons.delete_outline,
+                        size: 18,
+                        color: _muted,
+                      ),
+                    ),
+                ],
+              ),
+              if (comment.content.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(
+                  comment.content,
+                  style: const TextStyle(color: Color(0xFFD1D5DB), height: 1.4),
                 ),
-              const Spacer(),
-              if (isOwn)
-                GestureDetector(
-                  onTap: () => _delete(comment),
-                  child: const Icon(
-                    Icons.delete_outline,
-                    size: 18,
-                    color: _muted,
-                  ),
-                ),
+              ],
+              const SizedBox(height: 4),
+              Text(
+                _formatTime(comment.createdAt),
+                style: const TextStyle(color: _muted, fontSize: 11),
+              ),
             ],
           ),
-          if (comment.content.isNotEmpty) ...[
-            const SizedBox(height: 4),
-            Text(
-              comment.content,
-              style: const TextStyle(color: Color(0xFFD1D5DB), height: 1.4),
-            ),
-          ],
-          const SizedBox(height: 4),
-          Text(
-            _formatTime(comment.createdAt),
-            style: const TextStyle(color: _muted, fontSize: 11),
-          ),
-          const Divider(color: Color(0xFF232838), height: 20),
-        ],
+        ),
       ),
     );
   }

@@ -83,7 +83,7 @@ class FeaturedBanner extends StatelessWidget {
       child: ClipRRect(
         borderRadius: BorderRadius.circular(8),
         child: AspectRatio(
-          aspectRatio: 16 / 10,
+          aspectRatio: 16 / 9,
           child: Stack(
             fit: StackFit.expand,
             children: [
@@ -116,11 +116,11 @@ class FeaturedBanner extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     if (video.isVip && !video.isFree)
-                      const _MetaPill(text: 'VIP 专属'),
+                      const _MetaPill(text: '会员专属'),
                     const SizedBox(height: 10),
                     Text(
                       video.title,
-                      maxLines: 1,
+                      maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.headlineSmall
                           ?.copyWith(
@@ -132,7 +132,7 @@ class FeaturedBanner extends StatelessWidget {
                       const SizedBox(height: 4),
                       Text(
                         video.description,
-                        maxLines: 1,
+                        maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           color: Color(0xFFE5E7EB),
@@ -144,10 +144,11 @@ class FeaturedBanner extends StatelessWidget {
                     FilledButton.icon(
                       onPressed: () => onPlay(video),
                       icon: const Icon(Icons.play_arrow_rounded),
-                      label: const Text('播放'),
+                      label: const Text('立即播放'),
                       style: FilledButton.styleFrom(
                         backgroundColor: const Color(0xFFF7C948),
                         foregroundColor: const Color(0xFF101318),
+                        minimumSize: const Size(120, 42),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(8),
                         ),
@@ -367,7 +368,7 @@ class DiscoverView extends StatelessWidget {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 112),
       children: [
-        const _PageTitle(title: '发现', subtitle: '按兴趣浏览影片与会员精选'),
+        const _PageTitle(title: '发现好片', subtitle: '按题材、热度和会员内容快速浏览'),
         const SizedBox(height: 14),
         _DiscoverStatsBar(
           total: readyVideos.length,
@@ -382,11 +383,11 @@ class DiscoverView extends StatelessWidget {
         if (loading)
           const _InlineLoading()
         else if (readyVideos.isEmpty)
-          const _EmptyBlock(text: '暂无可发现内容')
+          const _EmptyBlock(text: '暂时没有可发现的影片')
         else ...[
           if (latestVideos.isNotEmpty)
             _HorizontalVideoSection(
-              title: '最新上线',
+              title: '刚刚上架',
               videos: latestVideos,
               favoriteVideoIds: favoriteVideoIds,
               onOpenVideo: onOpenVideo,
@@ -395,7 +396,7 @@ class DiscoverView extends StatelessWidget {
           if (freeVideos.isNotEmpty) ...[
             const SizedBox(height: 18),
             _HorizontalVideoSection(
-              title: '免费可看',
+              title: '免费专区',
               videos: freeVideos.take(8).toList(),
               favoriteVideoIds: favoriteVideoIds,
               onOpenVideo: onOpenVideo,
@@ -459,7 +460,7 @@ class PlaylistView extends StatelessWidget {
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 112),
         children: [
-          const _PageTitle(title: '片单', subtitle: '收藏、继续观看和精选内容都在这里'),
+          const _PageTitle(title: '我的片单', subtitle: '收藏、观看进度和稍后想看的内容都在这里'),
           const SizedBox(height: 14),
           _PlaylistSummary(
             favoriteCount: favorites.length,
@@ -482,7 +483,7 @@ class PlaylistView extends StatelessWidget {
           if (vipVideos.isNotEmpty) ...[
             const SizedBox(height: 18),
             _HorizontalVideoSection(
-              title: 'VIP 精选片单',
+              title: '会员精选',
               videos: vipVideos,
               favoriteVideoIds: favorites
                   .map((entry) => entry.video.id)
@@ -494,7 +495,7 @@ class PlaylistView extends StatelessWidget {
           if (latestVideos.isNotEmpty) ...[
             const SizedBox(height: 18),
             _HorizontalVideoSection(
-              title: '稍后可看',
+              title: '可能想看',
               videos: latestVideos,
               favoriteVideoIds: favorites
                   .map((entry) => entry.video.id)
@@ -525,6 +526,8 @@ class _PageTitle extends StatelessWidget {
             children: [
               Text(
                 title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                   color: Colors.white,
                   fontWeight: FontWeight.w900,
@@ -533,6 +536,8 @@ class _PageTitle extends StatelessWidget {
               const SizedBox(height: 3),
               Text(
                 subtitle,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
                 style: const TextStyle(color: Color(0xFF9CA3AF), fontSize: 13),
               ),
             ],
@@ -559,11 +564,11 @@ class _DiscoverStatsBar extends StatelessWidget {
     return Row(
       children: [
         Expanded(
-          child: _MiniStat(label: '可看', value: '$total'),
+          child: _MiniStat(label: '可播放', value: '$total'),
         ),
         const SizedBox(width: 10),
         Expanded(
-          child: _MiniStat(label: '频道', value: '$categoryCount'),
+          child: _MiniStat(label: '分类', value: '$categoryCount'),
         ),
         const SizedBox(width: 10),
         Expanded(
@@ -594,11 +599,11 @@ class _PlaylistSummary extends StatelessWidget {
         ),
         const SizedBox(width: 10),
         Expanded(
-          child: _MiniStat(label: '记录', value: '$historyCount'),
+          child: _MiniStat(label: '进度', value: '$historyCount'),
         ),
         const SizedBox(width: 10),
         Expanded(
-          child: _MiniStat(label: '片单', value: '$savedCount'),
+          child: _MiniStat(label: '总计', value: '$savedCount'),
         ),
       ],
     );
@@ -615,6 +620,7 @@ class _MiniStat extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      constraints: const BoxConstraints(minHeight: 76),
       decoration: BoxDecoration(
         color: const Color(0xFF171B24),
         borderRadius: BorderRadius.circular(8),
@@ -623,12 +629,16 @@ class _MiniStat extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            value,
-            style: const TextStyle(
-              color: Color(0xFFF7C948),
-              fontSize: 20,
-              fontWeight: FontWeight.w900,
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(
+              value,
+              style: const TextStyle(
+                color: Color(0xFFF7C948),
+                fontSize: 20,
+                fontWeight: FontWeight.w900,
+              ),
             ),
           ),
           const SizedBox(height: 2),
@@ -679,7 +689,7 @@ class _VipDiscoveryBand extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text(
-                      '会员发现',
+                      '会员片库',
                       style: TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.w900,
@@ -688,7 +698,7 @@ class _VipDiscoveryBand extends StatelessWidget {
                     ),
                     const SizedBox(height: 3),
                     Text(
-                      count > 0 ? '$count 部会员内容待解锁' : '开通后解锁更多会员内容',
+                      count > 0 ? '还有 $count 部会员影片可解锁' : '开通后解锁完整会员片库',
                       style: const TextStyle(color: Color(0xFFE5E7EB)),
                     ),
                   ],
@@ -733,7 +743,7 @@ class _HorizontalVideoSection extends StatelessWidget {
         ),
         const SizedBox(height: 10),
         SizedBox(
-          height: 198,
+          height: 210,
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
             itemBuilder: (context, index) {
@@ -770,7 +780,7 @@ class _PosterCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width: 148,
+      width: 152,
       child: Material(
         color: const Color(0xFF171B24),
         borderRadius: BorderRadius.circular(8),
@@ -828,7 +838,7 @@ class _PosterCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  video.categoryName.isEmpty ? '影片' : video.categoryName,
+                  video.categoryName.isEmpty ? '未分类' : video.categoryName,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
@@ -863,13 +873,13 @@ class _FavoritePlaylistSection extends StatelessWidget {
     return _VerticalSection(
       title: '我的收藏',
       loading: loading,
-      emptyText: '暂无收藏影片，可以先去发现页加入片单',
+      emptyText: '还没有收藏影片，去发现页挑几部加入片单',
       children: [
         for (final item in favorites)
           _LibraryVideoRow(
             video: item.video,
             subtitle: item.video.categoryName.isEmpty
-                ? '已加入片单'
+                ? '已收藏到片单'
                 : item.video.categoryName,
             trailingIcon: Icons.bookmark_remove_rounded,
             onTap: () => onOpenVideo(item.video),
@@ -898,12 +908,12 @@ class _HistoryPlaylistSection extends StatelessWidget {
     return _VerticalSection(
       title: '继续观看',
       loading: loading,
-      emptyText: '暂无观看记录',
+      emptyText: '播放过的影片会自动出现在这里',
       children: [
         for (final item in history)
           _LibraryVideoRow(
             video: item.video,
-            subtitle: '已观看 ${item.progress}%',
+            subtitle: '已看到 ${item.progress}%',
             trailingIcon: Icons.play_arrow_rounded,
             onTap: () => onOpenVideo(item.video),
           ),
@@ -1025,7 +1035,7 @@ class _LibraryVideoRow extends StatelessWidget {
                   onPressed: onTrailingTap ?? onTap,
                   icon: Icon(trailingIcon),
                   color: const Color(0xFF25D0AB),
-                  tooltip: '操作',
+                  tooltip: onTrailingTap == null ? '播放' : '移出片单',
                 ),
               ],
             ),
@@ -1087,13 +1097,27 @@ class _EmptyBlock extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 22),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       decoration: BoxDecoration(
         color: const Color(0xFF171B24),
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: const Color(0xFF2B3140)),
       ),
-      child: Text(text, style: const TextStyle(color: Color(0xFF9CA3AF))),
+      child: Column(
+        children: [
+          const Icon(
+            Icons.movie_filter_outlined,
+            color: Color(0xFF25D0AB),
+            size: 26,
+          ),
+          const SizedBox(height: 10),
+          Text(
+            text,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Color(0xFF9CA3AF), height: 1.4),
+          ),
+        ],
+      ),
     );
   }
 }

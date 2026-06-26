@@ -104,7 +104,7 @@ class _SearchPageState extends State<SearchPage> {
           style: const TextStyle(color: Colors.white),
           cursorColor: _accent,
           decoration: const InputDecoration(
-            hintText: '搜索影片标题',
+            hintText: '搜索片名、导演或关键词',
             hintStyle: TextStyle(color: _muted),
             border: InputBorder.none,
           ),
@@ -126,69 +126,128 @@ class _SearchPageState extends State<SearchPage> {
       return const Center(child: CircularProgressIndicator(color: _accent));
     }
     if (_error.isNotEmpty) {
-      return Center(child: Text(_error, style: const TextStyle(color: _muted)));
+      return _SearchEmptyState(
+        icon: Icons.wifi_off_rounded,
+        title: '搜索暂时不可用',
+        subtitle: _error,
+      );
     }
     if (!_searched) {
       return _buildHistory();
     }
     if (_results.isEmpty) {
-      return const Center(
-        child: Text('未找到相关视频', style: TextStyle(color: _muted)),
+      return const _SearchEmptyState(
+        icon: Icons.search_off_rounded,
+        title: '没有找到相关影片',
+        subtitle: '换个片名、演员或分类关键词再试试',
       );
     }
     return ListView.separated(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
-      itemCount: _results.length,
-      separatorBuilder: (_, _) => const SizedBox(height: 14),
-      itemBuilder: (context, index) =>
-          VideoTile(video: _results[index], onTap: _openVideo),
+      itemCount: _results.length + 1,
+      separatorBuilder: (_, index) =>
+          index == 0 ? const SizedBox(height: 12) : const SizedBox(height: 14),
+      itemBuilder: (context, index) {
+        if (index == 0) {
+          return Text(
+            '找到 ${_results.length} 部相关影片',
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w800,
+            ),
+          );
+        }
+        return VideoTile(video: _results[index - 1], onTap: _openVideo);
+      },
     );
   }
 
   Widget _buildHistory() {
     if (_history.isEmpty) {
-      return const Center(
-        child: Text('输入关键字开始搜索', style: TextStyle(color: _muted)),
+      return const _SearchEmptyState(
+        icon: Icons.manage_search_rounded,
+        title: '想看什么？',
+        subtitle: '输入片名、导演、演员或分类关键词开始搜索',
       );
     }
-    return Padding(
+    return ListView(
       padding: const EdgeInsets.fromLTRB(16, 18, 16, 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                '搜索历史',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w700,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text(
+              '最近搜索',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            TextButton(
+              onPressed: _clearHistory,
+              child: const Text('清空', style: TextStyle(color: _muted)),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: _history
+              .map(
+                (term) => ActionChip(
+                  label: Text(term),
+                  backgroundColor: const Color(0xFF171B24),
+                  labelStyle: const TextStyle(color: Colors.white),
+                  side: const BorderSide(color: Color(0xFF2B3140)),
+                  onPressed: () => _runSearch(term),
                 ),
+              )
+              .toList(),
+        ),
+      ],
+    );
+  }
+}
+
+class _SearchEmptyState extends StatelessWidget {
+  const _SearchEmptyState({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: _accent, size: 36),
+            const SizedBox(height: 14),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 17,
+                fontWeight: FontWeight.w900,
               ),
-              TextButton(
-                onPressed: _clearHistory,
-                child: const Text('清空', style: TextStyle(color: _muted)),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: _history
-                .map(
-                  (term) => ActionChip(
-                    label: Text(term),
-                    backgroundColor: const Color(0xFF171B24),
-                    labelStyle: const TextStyle(color: Colors.white),
-                    side: BorderSide.none,
-                    onPressed: () => _runSearch(term),
-                  ),
-                )
-                .toList(),
-          ),
-        ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              subtitle,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: _muted, height: 1.45),
+            ),
+          ],
+        ),
       ),
     );
   }

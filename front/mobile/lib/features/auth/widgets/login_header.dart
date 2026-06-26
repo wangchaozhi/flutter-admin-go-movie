@@ -34,7 +34,7 @@ class LoginHeader extends StatelessWidget {
             size: 28,
           ),
         ),
-        const SizedBox(height: 18),
+        const SizedBox(height: 16),
         Text(
           'Go Movie',
           textAlign: TextAlign.center,
@@ -43,13 +43,13 @@ class LoginHeader extends StatelessWidget {
             fontWeight: FontWeight.w900,
           ),
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 8),
         Text(
-          '登录继续观看，收藏与会员权益会自动同步。',
+          '登录后继续观看，收藏、进度和会员权益都会同步。',
           textAlign: TextAlign.center,
           style: textTheme.bodyMedium?.copyWith(
             color: const Color(0xFF9CA3AF),
-            height: 1.45,
+            height: 1.5,
           ),
         ),
       ],

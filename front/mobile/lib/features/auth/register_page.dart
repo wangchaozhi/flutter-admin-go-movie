@@ -37,11 +37,15 @@ class _RegisterPageState extends State<RegisterPage> {
 
   String? _validate(AppStrings s) {
     final username = _username.text.trim();
-    if (username.length < 3 || username.length > 32) return s.t('register.errUsernameLen');
+    if (username.length < 3 || username.length > 32) {
+      return s.t('register.errUsernameLen');
+    }
     if (_password.text.length < 6) return s.t('register.errPasswordLen');
     if (_password.text != _confirm.text) return s.t('register.errMismatch');
     final email = _email.text.trim();
-    if (email.isNotEmpty && !email.contains('@')) return s.t('register.errEmail');
+    if (email.isNotEmpty && !email.contains('@')) {
+      return s.t('register.errEmail');
+    }
     if (_invite.text.trim().isEmpty) return s.t('register.errInvite');
     return null;
   }
@@ -68,7 +72,9 @@ class _RegisterPageState extends State<RegisterPage> {
       });
       if (!mounted) return;
       if (resp['code'] != 0) {
-        setState(() => _error = resp['msg']?.toString() ?? s.t('register.failed'));
+        setState(
+          () => _error = resp['msg']?.toString() ?? s.t('register.failed'),
+        );
         return;
       }
       final data = resp['data'] as Map<String, dynamic>?;
@@ -104,41 +110,97 @@ class _RegisterPageState extends State<RegisterPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _field(_username, s.t('register.username'), s.t('register.usernameHint'), Icons.person_outline_rounded),
-                  const SizedBox(height: 14),
-                  _field(_password, s.t('register.password'), s.t('register.passwordHint'), Icons.lock_outline_rounded, obscure: true),
-                  const SizedBox(height: 14),
-                  _field(_confirm, s.t('register.confirm'), s.t('register.confirmHint'), Icons.lock_outline_rounded, obscure: true),
-                  const SizedBox(height: 14),
-                  _field(_invite, s.t('register.invite'), s.t('register.inviteHint'), Icons.confirmation_number_outlined),
-                  const SizedBox(height: 14),
-                  _field(_nickname, s.t('register.nickname'), s.t('register.nicknameHint'), Icons.badge_outlined),
-                  const SizedBox(height: 14),
-                  _field(_email, s.t('register.email'), s.t('register.emailHint'), Icons.mail_outline_rounded),
-                  if (_error != null) ...[
-                    const SizedBox(height: 14),
-                    Text(
-                      _error!,
-                      style: const TextStyle(color: Color(0xFFFCA5A5), fontSize: 13),
+                  const _RegisterHeader(),
+                  const SizedBox(height: 18),
+                  Material(
+                    color: const Color(0xFF171B24),
+                    elevation: 10,
+                    shadowColor: const Color(0x66000000),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      side: const BorderSide(color: Color(0xFF2B3140)),
                     ),
-                  ],
-                  const SizedBox(height: 22),
-                  FilledButton(
-                    onPressed: _loading ? null : _register,
-                    style: FilledButton.styleFrom(
-                      backgroundColor: const Color(0xFF25D0AB),
-                      foregroundColor: const Color(0xFF07110F),
-                      minimumSize: const Size.fromHeight(52),
-                      textStyle: const TextStyle(fontWeight: FontWeight.w900),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    child: Padding(
+                      padding: const EdgeInsets.all(18),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _field(
+                            _username,
+                            s.t('register.username'),
+                            s.t('register.usernameHint'),
+                            Icons.person_outline_rounded,
+                          ),
+                          const SizedBox(height: 14),
+                          _field(
+                            _password,
+                            s.t('register.password'),
+                            s.t('register.passwordHint'),
+                            Icons.lock_outline_rounded,
+                            obscure: true,
+                          ),
+                          const SizedBox(height: 14),
+                          _field(
+                            _confirm,
+                            s.t('register.confirm'),
+                            s.t('register.confirmHint'),
+                            Icons.lock_outline_rounded,
+                            obscure: true,
+                          ),
+                          const SizedBox(height: 14),
+                          _field(
+                            _invite,
+                            s.t('register.invite'),
+                            s.t('register.inviteHint'),
+                            Icons.confirmation_number_outlined,
+                          ),
+                          const SizedBox(height: 14),
+                          _field(
+                            _nickname,
+                            s.t('register.nickname'),
+                            s.t('register.nicknameHint'),
+                            Icons.badge_outlined,
+                          ),
+                          const SizedBox(height: 14),
+                          _field(
+                            _email,
+                            s.t('register.email'),
+                            s.t('register.emailHint'),
+                            Icons.mail_outline_rounded,
+                          ),
+                          if (_error != null) ...[
+                            const SizedBox(height: 14),
+                            _InlineError(message: _error!),
+                          ],
+                          const SizedBox(height: 22),
+                          FilledButton.icon(
+                            onPressed: _loading ? null : _register,
+                            icon: _loading
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Color(0xFF101318),
+                                    ),
+                                  )
+                                : const Icon(Icons.person_add_alt_1_rounded),
+                            label: Text(s.t('register.submit')),
+                            style: FilledButton.styleFrom(
+                              backgroundColor: const Color(0xFF25D0AB),
+                              foregroundColor: const Color(0xFF07110F),
+                              minimumSize: const Size.fromHeight(52),
+                              textStyle: const TextStyle(
+                                fontWeight: FontWeight.w900,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                    child: _loading
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF101318)),
-                          )
-                        : Text(s.t('register.submit')),
                   ),
                 ],
               ),
@@ -183,6 +245,56 @@ class _RegisterPageState extends State<RegisterPage> {
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(8),
           borderSide: const BorderSide(color: Color(0xFF25D0AB), width: 1.4),
+        ),
+      ),
+    );
+  }
+}
+
+class _RegisterHeader extends StatelessWidget {
+  const _RegisterHeader();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '欢迎加入 Go Movie',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 24,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        SizedBox(height: 8),
+        Text(
+          '完成邀请码验证后会自动登录，观影进度、收藏和会员权益都会同步到账号。',
+          style: TextStyle(color: Color(0xFF9CA3AF), height: 1.5),
+        ),
+      ],
+    );
+  }
+}
+
+class _InlineError extends StatelessWidget {
+  const _InlineError({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0x22F87171),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0x66F87171)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Text(
+          message,
+          style: const TextStyle(color: Color(0xFFFCA5A5), fontSize: 13),
         ),
       ),
     );

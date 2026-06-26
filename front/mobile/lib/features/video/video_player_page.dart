@@ -217,12 +217,12 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       '/api/videos/${widget.video.id}/play',
     );
     if (resp['code'] != 0) {
-      throw Exception(resp['msg']?.toString() ?? '获取播放地址失败');
+      throw Exception(resp['msg']?.toString() ?? '播放地址获取失败');
     }
     final data = resp['data'] as Map<String, dynamic>?;
     final rawUrl = data?['url'] as String? ?? '';
     if (rawUrl.isEmpty) {
-      throw Exception('播放地址为空');
+      throw Exception('暂时没有可用的播放地址');
     }
     // backend returns a relative signed path; prepend baseUrl so it works on
     // emulator (10.0.2.2), simulator (localhost), and physical device (LAN IP)
@@ -355,7 +355,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
         setState(() => _selectedAudioTrackValue = previousValue);
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('Audio track failed: $e')));
+        ).showSnackBar(SnackBar(content: Text('音轨切换失败：$e')));
       }
       await _applySelectedMediaTracks();
     } finally {
@@ -384,7 +384,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
         setState(() => _selectedSubtitleTrackValue = previousValue);
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('Subtitle failed: $e')));
+        ).showSnackBar(SnackBar(content: Text('字幕切换失败：$e')));
       }
       await _applySelectedMediaTracks();
     } finally {
@@ -884,7 +884,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
         ? aiMetadata!.synopsis.trim()
         : _video.description.trim().isNotEmpty
         ? _video.description.trim()
-        : '暂无详细简介，已根据当前视频信息整理基础内容。';
+        : '暂时没有详细简介，可以先查看下方分类、演员和推荐看点。';
     final highlights = aiMetadata?.highlights ?? const <String>[];
     final tags = aiMetadata?.tags ?? const <String>[];
 
@@ -928,7 +928,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                   _video.isVip && !_video.isFree
                       ? Icons.workspace_premium_rounded
                       : Icons.play_circle_outline_rounded,
-                  _video.isVip && !_video.isFree ? 'VIP' : '免费观看',
+                  _video.isVip && !_video.isFree ? '会员专属' : '免费可看',
                 ),
               ],
             ),
@@ -941,7 +941,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
             ],
             const SizedBox(height: 14),
             const Text(
-              '简介',
+              '影片简介',
               style: TextStyle(
                 color: Colors.white,
                 fontSize: 16,
@@ -960,7 +960,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
             if (highlights.isNotEmpty) ...[
               const SizedBox(height: 16),
               const Text(
-                '看点',
+                '推荐看点',
                 style: TextStyle(
                   color: Colors.white,
                   fontSize: 15,
@@ -1148,8 +1148,8 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                         final remaining =
                             _previewLimit - (snapshot.data ?? Duration.zero);
                         final label = remaining > Duration.zero
-                            ? '试看 ${_formatRemaining(remaining)}'
-                            : 'VIP 试看';
+                            ? '试看剩余 ${_formatRemaining(remaining)}'
+                            : '会员试看';
                         return Text(
                           label,
                           style: const TextStyle(
@@ -1197,7 +1197,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                   ),
                   const SizedBox(height: 12),
                   const Text(
-                    'VIP 专属内容',
+                    '会员专属内容',
                     style: TextStyle(
                       color: Colors.white,
                       fontSize: 18,
@@ -1206,7 +1206,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    '试看已结束，开通 VIP 继续观看完整影片',
+                    '试看已结束，开通会员后可继续观看完整影片',
                     textAlign: TextAlign.center,
                     style: const TextStyle(
                       color: Color(0xFFD1D5DB),
@@ -1230,7 +1230,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                     ),
                     icon: const Icon(Icons.lock_open_rounded, size: 18),
                     label: const Text(
-                      '开通 VIP',
+                      '开通会员',
                       style: TextStyle(fontWeight: FontWeight.w900),
                     ),
                   ),
@@ -1238,7 +1238,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                   TextButton(
                     onPressed: () => Navigator.pop(context),
                     child: const Text(
-                      '返回',
+                      '先返回',
                       style: TextStyle(color: Color(0xFF9CA3AF)),
                     ),
                   ),
@@ -1434,7 +1434,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
       mainAxisSize: MainAxisSize.min,
       children: [
         _glassIconButton(
-          tooltip: '后退10秒',
+          tooltip: '后退 10 秒',
           icon: Icons.replay_10_rounded,
           onPressed: () =>
               unawaited(_seekRelative(const Duration(seconds: -10))),
@@ -1443,7 +1443,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
         _buildSpeedMenu(),
         const SizedBox(width: 8),
         _glassIconButton(
-          tooltip: '前进10秒',
+          tooltip: '前进 10 秒',
           icon: Icons.forward_10_rounded,
           onPressed: () =>
               unawaited(_seekRelative(const Duration(seconds: 10))),
@@ -1493,7 +1493,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
 
   Widget _buildFullscreenButton() {
     return _glassIconButton(
-      tooltip: _isFullscreen ? '退出全屏' : '全屏',
+      tooltip: _isFullscreen ? '退出全屏' : '全屏播放',
       icon: _isFullscreen
           ? Icons.fullscreen_exit_rounded
           : Icons.fullscreen_rounded,
@@ -1562,14 +1562,14 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     final selectedValue = _selectedAudioTrackValue ?? 'auto';
     return PopupMenuButton<String>(
       enabled: !_switchingTrack,
-      tooltip: 'Audio',
+      tooltip: '音轨',
       color: const Color(0xFF111827),
       initialValue: selectedValue,
       onSelected: (value) => unawaited(_switchAudioTrack(value)),
       itemBuilder: (context) => [
         PopupMenuItem<String>(
           value: 'auto',
-          child: _buildTrackMenuItem('Default', selectedValue == 'auto'),
+          child: _buildTrackMenuItem('默认音轨', selectedValue == 'auto'),
         ),
         ...options.map(
           (option) => PopupMenuItem<String>(
@@ -1589,14 +1589,14 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     final selectedValue = _selectedSubtitleTrackValue ?? 'off';
     return PopupMenuButton<String>(
       enabled: !_switchingTrack,
-      tooltip: 'Subtitles',
+      tooltip: '字幕',
       color: const Color(0xFF111827),
       initialValue: selectedValue,
       onSelected: (value) => unawaited(_switchSubtitleTrack(value)),
       itemBuilder: (context) => [
         PopupMenuItem<String>(
           value: 'off',
-          child: _buildTrackMenuItem('Off', selectedValue == 'off'),
+          child: _buildTrackMenuItem('关闭字幕', selectedValue == 'off'),
         ),
         ...options.map(
           (option) => PopupMenuItem<String>(

@@ -63,7 +63,9 @@ class _MobileLoginPageState extends State<MobileLoginPage> {
 
       if (!mounted) return;
       if (resp['code'] != 0) {
-        _showMessage(resp['msg']?.toString() ?? AppStrings.of(context).t('login.failed'));
+        _showMessage(
+          resp['msg']?.toString() ?? AppStrings.of(context).t('login.failed'),
+        );
         return;
       }
 
@@ -90,7 +92,9 @@ class _MobileLoginPageState extends State<MobileLoginPage> {
     final usernameError = _usernameController.text.trim().isEmpty
         ? s.t('login.errAccount')
         : '';
-    final passwordError = _passwordController.text.isEmpty ? s.t('login.errPassword') : '';
+    final passwordError = _passwordController.text.isEmpty
+        ? s.t('login.errPassword')
+        : '';
     setState(() {
       _usernameError = usernameError;
       _passwordError = passwordError;
@@ -236,51 +240,58 @@ class _LoginCard extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 16),
-            InkWell(
-              borderRadius: BorderRadius.circular(8),
-              onTap: loading ? null : () => onRememberChanged(!remember),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-                child: Row(
-                  children: [
-                    Checkbox(
-                      value: remember,
-                      onChanged: loading
-                          ? null
-                          : (value) => onRememberChanged(value ?? false),
-                      activeColor: const Color(0xFF25D0AB),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(5),
+            DecoratedBox(
+              decoration: BoxDecoration(
+                color: const Color(0xFF101318),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFF2B3140)),
+              ),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(8),
+                onTap: loading ? null : () => onRememberChanged(!remember),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(6, 8, 12, 8),
+                  child: Row(
+                    children: [
+                      Checkbox(
+                        value: remember,
+                        onChanged: loading
+                            ? null
+                            : (value) => onRememberChanged(value ?? false),
+                        activeColor: const Color(0xFF25D0AB),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(5),
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 4),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            s.t('login.rememberTitle'),
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w800,
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              s.t('login.rememberTitle'),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w800,
+                              ),
                             ),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            s.t('login.rememberSubtitle'),
-                            style: const TextStyle(
-                              color: Color(0xFF9CA3AF),
-                              fontSize: 12,
+                            const SizedBox(height: 2),
+                            Text(
+                              s.t('login.rememberSubtitle'),
+                              style: const TextStyle(
+                                color: Color(0xFF9CA3AF),
+                                fontSize: 12,
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
-                    ),
-                    const Icon(
-                      Icons.verified_user_outlined,
-                      color: Color(0xFF25D0AB),
-                    ),
-                  ],
+                      const Icon(
+                        Icons.verified_user_outlined,
+                        color: Color(0xFF25D0AB),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -297,7 +308,9 @@ class _LoginCard extends StatelessWidget {
                       ),
                     )
                   : const Icon(Icons.arrow_forward_rounded),
-              label: Text(loading ? s.t('login.signingIn') : s.t('login.signIn')),
+              label: Text(
+                loading ? s.t('login.signingIn') : s.t('login.signIn'),
+              ),
               style: FilledButton.styleFrom(
                 backgroundColor: const Color(0xFF25D0AB),
                 disabledBackgroundColor: const Color(0xFF83E5D3),

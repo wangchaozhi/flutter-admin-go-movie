@@ -86,7 +86,7 @@ class _VipPageState extends State<VipPage> with WidgetsBindingObserver {
     } catch (_) {
       if (mounted) {
         setState(() {
-          _message = '套餐加载失败';
+          _message = '会员套餐加载失败，请稍后重试';
           _loading = false;
         });
       }
@@ -115,7 +115,7 @@ class _VipPageState extends State<VipPage> with WidgetsBindingObserver {
       if (_provider == 'mock') {
         await _completeMockCheckout(_mockCheckoutUri(orderNo, uri));
         if (!mounted) return;
-        setState(() => _message = '支付成功，VIP 权益已更新。');
+        setState(() => _message = '支付成功，会员权益已更新');
         await _loadMembership();
         if (!mounted) return;
         await _showPaymentSuccessDialog(product.name);
@@ -126,7 +126,7 @@ class _VipPageState extends State<VipPage> with WidgetsBindingObserver {
       if (!opened) {
         throw Exception('无法打开支付页');
       }
-      if (mounted) setState(() => _message = '支付页已打开，返回应用后会自动确认支付状态。');
+      if (mounted) setState(() => _message = '支付页已打开，返回应用后将自动确认结果');
     } catch (err) {
       if (mounted) {
         setState(
@@ -171,13 +171,13 @@ class _VipPageState extends State<VipPage> with WidgetsBindingObserver {
       if (!mounted) return;
       if (status == 'paid') {
         _pendingOrderNo = null;
-        setState(() => _message = '支付成功，VIP 权益已更新。');
+        setState(() => _message = '支付成功，会员权益已更新');
         await _showPaymentSuccessDialog('VIP 会员');
       } else if (status == 'failed' ||
           status == 'cancelled' ||
           status == 'refunded') {
         _pendingOrderNo = null;
-        setState(() => _message = '支付未完成，请重新购买。');
+        setState(() => _message = '支付未完成，可以重新选择套餐');
       }
     } catch (_) {
       // Keep the pending order so the next app resume can retry confirmation.
@@ -193,7 +193,7 @@ class _VipPageState extends State<VipPage> with WidgetsBindingObserver {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('知道了'),
+            child: const Text('好的'),
           ),
         ],
       ),
@@ -207,14 +207,14 @@ class _VipPageState extends State<VipPage> with WidgetsBindingObserver {
       appBar: AppBar(
         backgroundColor: const Color(0xFF0D0F14),
         foregroundColor: Colors.white,
-        title: const Text('VIP'),
+        title: const Text('会员中心'),
       ),
       body: _loading
           ? const Center(
               child: CircularProgressIndicator(color: Color(0xFF25D0AB)),
             )
           : ListView(
-              padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 32),
               children: [
                 _MembershipStatus(
                   isVip: _isVip,
@@ -224,31 +224,11 @@ class _VipPageState extends State<VipPage> with WidgetsBindingObserver {
                 const SizedBox(height: 12),
                 const _VipHero(),
                 const SizedBox(height: 18),
-                Row(
-                  children: [
-                    const Text(
-                      '支付方式',
-                      style: TextStyle(
-                        color: Color(0xFFE5E7EB),
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const SizedBox(width: 14),
-                    DropdownButton<String>(
-                      value: _provider,
-                      dropdownColor: const Color(0xFF171B24),
-                      style: const TextStyle(color: Colors.white),
-                      items: [
-                        for (final provider in _providers)
-                          DropdownMenuItem(
-                            value: provider,
-                            child: Text(_providerLabels[provider] ?? provider.toUpperCase()),
-                          ),
-                      ],
-                      onChanged: (value) =>
-                          setState(() => _provider = value ?? 'mock'),
-                    ),
-                  ],
+                _PaymentMethodCard(
+                  provider: _provider,
+                  providers: _providers,
+                  providerLabels: _providerLabels,
+                  onChanged: (value) => setState(() => _provider = value),
                 ),
                 const SizedBox(height: 12),
                 for (final product in _products)
@@ -262,20 +242,94 @@ class _VipPageState extends State<VipPage> with WidgetsBindingObserver {
                     padding: EdgeInsets.all(32),
                     child: Center(
                       child: Text(
-                        '暂无可购买套餐',
+                        '暂无可购买套餐，请稍后再来',
                         style: TextStyle(color: Color(0xFF9CA3AF)),
                       ),
                     ),
                   ),
                 if (_message.isNotEmpty) ...[
                   const SizedBox(height: 16),
-                  Text(
-                    _message,
-                    style: const TextStyle(color: Color(0xFFF7C948)),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0x22F7C948),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: const Color(0x66F7C948)),
+                    ),
+                    child: Text(
+                      _message,
+                      style: const TextStyle(color: Color(0xFFF7C948)),
+                    ),
                   ),
                 ],
               ],
             ),
+    );
+  }
+}
+
+class _PaymentMethodCard extends StatelessWidget {
+  const _PaymentMethodCard({
+    required this.provider,
+    required this.providers,
+    required this.providerLabels,
+    required this.onChanged,
+  });
+
+  final String provider;
+  final List<String> providers;
+  final Map<String, String> providerLabels;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF171B24),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFF2B3140)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.payments_outlined, color: Color(0xFF25D0AB)),
+          const SizedBox(width: 10),
+          const Expanded(
+            child: Text(
+              '支付方式',
+              style: TextStyle(
+                color: Color(0xFFE5E7EB),
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+          DropdownButtonHideUnderline(
+            child: DropdownButton<String>(
+              value: provider,
+              dropdownColor: const Color(0xFF171B24),
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
+              ),
+              iconEnabledColor: const Color(0xFF9CA3AF),
+              items: [
+                for (final item in providers)
+                  DropdownMenuItem(
+                    value: item,
+                    child: Text(providerLabels[item] ?? item.toUpperCase()),
+                  ),
+              ],
+              onChanged: (value) {
+                if (value != null) onChanged(value);
+              },
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -304,11 +358,11 @@ class _MembershipStatus extends StatelessWidget {
     final expiringSoon = isVip && daysRemaining <= 7;
     final String label;
     if (!isVip) {
-      label = '尚未开通会员，开通后可解锁全部 VIP 影片';
+      label = '尚未开通会员，开通后可解锁全部会员影片';
     } else {
       final until = vipUntil != null ? _formatDate(vipUntil!) : '';
-      final suffix = expiringSoon ? '，即将到期，建议续费' : '';
-      label = '会员有效期至 $until · 剩余 $daysRemaining 天$suffix';
+      final suffix = expiringSoon ? '，即将到期，建议及时续费' : '';
+      label = '会员有效期至 $until，剩余 $daysRemaining 天$suffix';
     }
     final accent = !isVip
         ? const Color(0xFF9CA3AF)
@@ -331,7 +385,11 @@ class _MembershipStatus extends StatelessWidget {
           Expanded(
             child: Text(
               label,
-              style: const TextStyle(color: Colors.white, fontSize: 13),
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 13,
+                height: 1.35,
+              ),
             ),
           ),
         ],
@@ -392,7 +450,7 @@ class _VipHero extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'VIP 会员',
+                  '会员观影',
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 22,
@@ -401,7 +459,7 @@ class _VipHero extends StatelessWidget {
                 ),
                 SizedBox(height: 4),
                 Text(
-                  '解锁会员专属影片与更完整的观影体验',
+                  '完整观看会员影片，保留进度，跨端同步权益',
                   style: TextStyle(color: Color(0xFFE5E7EB), height: 1.35),
                 ),
               ],
@@ -461,7 +519,12 @@ class _VipPlan extends StatelessWidget {
                 const SizedBox(height: 4),
                 Text(
                   product.description,
-                  style: const TextStyle(color: Color(0xFF9CA3AF)),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF9CA3AF),
+                    height: 1.35,
+                  ),
                 ),
                 const SizedBox(height: 8),
                 Text(
@@ -484,7 +547,7 @@ class _VipPlan extends StatelessWidget {
                 borderRadius: BorderRadius.circular(8),
               ),
             ),
-            child: Text(busy ? '处理中' : '购买'),
+            child: Text(busy ? '处理中' : '立即购买'),
           ),
         ],
       ),

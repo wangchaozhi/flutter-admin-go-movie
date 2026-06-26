@@ -29,18 +29,18 @@ class VideoRail extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 18, 16, 10),
+          padding: const EdgeInsets.fromLTRB(16, 20, 16, 10),
           child: Text(
             title,
             style: const TextStyle(
               color: Colors.white,
-              fontSize: 16,
-              fontWeight: FontWeight.w800,
+              fontSize: 17,
+              fontWeight: FontWeight.w900,
             ),
           ),
         ),
         SizedBox(
-          height: 158,
+          height: 174,
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -71,15 +71,15 @@ class _PosterCard extends StatelessWidget {
     return GestureDetector(
       onTap: video.isReady ? () => onTap(video) : null,
       child: SizedBox(
-        width: 168,
+        width: 164,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             ClipRRect(
               borderRadius: BorderRadius.circular(8),
               child: SizedBox(
-                width: 168,
-                height: 100,
+                width: 164,
+                height: 98,
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
@@ -167,7 +167,8 @@ class _PosterCard extends StatelessWidget {
               style: const TextStyle(
                 color: Colors.white,
                 fontSize: 13,
-                height: 1.25,
+                height: 1.3,
+                fontWeight: FontWeight.w700,
               ),
             ),
           ],

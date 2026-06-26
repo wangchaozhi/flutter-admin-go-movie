@@ -62,9 +62,9 @@ class HomeTopBar extends StatelessWidget {
           IconButton(
             tooltip: s.t('home.search'),
             icon: const Icon(Icons.search, color: Colors.white),
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(builder: (_) => const SearchPage()),
-            ),
+            onPressed: () => Navigator.of(
+              context,
+            ).push(MaterialPageRoute<void>(builder: (_) => const SearchPage())),
           ),
           PopupMenuButton<_UserMenuAction>(
             tooltip: s.t('home.mine'),
@@ -84,7 +84,10 @@ class HomeTopBar extends StatelessWidget {
             itemBuilder: (context) => [
               PopupMenuItem(
                 value: _UserMenuAction.profile,
-                child: _UserMenuItem(icon: Icons.badge_outlined, label: s.t('home.profile')),
+                child: _UserMenuItem(
+                  icon: Icons.badge_outlined,
+                  label: s.t('home.profile'),
+                ),
               ),
               PopupMenuItem(
                 value: _UserMenuAction.vip,
@@ -316,11 +319,17 @@ class _ProfileInfoRow extends StatelessWidget {
             ),
           ),
           const Spacer(),
-          Text(
-            value,
-            style: const TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w800,
+          const SizedBox(width: 12),
+          Flexible(
+            child: Text(
+              value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.right,
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
+              ),
             ),
           ),
         ],
@@ -371,7 +380,8 @@ class ProfileCenter extends StatelessWidget {
   Widget build(BuildContext context) {
     final s = AppStrings.of(context);
     final displayName =
-        profile?.displayName ?? (username.isEmpty ? s.t('profile.mobileUser') : username);
+        profile?.displayName ??
+        (username.isEmpty ? s.t('profile.mobileUser') : username);
     final isVip = profile?.isVip ?? false;
     final readyCount = videos.where((video) => video.isReady).length;
     final vipCount = videos
@@ -389,6 +399,8 @@ class ProfileCenter extends StatelessWidget {
               Expanded(
                 child: Text(
                   s.t('center.mine'),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                     color: Colors.white,
                     fontWeight: FontWeight.w900,
@@ -500,6 +512,8 @@ class _ProfileHeaderCard extends StatelessWidget {
               children: [
                 Text(
                   username,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 20,
@@ -513,12 +527,19 @@ class _ProfileHeaderCard extends StatelessWidget {
                     style: const TextStyle(color: Color(0xFF9CA3AF)),
                   )
                 else if (error.isNotEmpty)
-                  Text(error, style: const TextStyle(color: Color(0xFFF87171)))
+                  Text(
+                    error,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Color(0xFFF87171)),
+                  )
                 else
                   Text(
                     isVip
                         ? s.t('center.vipUntil', {'date': vipUntilLabel})
                         : s.t('center.normalUser'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(color: Color(0xFF9CA3AF)),
                   ),
               ],
@@ -532,6 +553,7 @@ class _ProfileHeaderCard extends StatelessWidget {
               style: FilledButton.styleFrom(
                 backgroundColor: const Color(0xFFF7C948),
                 foregroundColor: const Color(0xFF101318),
+                minimumSize: const Size(86, 40),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(8),
                 ),
@@ -593,7 +615,9 @@ class _VipMemberCard extends StatelessWidget {
                     const SizedBox(height: 4),
                     Text(
                       isVip
-                          ? s.t('center.vipMemberUntil', {'date': vipUntilLabel})
+                          ? s.t('center.vipMemberUntil', {
+                              'date': vipUntilLabel,
+                            })
                           : s.t('center.vipDesc'),
                       style: const TextStyle(
                         color: Color(0xFFE5E7EB),
@@ -623,7 +647,7 @@ class _ShortcutGrid extends StatelessWidget {
       crossAxisCount: 2,
       mainAxisSpacing: 10,
       crossAxisSpacing: 10,
-      childAspectRatio: 1.9,
+      childAspectRatio: 1.7,
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
       children: [for (final item in items) _ShortcutTile(item: item)],
@@ -652,8 +676,20 @@ class _ShortcutTile extends StatelessWidget {
           ),
           child: Row(
             children: [
-              Icon(item.icon, color: const Color(0xFF25D0AB)),
-              const SizedBox(width: 10),
+              Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: const Color(0x1A25D0AB),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(
+                  item.icon,
+                  color: const Color(0xFF25D0AB),
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 9),
               Expanded(
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -661,6 +697,8 @@ class _ShortcutTile extends StatelessWidget {
                   children: [
                     Text(
                       item.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.w900,
@@ -889,7 +927,10 @@ class _SettingsSheetState extends State<SettingsSheet> {
               value: _setting.autoPlay,
               activeThumbColor: const Color(0xFF25D0AB),
               contentPadding: EdgeInsets.zero,
-              title: Text(s.t('settings.autoPlay'), style: const TextStyle(color: Colors.white)),
+              title: Text(
+                s.t('settings.autoPlay'),
+                style: const TextStyle(color: Colors.white),
+              ),
               subtitle: Text(
                 s.t('settings.autoPlaySub'),
                 style: const TextStyle(color: Color(0xFF9CA3AF)),
@@ -930,7 +971,10 @@ class _SettingsSheetState extends State<SettingsSheet> {
               ),
               style: const TextStyle(color: Colors.white),
               items: [
-                DropdownMenuItem(value: 'auto', child: Text(s.t('settings.qualityAuto'))),
+                DropdownMenuItem(
+                  value: 'auto',
+                  child: Text(s.t('settings.qualityAuto')),
+                ),
                 const DropdownMenuItem(value: '720p', child: Text('720p')),
                 const DropdownMenuItem(value: '1080p', child: Text('1080p')),
               ],
@@ -947,7 +991,10 @@ class _SettingsSheetState extends State<SettingsSheet> {
               decoration: InputDecoration(
                 labelText: s.t('settings.language'),
                 labelStyle: const TextStyle(color: Color(0xFF9CA3AF)),
-                prefixIcon: const Icon(Icons.language_rounded, color: Color(0xFF25D0AB)),
+                prefixIcon: const Icon(
+                  Icons.language_rounded,
+                  color: Color(0xFF25D0AB),
+                ),
                 enabledBorder: const OutlineInputBorder(
                   borderSide: BorderSide(color: Color(0xFF2B3140)),
                 ),
@@ -961,19 +1008,30 @@ class _SettingsSheetState extends State<SettingsSheet> {
                   DropdownMenuItem(value: item.code, child: Text(item.label)),
               ],
               onChanged: (code) {
-                if (code != null) localeController.setLocale(AppLocale.byCode(code).locale);
+                if (code != null) {
+                  localeController.setLocale(AppLocale.byCode(code).locale);
+                }
               },
             ),
             const SizedBox(height: 8),
             ListTile(
               contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.lock_reset_rounded, color: Color(0xFF25D0AB)),
-              title: Text(s.t('settings.changePassword'), style: const TextStyle(color: Colors.white)),
+              leading: const Icon(
+                Icons.lock_reset_rounded,
+                color: Color(0xFF25D0AB),
+              ),
+              title: Text(
+                s.t('settings.changePassword'),
+                style: const TextStyle(color: Colors.white),
+              ),
               subtitle: Text(
                 s.t('settings.changePasswordSub'),
                 style: const TextStyle(color: Color(0xFF9CA3AF)),
               ),
-              trailing: const Icon(Icons.chevron_right_rounded, color: Color(0xFF9CA3AF)),
+              trailing: const Icon(
+                Icons.chevron_right_rounded,
+                color: Color(0xFF9CA3AF),
+              ),
               onTap: () => showChangePasswordSheet(context),
             ),
           ],
@@ -1071,11 +1129,17 @@ class _WatchSummaryCard extends StatelessWidget {
       child: Row(
         children: [
           Expanded(
-            child: _MetricBox(label: s.t('center.watchableShort'), value: '$readyCount'),
+            child: _MetricBox(
+              label: s.t('center.watchableShort'),
+              value: '$readyCount',
+            ),
           ),
           const SizedBox(width: 10),
           Expanded(
-            child: _MetricBox(label: s.t('center.vipExclusive'), value: '$vipCount'),
+            child: _MetricBox(
+              label: s.t('center.vipExclusive'),
+              value: '$vipCount',
+            ),
           ),
         ],
       ),
@@ -1094,7 +1158,9 @@ class _RecentOrdersCard extends StatelessWidget {
     final s = AppStrings.of(context);
     return _SectionCard(
       title: s.t('center.orders'),
-      trailing: loading ? s.t('center.loadingShort') : s.t('center.recentOrder'),
+      trailing: loading
+          ? s.t('center.loadingShort')
+          : s.t('center.recentOrder'),
       child: loading
           ? const Padding(
               padding: EdgeInsets.symmetric(vertical: 16),
@@ -1105,7 +1171,10 @@ class _RecentOrdersCard extends StatelessWidget {
           : orders.isEmpty
           ? Padding(
               padding: const EdgeInsets.symmetric(vertical: 12),
-              child: Text(s.t('center.noOrders'), style: const TextStyle(color: Color(0xFF9CA3AF))),
+              child: Text(
+                s.t('center.noOrders'),
+                style: const TextStyle(color: Color(0xFF9CA3AF)),
+              ),
             )
           : Column(
               children: [for (final order in orders) _OrderRow(order: order)],
