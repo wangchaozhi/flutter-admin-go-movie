@@ -216,6 +216,7 @@ func NewRouter() http.Handler {
 		}
 	})))
 	mux.Handle("/api/mobile/comments/", mobileBanGuard(http.HandlerFunc(video.AppCommentByIDHandler)))
+	mux.Handle("/api/mobile/danmaku/", mobileBanGuard(http.HandlerFunc(video.AppDanmakuByIDHandler)))
 
 	// hls m3u8 dynamic rewrite
 	mux.HandleFunc("/api/hls/", func(w http.ResponseWriter, r *http.Request) {

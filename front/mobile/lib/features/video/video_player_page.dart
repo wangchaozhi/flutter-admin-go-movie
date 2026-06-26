@@ -1123,6 +1123,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
         Positioned(right: 48, bottom: 4, child: _buildTrackAndQualityMenus()),
         Positioned(right: 8, top: 8, child: _buildFullscreenButton()),
         Positioned(right: 8, top: 52, child: _buildDanmakuToggle()),
+        Positioned(right: 8, top: 96, child: _buildDanmakuListButton()),
         if (_vipLocked && !_previewBlocked)
           Positioned(left: 8, top: 8, child: _buildPreviewBadge()),
         if (_previewBlocked) _buildVipPaywallOverlay(),
@@ -1532,6 +1533,14 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     );
   }
 
+  Widget _buildDanmakuListButton() {
+    return _glassIconButton(
+      tooltip: '弹幕列表',
+      icon: Icons.format_list_bulleted_rounded,
+      onPressed: () => unawaited(showDanmakuList(context, _danmakuController)),
+    );
+  }
+
   // Preset danmaku colours users can pick from when sending a bullet.
   static const List<int> _danmakuPalette = [
     0xFFFFFF, // white
@@ -1670,14 +1679,20 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
         if (!_danmakuVisible) {
           setState(() => _danmakuVisible = true);
         }
-        _danmakuController.addLocal(
-          DanmakuItem(
-            content: text,
-            timeMs: timeMs,
-            color: _danmakuColor,
-            mode: 0,
-          ),
-        );
+        // Build the local bullet from the server response so it carries a real
+        // id/user_id and can be liked or deleted right away.
+        final data = resp['data'] as Map<String, dynamic>?;
+        final bullet = data != null
+            ? DanmakuItem.fromJson(data)
+            : DanmakuItem(
+                id: 0,
+                userId: 0,
+                content: text,
+                timeMs: timeMs,
+                color: _danmakuColor,
+                mode: 0,
+              );
+        _danmakuController.addLocal(bullet);
       } else {
         _snack(resp['msg']?.toString() ?? '弹幕发送失败');
       }

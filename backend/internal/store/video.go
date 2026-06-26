@@ -146,10 +146,26 @@ type VideoDanmaku struct {
 	TimeMS    int       `gorm:"column:time_ms"       json:"time_ms"`
 	Color     int       `gorm:"column:color"         json:"color"`
 	Mode      int       `gorm:"column:mode"          json:"mode"`
+	LikeCount int       `gorm:"column:like_count"    json:"like_count"`
 	CreatedAt time.Time `gorm:"column:created_at"    json:"created_at"`
+
+	// Liked reports whether the requesting user has liked this bullet. Only set
+	// for authenticated list requests; not persisted.
+	Liked bool `gorm:"-" json:"liked"`
 }
 
 func (VideoDanmaku) TableName() string { return "video_danmaku" }
+
+// DanmakuLike records one user's like of one bullet. The UNIQUE(danmaku_id,
+// user_id) constraint (see migration 038) keeps likes idempotent.
+type DanmakuLike struct {
+	ID        int64     `gorm:"primaryKey;column:id" json:"id"`
+	DanmakuID int64     `gorm:"column:danmaku_id"    json:"danmaku_id"`
+	UserID    int64     `gorm:"column:user_id"       json:"user_id"`
+	CreatedAt time.Time `gorm:"column:created_at"    json:"created_at"`
+}
+
+func (DanmakuLike) TableName() string { return "danmaku_likes" }
 
 type VideoAIMetadata struct {
 	VideoID      int64       `gorm:"primaryKey;column:video_id"       json:"video_id"`

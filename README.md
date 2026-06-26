@@ -44,6 +44,7 @@
 - 移动端：视频浏览、搜索（带本地搜索历史）、播放、收藏、观看历史、个人设置、商品和订单。
 - 评论与评分：移动端播放页可发表评论和 1–5 星评分、查看平均分和他人评论、删除自己的评论；管理端「评论」菜单可搜索并删除违规评论（`comment:delete`）。**每个用户对同一视频只保留一条评分**（数据库 `(video_id, user_id) WHERE rating > 0` 部分唯一索引 + upsert，重复评分自动覆盖，平均分不再被刷）；评论/评分发表带**按用户限流**（默认每分钟 10 次）防刷。
 - 弹幕：移动端播放页支持发送和展示**弹幕**（点播弹幕，按 `time_ms` 锚定到播放进度回放），支持滚动/顶部/底部三种模式和颜色选择；弹幕轨道用 Ticker + CustomPainter 渲染，暂停时冻结、seek 时重新对齐，并做轨道防重叠。发送带**按用户限流**（默认每分钟 20 条）。后端表 `video_danmaku` 按 `(video_id, time_ms)` 建索引；点播场景无需消息队列/实时广播。
+  - 弹幕互动（参考主流影视平台）：可**点赞**任意弹幕、**删除自己**发的弹幕。点赞用 `danmaku_likes` 表（`UNIQUE(danmaku_id,user_id)` 保证幂等）+ `video_danmaku.like_count` 反范式计数，在事务里同步；有点赞的弹幕在轨道上内联显示 `♥N`。交互入口是播放器的「弹幕列表」面板（避免去戳飞动的弹幕、也不抢占播放器的点按暂停），列表里每条弹幕带点赞数/点赞按钮，本人弹幕带删除按钮。
 - 操作审计：后台所有写操作（`/api/admin` 下的 POST/PUT/DELETE）异步写入 `audit_logs`，记录执行人、方法、路径、状态码、IP 和 `request_id`；管理端「审计日志」菜单可搜索（按管理员/路径）和分页查看。
 - 数据导出：管理端订单列表支持「导出 CSV」（`GET /api/admin/orders?format=csv`，带 UTF-8 BOM，便于财务对账）。仪表盘新增「收入趋势」近 30 天按主货币的每日已支付收入柱状图。
 - 视频搜索：管理端视频列表支持按标题/ID 关键字和类别筛选；App 与管理端的视频列表接口均支持 `q` 关键字（标题，忽略大小写）、`category_id`、分页等查询参数。
@@ -348,8 +349,10 @@ POST   /api/videos/{id}/progress
 GET    /api/videos/{id}/comments          # 评论列表 + 评分汇总（公开）
 POST   /api/videos/{id}/comments          # 发表评论/评分（移动端 JWT）
 DELETE /api/mobile/comments/{id}          # 删除自己的评论（移动端 JWT）
-GET    /api/videos/{id}/danmaku           # 弹幕列表，按 time_ms 排序（公开）
+GET    /api/videos/{id}/danmaku           # 弹幕列表，按 time_ms 排序（公开；带 token 时附带 liked 标记）
 POST   /api/videos/{id}/danmaku           # 发送弹幕（移动端 JWT，按用户限流）
+DELETE /api/mobile/danmaku/{id}           # 删除自己的弹幕（移动端 JWT）
+POST   /api/mobile/danmaku/{id}/like      # 点赞/取消点赞弹幕（移动端 JWT，幂等切换）
 GET    /api/hls/{...}/master.m3u8
 GET    /api/hls/{...}/index.m3u8
 POST   /api/webhooks/{provider}           # 网关回调统一分发：stripe|paypal|wechat|alipay（各自验签后确认到账）
