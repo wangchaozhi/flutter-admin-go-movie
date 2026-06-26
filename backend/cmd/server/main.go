@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"os"
 
+	"flutter-admin-go/internal/cache"
+	"flutter-admin-go/internal/common"
 	"flutter-admin-go/internal/config"
 	"flutter-admin-go/internal/payment"
 	"flutter-admin-go/internal/server"
@@ -19,6 +21,10 @@ func main() {
 		slog.Error("store init failed", "error", err)
 		os.Exit(1)
 	}
+
+	// Enforce login/comment rate limits cluster-wide when Redis is reachable,
+	// falling back to per-process counters otherwise.
+	common.UseSharedStore(cache.LimiterStore{})
 
 	// Background lifecycle jobs run for the lifetime of the process.
 	payment.StartOrderExpiryJanitor(context.Background())

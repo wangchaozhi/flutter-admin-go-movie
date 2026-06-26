@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
-import { BadgeCheck, Loader, Pencil, RefreshCw, Trash2, Undo2 } from 'lucide-react'
+import { BadgeCheck, Download, Loader, Pencil, RefreshCw, Trash2, Undo2 } from 'lucide-react'
 
 import type {
   ApiResponse,
@@ -307,6 +307,29 @@ export function PaymentManagementSection({
     }
   }
 
+  async function handleExportOrders() {
+    setError('')
+    try {
+      // The CSV endpoint needs the auth header, so fetch as a blob and trigger a
+      // client-side download rather than navigating to it directly.
+      const res = await fetch('/api/admin/orders?format=csv', {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) throw new Error('导出失败')
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `orders-${new Date().toISOString().slice(0, 10)}.csv`
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '导出失败')
+    }
+  }
+
   async function handleRefundOrder(order: Order) {
     if (!canRefund || order.status !== 'paid') return
     if (!window.confirm(`确认为订单「${order.order_no}」退款？会员套餐将回收对应天数。`)) return
@@ -566,7 +589,13 @@ export function PaymentManagementSection({
       </section>
 
       <section className="table-panel">
-        <PanelTitle title="订单" count={orderTotal} />
+        <div className="section-header">
+          <PanelTitle title="订单" count={orderTotal} />
+          <button className="ghost-button" type="button" onClick={handleExportOrders} disabled={orderTotal === 0}>
+            <Download size={15} />
+            导出 CSV
+          </button>
+        </div>
         <div className="table-wrap">
           <table>
             <thead>

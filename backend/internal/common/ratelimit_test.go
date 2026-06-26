@@ -7,7 +7,7 @@ import (
 )
 
 func TestLoginLimiterBlocksAfterMax(t *testing.T) {
-	l := NewLoginLimiter(3, time.Minute)
+	l := NewLimiter("test-block", 3, time.Minute)
 	key := "1.2.3.4"
 
 	for i := 0; i < 3; i++ {
@@ -26,7 +26,7 @@ func TestLoginLimiterBlocksAfterMax(t *testing.T) {
 }
 
 func TestLoginLimiterResetClearsFailures(t *testing.T) {
-	l := NewLoginLimiter(2, time.Minute)
+	l := NewLimiter("test-reset", 2, time.Minute)
 	key := "5.6.7.8"
 	l.Fail(key)
 	l.Fail(key)
@@ -40,7 +40,7 @@ func TestLoginLimiterResetClearsFailures(t *testing.T) {
 }
 
 func TestLoginLimiterWindowExpiry(t *testing.T) {
-	l := NewLoginLimiter(1, 10*time.Millisecond)
+	l := NewLimiter("test-expiry", 1, 10*time.Millisecond)
 	key := "9.9.9.9"
 	l.Fail(key)
 	if blocked, _ := l.Blocked(key); !blocked {
@@ -49,6 +49,45 @@ func TestLoginLimiterWindowExpiry(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	if blocked, _ := l.Blocked(key); blocked {
 		t.Fatal("expected window to expire and unblock")
+	}
+}
+
+func TestLimiterAllowThrottlesEveryCall(t *testing.T) {
+	l := NewLimiter("test-allow", 2, time.Minute)
+	key := "u-1"
+
+	if ok, _ := l.Allow(key); !ok {
+		t.Fatal("first call should be allowed")
+	}
+	if ok, _ := l.Allow(key); !ok {
+		t.Fatal("second call (at max) should be allowed")
+	}
+	ok, retry := l.Allow(key)
+	if ok {
+		t.Fatal("third call should be throttled")
+	}
+	if retry <= 0 || retry > time.Minute {
+		t.Fatalf("unexpected retry-after: %v", retry)
+	}
+
+	// A different key has its own window.
+	if ok, _ := l.Allow("u-2"); !ok {
+		t.Fatal("a distinct key should not be affected")
+	}
+}
+
+func TestLimiterAllowWindowResets(t *testing.T) {
+	l := NewLimiter("test-allow-reset", 1, 10*time.Millisecond)
+	key := "u-3"
+	if ok, _ := l.Allow(key); !ok {
+		t.Fatal("first call should be allowed")
+	}
+	if ok, _ := l.Allow(key); ok {
+		t.Fatal("second call should be throttled within window")
+	}
+	time.Sleep(20 * time.Millisecond)
+	if ok, _ := l.Allow(key); !ok {
+		t.Fatal("call after window reset should be allowed again")
 	}
 }
 

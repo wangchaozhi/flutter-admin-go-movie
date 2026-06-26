@@ -34,9 +34,11 @@
 - App 管理：移动端用户资料、状态和登录密码维护。
 - 支付管理：会员套餐、单片套餐、订单列表、订单删除和**订单退款**（退款会回收会员套餐对应的 VIP 天数并把订单置为 `refunded`），订单列表会展示 App 用户名。
 - 移动端：视频浏览、搜索（带本地搜索历史）、播放、收藏、观看历史、个人设置、商品和订单。
-- 评论与评分：移动端播放页可发表评论和 1–5 星评分、查看平均分和他人评论、删除自己的评论；管理端「评论」菜单可搜索并删除违规评论（`comment:delete`）。
+- 评论与评分：移动端播放页可发表评论和 1–5 星评分、查看平均分和他人评论、删除自己的评论；管理端「评论」菜单可搜索并删除违规评论（`comment:delete`）。**每个用户对同一视频只保留一条评分**（数据库 `(video_id, user_id) WHERE rating > 0` 部分唯一索引 + upsert，重复评分自动覆盖，平均分不再被刷）；评论/评分发表带**按用户限流**（默认每分钟 10 次）防刷。
+- 操作审计：后台所有写操作（`/api/admin` 下的 POST/PUT/DELETE）异步写入 `audit_logs`，记录执行人、方法、路径、状态码、IP 和 `request_id`；管理端「审计日志」菜单可搜索（按管理员/路径）和分页查看。
+- 数据导出：管理端订单列表支持「导出 CSV」（`GET /api/admin/orders?format=csv`，带 UTF-8 BOM，便于财务对账）。仪表盘新增「收入趋势」近 30 天按主货币的每日已支付收入柱状图。
 - 视频搜索：管理端视频列表支持按标题/ID 关键字和类别筛选；App 与管理端的视频列表接口均支持 `q` 关键字（标题，忽略大小写）、`category_id`、分页等查询参数。
-- 首页推荐：`GET /api/home` 聚合「热门（按播放量）/ 最新上架 / VIP 精选」三条横向推荐 rail，移动端首页「全部」频道展示。
+- 首页推荐：`GET /api/home` 聚合「热门（按播放量）/ 最新上架 / VIP 精选」三条横向推荐 rail，移动端首页「全部」频道展示；公开 rail 带 Redis 短缓存（30s），认证可选——携带移动端 token 时额外返回个性化「继续观看」rail（最近未看完、≥95% 视为已看完的视频，带观看进度条）。
 - 会员生命周期：`/api/mobile/profile` 返回 `days_remaining`（剩余天数）；移动端 VIP 页展示会员有效期、剩余天数与「即将到期」提醒（≤7 天）。后端有订单过期清扫任务（`payment.StartOrderExpiryJanitor`），定期把超过 `expires_at` 仍未支付的 `pending`/`paying` 订单置为 `cancelled`。会员到期按 `vip_until` 在读取时即时判定，无需额外降级任务。
 
 ## 环境要求
@@ -117,10 +119,10 @@ APP_ENV=prod go run ./cmd/server  # 生产环境，需通过环境变量补齐�
 首次启动会自动执行 `backend/internal/store/migrations/*.sql`。已执行版本记录在 `schema_migrations` 表中。
 后端也会自动创建头像 bucket。用户主题、头像对象 key 和缩略图对象 key 由迁移文件写入 `admin_users` 扩展字段。
 
-健康检查：
+健康检查会探测关键依赖（PostgreSQL、MinIO，以及配置了 Redis 时的 Redis），任一**必需**依赖不可用时返回 `503`，便于编排平台据此做就绪/存活判断；Redis 视为可选，不影响整体健康：
 
 ```text
-GET /api/health
+GET /api/health   # 返回 { status, dependencies: { database, object_store, redis } }
 ```
 
 ## 可观测性
@@ -217,7 +219,7 @@ user / 123456
 - 管理端和移动端登录均返回 **签名 JWT**，请求时通过 `Authorization: Bearer <token>` 携带。管理端 token 12 小时过期，移动端 30 天。
 - 密码使用 **bcrypt** 哈希存储；登录时按哈希比对（同时兼容尚未迁移的旧明文行，迁移 `012_hash_passwords.sql` 会把种子密码转为哈希）。
 - 生产环境务必设置 `JWT_SECRET` 与 `HLS_SECRET`。
-- 登录接口带**失败限流**（防爆破）：按客户端 IP 计数，管理端 5 分钟内失败 5 次、移动端 10 次后临时拒绝并返回 `429`（含 `Retry-After`），登录成功即清零。限流为进程内实现，多实例部署应改用 Redis 等共享存储统一计数。
+- 登录接口带**失败限流**（防爆破）：按客户端 IP 计数，管理端 5 分钟内失败 5 次、移动端 10 次后临时拒绝并返回 `429`（含 `Retry-After`），登录成功即清零。限流器在配置了可用 Redis 时使用**共享计数**（多实例集群级生效），Redis 不可用时自动**降级为进程内计数**，保证 Redis 故障也不影响登录。评论/评分发表复用同一限流器（按用户）。
 - CORS 默认在 `local`/`dev` 放开（`allowed_origins: ["*"]`），生产环境应在 `config/prod.yml` 的 `allowed_origins` 或环境变量 `CORS_ALLOWED_ORIGINS`（逗号分隔）中配置白名单。
 
 ## 后端接口
@@ -263,7 +265,7 @@ GET|POST          /api/admin/app-users
 PUT|DELETE        /api/admin/app-users/{id}
 GET|POST          /api/admin/products
 PUT|DELETE        /api/admin/products/{id}
-GET               /api/admin/orders
+GET               /api/admin/orders               # 支持 ?status= 过滤、?format=csv 导出
 DELETE            /api/admin/orders/{id}
 POST              /api/admin/orders/{id}/refund   # 退款，需 payment:refund
 GET|POST          /api/admin/videos
@@ -280,6 +282,7 @@ GET|POST          /api/admin/categories
 PUT|DELETE        /api/admin/categories/{id}
 GET               /api/admin/comments              # 评论审核列表，支持 q 搜索
 DELETE            /api/admin/comments/{id}         # 删除评论，需 comment:delete
+GET               /api/admin/audit-logs            # 操作审计日志，支持 q（管理员/路径）+ 分页
 ```
 
 移动端（需移动端 JWT）：

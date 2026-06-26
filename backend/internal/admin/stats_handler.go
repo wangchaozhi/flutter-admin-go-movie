@@ -24,6 +24,19 @@ type topVideo struct {
 	Plays   int64  `json:"plays"`
 }
 
+// revenueTrend is a zero-filled daily series for a single currency, so the
+// dashboard can draw a continuous line without gaps for days with no sales.
+type revenueTrend struct {
+	Currency string         `json:"currency"`
+	Points   []revenuePoint `json:"points"`
+}
+
+type revenuePoint struct {
+	Date        string `json:"date"`
+	AmountCents int64  `json:"amount_cents"`
+	Orders      int64  `json:"orders"`
+}
+
 type dashboardStats struct {
 	Videos struct {
 		Total    int64        `json:"total"`
@@ -43,8 +56,9 @@ type dashboardStats struct {
 		Total    int64        `json:"total"`
 		ByStatus []countByKey `json:"by_status"`
 	} `json:"orders"`
-	Revenue   []revenueByCurrency `json:"revenue"`
-	TopVideos []topVideo          `json:"top_videos"`
+	Revenue      []revenueByCurrency `json:"revenue"`
+	RevenueTrend revenueTrend        `json:"revenue_trend"`
+	TopVideos    []topVideo          `json:"top_videos"`
 }
 
 // StatsHandler returns aggregate counts powering the admin dashboard: video,
@@ -90,7 +104,55 @@ func StatsHandler(w http.ResponseWriter, r *http.Request) {
 		stats.TopVideos = []topVideo{}
 	}
 
+	// The trend tracks the highest-grossing currency (Revenue is sorted desc), so
+	// a single clean line represents the bulk of revenue.
+	trendCurrency := ""
+	if len(stats.Revenue) > 0 {
+		trendCurrency = stats.Revenue[0].Currency
+	}
+	stats.RevenueTrend = dailyRevenueTrend(trendCurrency, 30)
+
 	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: stats})
+}
+
+// dailyRevenueTrend returns a zero-filled daily paid-revenue series for the given
+// currency over the last `days` days (oldest first). When no currency is known
+// (no paid orders yet) it returns an empty series with all-zero points.
+func dailyRevenueTrend(currency string, days int) revenueTrend {
+	trend := revenueTrend{Currency: currency, Points: make([]revenuePoint, 0, days)}
+	if days <= 0 {
+		return trend
+	}
+
+	type dayRow struct {
+		Day         time.Time
+		AmountCents int64
+		Orders      int64
+	}
+	byDay := map[string]dayRow{}
+	if currency != "" {
+		var rows []dayRow
+		store.DB().Model(&store.Order{}).
+			Select("date_trunc('day', paid_at) as day, sum(amount_cents) as amount_cents, count(*) as orders").
+			Where("status = ? AND currency = ? AND paid_at IS NOT NULL AND paid_at >= ?", "paid", currency, time.Now().AddDate(0, 0, -(days-1))).
+			Group("day").
+			Scan(&rows)
+		for _, row := range rows {
+			byDay[row.Day.Format("2006-01-02")] = row
+		}
+	}
+
+	today := time.Now()
+	for i := days - 1; i >= 0; i-- {
+		date := today.AddDate(0, 0, -i).Format("2006-01-02")
+		point := revenuePoint{Date: date}
+		if row, ok := byDay[date]; ok {
+			point.AmountCents = row.AmountCents
+			point.Orders = row.Orders
+		}
+		trend.Points = append(trend.Points, point)
+	}
+	return trend
 }
 
 // topWatchedVideos returns the videos with the most play records, resolving each

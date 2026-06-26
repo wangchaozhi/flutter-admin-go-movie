@@ -15,14 +15,14 @@ import (
 
 // Login brute-force guards. Counts are per client IP and reset on success.
 var (
-	adminLoginLimiter  = common.NewLoginLimiter(5, 5*time.Minute)
-	mobileLoginLimiter = common.NewLoginLimiter(10, 5*time.Minute)
+	adminLoginLimiter  = common.NewLimiter("admin_login", 5, 5*time.Minute)
+	mobileLoginLimiter = common.NewLimiter("mobile_login", 10, 5*time.Minute)
 )
 
 // tooManyLoginAttempts writes a 429 with Retry-After when the caller is blocked,
 // returning true so the handler can stop. It checks before touching the body so
 // a flood of attempts is rejected cheaply.
-func tooManyLoginAttempts(w http.ResponseWriter, limiter *common.LoginLimiter, key string) bool {
+func tooManyLoginAttempts(w http.ResponseWriter, limiter *common.Limiter, key string) bool {
 	if blocked, retry := limiter.Blocked(key); blocked {
 		w.Header().Set("Retry-After", strconv.Itoa(int(retry.Seconds())+1))
 		common.WriteJSON(w, http.StatusTooManyRequests, common.APIResponse{Code: 429, Msg: "尝试次数过多，请稍后再试"})

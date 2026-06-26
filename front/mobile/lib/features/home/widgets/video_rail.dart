@@ -10,11 +10,17 @@ class VideoRail extends StatelessWidget {
     required this.title,
     required this.videos,
     required this.onOpenVideo,
+    this.progress,
   });
 
   final String title;
   final List<Video> videos;
   final ValueChanged<Video> onOpenVideo;
+
+  /// Optional per-video watch progress (0–100), keyed by video id. When set for
+  /// a card, a thin progress bar is drawn at the bottom of its poster — used by
+  /// the "继续观看" rail.
+  final Map<int, int>? progress;
 
   @override
   Widget build(BuildContext context) {
@@ -40,8 +46,11 @@ class VideoRail extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 16),
             itemCount: videos.length,
             separatorBuilder: (_, _) => const SizedBox(width: 12),
-            itemBuilder: (context, index) =>
-                _PosterCard(video: videos[index], onTap: onOpenVideo),
+            itemBuilder: (context, index) => _PosterCard(
+              video: videos[index],
+              onTap: onOpenVideo,
+              progress: progress?[videos[index].id],
+            ),
           ),
         ),
       ],
@@ -50,10 +59,11 @@ class VideoRail extends StatelessWidget {
 }
 
 class _PosterCard extends StatelessWidget {
-  const _PosterCard({required this.video, required this.onTap});
+  const _PosterCard({required this.video, required this.onTap, this.progress});
 
   final Video video;
   final ValueChanged<Video> onTap;
+  final int? progress;
 
   @override
   Widget build(BuildContext context) {
@@ -122,6 +132,25 @@ class _PosterCard extends StatelessWidget {
                             style: const TextStyle(
                               color: Colors.white,
                               fontSize: 10,
+                            ),
+                          ),
+                        ),
+                      ),
+                    if (progress != null && progress! > 0)
+                      Positioned(
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        child: ClipRRect(
+                          borderRadius: const BorderRadius.vertical(
+                            bottom: Radius.circular(8),
+                          ),
+                          child: LinearProgressIndicator(
+                            value: progress!.clamp(0, 100) / 100,
+                            minHeight: 3,
+                            backgroundColor: const Color(0x66000000),
+                            valueColor: const AlwaysStoppedAnimation<Color>(
+                              Color(0xFF25D0AB),
                             ),
                           ),
                         ),

@@ -1,4 +1,15 @@
-export type Entity = 'dashboard' | 'users' | 'roles' | 'menus' | 'videos' | 'video-transcodes' | 'video-extracts' | 'categories' | 'app-users' | 'payments' | 'comments'
+export type Entity = 'dashboard' | 'users' | 'roles' | 'menus' | 'videos' | 'video-transcodes' | 'video-extracts' | 'categories' | 'app-users' | 'payments' | 'comments' | 'audit-logs'
+
+export type AuditLog = {
+  id: number
+  request_id: string
+  username: string
+  method: string
+  path: string
+  status: number
+  ip: string
+  created_at: string
+}
 
 export type AdminComment = {
   id: number
@@ -18,6 +29,7 @@ export type DashboardStats = {
   users: { total: number; vip: number; banned: number }
   orders: { total: number; by_status: Array<{ key: string; count: number }> }
   revenue: Array<{ currency: string; amount_cents: number }>
+  revenue_trend: { currency: string; points: Array<{ date: string; amount_cents: number; orders: number }> }
   top_videos: Array<{ video_id: number; title: string; plays: number }>
 }
 

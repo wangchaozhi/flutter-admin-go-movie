@@ -16,6 +16,9 @@ const (
 	commentPageSize  = 20
 )
 
+// commentLimiter throttles comment/rating submissions per user to curb spam.
+var commentLimiter = common.NewLimiter("comment_post", 10, time.Minute)
+
 // AppCommentItem is a comment enriched with the author's display name so the app
 // does not have to resolve users separately.
 type AppCommentItem struct {
@@ -87,6 +90,11 @@ func createVideoComment(w http.ResponseWriter, r *http.Request, videoID int64) {
 		common.WriteJSON(w, http.StatusUnauthorized, common.APIResponse{Code: 401, Msg: "unauthorized"})
 		return
 	}
+	if allowed, retry := commentLimiter.Allow(strconv.Itoa(userID)); !allowed {
+		w.Header().Set("Retry-After", strconv.Itoa(int(retry.Seconds())+1))
+		common.WriteJSON(w, http.StatusTooManyRequests, common.APIResponse{Code: 429, Msg: "评论太频繁，请稍后再试"})
+		return
+	}
 	var req struct {
 		Content string `json:"content"`
 		Rating  int    `json:"rating"`
@@ -124,7 +132,22 @@ func createVideoComment(w http.ResponseWriter, r *http.Request, videoID int64) {
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
-	if err := store.DB().Create(&comment).Error; err != nil {
+	if req.Rating > 0 {
+		// A user may comment many times but rate only once. Upsert onto the
+		// partial unique index (video_id, user_id) WHERE rating > 0 so re-rating
+		// updates the existing row instead of stacking duplicate rating rows that
+		// would skew the average.
+		if err := store.DB().Raw(`
+			INSERT INTO video_comments (video_id, user_id, content, rating, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?)
+			ON CONFLICT (video_id, user_id) WHERE rating > 0
+			DO UPDATE SET content = EXCLUDED.content, rating = EXCLUDED.rating, updated_at = EXCLUDED.updated_at
+			RETURNING id, video_id, user_id, content, rating, created_at, updated_at
+		`, videoID, userID, req.Content, req.Rating, now, now).Scan(&comment).Error; err != nil {
+			common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
+			return
+		}
+	} else if err := store.DB().Create(&comment).Error; err != nil {
 		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
 		return
 	}

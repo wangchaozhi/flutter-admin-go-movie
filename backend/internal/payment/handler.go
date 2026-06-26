@@ -2,6 +2,7 @@ package payment
 
 import (
 	"crypto/rand"
+	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -237,6 +238,11 @@ func AdminOrdersHandler(w http.ResponseWriter, r *http.Request) {
 		countQuery = countQuery.Where("status = ?", status)
 	}
 
+	if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("format")), "csv") {
+		exportOrdersCSV(w, query)
+		return
+	}
+
 	if !common.HasPagination(r) {
 		var orders []store.Order
 		if err := query.Limit(200).Find(&orders).Error; err != nil {
@@ -255,6 +261,48 @@ func AdminOrdersHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: common.PageResponse(orders, total, p)})
+}
+
+// exportOrdersCSV streams all orders matching the (already-filtered) query as a
+// CSV download for finance/reconciliation. Amounts are rendered in major units
+// (e.g. 12.34) alongside the currency. Capped to avoid unbounded responses.
+func exportOrdersCSV(w http.ResponseWriter, query *gorm.DB) {
+	var orders []store.Order
+	if err := query.Limit(10000).Find(&orders).Error; err != nil {
+		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"orders-%s.csv\"", time.Now().Format("20060102-150405")))
+	// UTF-8 BOM so Excel renders non-ASCII (product names, usernames) correctly.
+	_, _ = w.Write([]byte{0xEF, 0xBB, 0xBF})
+
+	cw := csv.NewWriter(w)
+	defer cw.Flush()
+	_ = cw.Write([]string{"order_no", "username", "product", "kind", "amount", "currency", "status", "provider", "created_at", "paid_at", "refunded_at"})
+	for _, o := range orders {
+		_ = cw.Write([]string{
+			o.OrderNo,
+			o.User.Username,
+			o.Product.Name,
+			o.Product.Kind,
+			fmt.Sprintf("%.2f", float64(o.AmountCents)/100),
+			o.Currency,
+			o.Status,
+			o.Provider,
+			o.CreatedAt.Format(time.RFC3339),
+			formatNullableTime(o.PaidAt),
+			formatNullableTime(o.RefundedAt),
+		})
+	}
+}
+
+func formatNullableTime(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	return t.Format(time.RFC3339)
 }
 
 func AdminOrderByIDHandler(w http.ResponseWriter, r *http.Request) {

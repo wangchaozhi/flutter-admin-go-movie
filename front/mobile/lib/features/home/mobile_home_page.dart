@@ -23,6 +23,8 @@ class _MobileHomePageState extends State<MobileHomePage> {
   List<Video> _railPopular = [];
   List<Video> _railLatest = [];
   List<Video> _railVip = [];
+  List<Video> _railContinue = [];
+  Map<int, int> _continueProgress = {};
   List<OrderSummary> _orders = [];
   List<HistoryEntry> _history = [];
   List<FavoriteEntry> _favorites = [];
@@ -56,10 +58,11 @@ class _MobileHomePageState extends State<MobileHomePage> {
     ]);
   }
 
-  // Aggregated recommendation rails shown on the 全部 channel.
+  // Aggregated recommendation rails shown on the 全部 channel. Sent with the auth
+  // token so the backend can include the personalised "继续观看" rail.
   Future<void> _loadHomeRails() async {
     try {
-      final resp = await ApiClient().get('/api/home');
+      final resp = await ApiClient().getAuth('/api/home');
       if (!mounted) return;
       if (resp['code'] == 0) {
         final data = resp['data'] as Map<String, dynamic>? ?? {};
@@ -67,10 +70,23 @@ class _MobileHomePageState extends State<MobileHomePage> {
             (data[key] as List<dynamic>? ?? [])
                 .map((e) => Video.fromJson(e as Map<String, dynamic>))
                 .toList();
+        // The continue rail carries per-video watch progress alongside the
+        // video, so build a lookup keyed by video id for the progress bars.
+        final continueRaw = data['continue'] as List<dynamic>? ?? [];
+        final continueProgress = <int, int>{};
+        for (final entry in continueRaw) {
+          final map = entry as Map<String, dynamic>;
+          final id = map['id'] as int?;
+          if (id != null) {
+            continueProgress[id] = (map['progress'] as num?)?.toInt() ?? 0;
+          }
+        }
         setState(() {
           _railPopular = parse('popular');
           _railLatest = parse('latest');
           _railVip = parse('vip');
+          _railContinue = parse('continue');
+          _continueProgress = continueProgress;
         });
       }
     } catch (_) {
@@ -464,6 +480,14 @@ class _MobileHomePageState extends State<MobileHomePage> {
               child: FeaturedBanner(video: featuredVideo, onPlay: _openVideo),
             ),
           if (_selectedCategoryIndex == 0) ...[
+            SliverToBoxAdapter(
+              child: VideoRail(
+                title: '继续观看',
+                videos: _railContinue,
+                onOpenVideo: _openVideo,
+                progress: _continueProgress,
+              ),
+            ),
             SliverToBoxAdapter(
               child: VideoRail(
                 title: '热门',

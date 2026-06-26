@@ -188,6 +188,28 @@ func DB() *gorm.DB {
 	return db
 }
 
+// PingDB verifies the database connection is alive, for health checks.
+func PingDB(ctx context.Context) error {
+	if db == nil {
+		return fmt.Errorf("database not initialised")
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		return err
+	}
+	return sqlDB.PingContext(ctx)
+}
+
+// PingObjectStore verifies the object store (MinIO) is reachable by checking the
+// video bucket, for health checks.
+func PingObjectStore(ctx context.Context) error {
+	if objectClient == nil {
+		return fmt.Errorf("object store not initialised")
+	}
+	_, err := objectClient.BucketExists(ctx, videoBucket)
+	return err
+}
+
 func ObjectClient() *minio.Client {
 	return objectClient
 }

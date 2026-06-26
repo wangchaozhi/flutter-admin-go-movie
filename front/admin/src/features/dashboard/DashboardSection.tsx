@@ -27,6 +27,53 @@ function formatMoney(currency: string, cents: number) {
   return `${currency} ${(cents / 100).toFixed(2)}`
 }
 
+// RevenueTrendChart draws a lightweight, dependency-free SVG bar chart of daily
+// paid revenue for the primary currency over the last 30 days.
+function RevenueTrendChart({ trend }: { trend: DashboardStats['revenue_trend'] }) {
+  const points = trend.points ?? []
+  const totalCents = points.reduce((sum, p) => sum + p.amount_cents, 0)
+  if (!trend.currency || totalCents === 0) {
+    return <p className="muted">暂无收入数据</p>
+  }
+
+  const width = 720
+  const height = 160
+  const padX = 8
+  const padY = 16
+  const maxCents = Math.max(1, ...points.map((p) => p.amount_cents))
+  const slot = (width - padX * 2) / points.length
+  const barWidth = Math.max(2, slot - 3)
+
+  return (
+    <div className="revenue-trend">
+      <div className="revenue-trend-head">
+        <span>近 30 天 · {trend.currency}</span>
+        <strong>{formatMoney(trend.currency, totalCents)}</strong>
+      </div>
+      <svg viewBox={`0 0 ${width} ${height}`} className="revenue-trend-chart" preserveAspectRatio="none" role="img" aria-label="收入趋势">
+        {points.map((p, i) => {
+          const barHeight = (p.amount_cents / maxCents) * (height - padY * 2)
+          const x = padX + i * slot
+          const y = height - padY - barHeight
+          return (
+            <rect
+              key={p.date}
+              x={x}
+              y={y}
+              width={barWidth}
+              height={Math.max(barHeight, p.amount_cents > 0 ? 1 : 0)}
+              rx={1.5}
+              fill="var(--accent, #6366f1)"
+            >
+              <title>{`${p.date}\n${formatMoney(trend.currency, p.amount_cents)} · ${p.orders} 单`}</title>
+            </rect>
+          )
+        })}
+      </svg>
+    </div>
+  )
+}
+
 export function DashboardSection({ token }: { token: string }) {
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [loading, setLoading] = useState(false)
@@ -91,6 +138,11 @@ export function DashboardSection({ token }: { token: string }) {
                 <strong>{stats.orders.total}</strong>
               </div>
             </div>
+
+            <section className="panel-inset">
+              <PanelTitle title="收入趋势" />
+              <RevenueTrendChart trend={stats.revenue_trend} />
+            </section>
 
             <div className="dashboard-columns">
               <section className="panel-inset">

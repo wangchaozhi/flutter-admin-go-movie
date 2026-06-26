@@ -1,14 +1,18 @@
 package server
 
 import (
+	"context"
 	"net/http"
 	"strings"
+	"time"
 
 	"flutter-admin-go/internal/admin"
 	"flutter-admin-go/internal/auth"
+	"flutter-admin-go/internal/cache"
 	"flutter-admin-go/internal/common"
 	"flutter-admin-go/internal/config"
 	"flutter-admin-go/internal/payment"
+	"flutter-admin-go/internal/store"
 	"flutter-admin-go/internal/video"
 )
 
@@ -152,6 +156,9 @@ func NewRouter() http.Handler {
 		http.MethodDelete: "comment:delete",
 	}, http.HandlerFunc(video.AdminDeleteCommentHandler)))
 
+	// admin audit trail (read-only)
+	mux.Handle("/api/admin/audit-logs", requireAdminAuth(http.HandlerFunc(admin.AuditLogsHandler)))
+
 	// app: categories + video list / detail / play / cover / progress
 	mux.HandleFunc("/api/categories", video.AppListCategoriesHandler)
 	mux.HandleFunc("/api/products", payment.ProductsHandler)
@@ -188,15 +195,57 @@ func NewRouter() http.Handler {
 		}
 	})
 
-	mux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
-		common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: map[string]string{"status": "up"}})
-	})
+	mux.HandleFunc("/api/health", healthHandler)
 	mux.HandleFunc("/api/webhooks/stripe", payment.StripeWebhookHandler)
 	mux.HandleFunc("/api/webhooks/paypal", payment.PayPalWebhookHandler)
 
 	// Observability wraps everything (including CORS) so it can trace and recover
-	// from panics in any layer.
-	return withObservability(withCORS(mux))
+	// from panics in any layer. Audit sits innermost so it sees the final status
+	// of admin mutations.
+	return withObservability(withCORS(withAudit(mux)))
+}
+
+// healthHandler probes the critical dependencies (database, object store, and —
+// when configured — Redis) and reports each one. It returns 503 when any
+// required dependency is down so orchestrators can gate traffic; Redis is
+// treated as optional since the app degrades gracefully without it.
+func healthHandler(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+
+	deps := map[string]string{}
+	healthy := true
+
+	if err := store.PingDB(ctx); err != nil {
+		deps["database"] = "down"
+		healthy = false
+	} else {
+		deps["database"] = "up"
+	}
+	if err := store.PingObjectStore(ctx); err != nil {
+		deps["object_store"] = "down"
+		healthy = false
+	} else {
+		deps["object_store"] = "up"
+	}
+	if cache.Client() == nil {
+		deps["redis"] = "disabled"
+	} else if err := cache.Ping(ctx); err != nil {
+		deps["redis"] = "down" // optional: does not flip overall health
+	} else {
+		deps["redis"] = "up"
+	}
+
+	status := "up"
+	code := http.StatusOK
+	if !healthy {
+		status = "degraded"
+		code = http.StatusServiceUnavailable
+	}
+	common.WriteJSON(w, code, common.APIResponse{Code: 0, Msg: "ok", Data: map[string]any{
+		"status":       status,
+		"dependencies": deps,
+	}})
 }
 
 // mobileBanGuard revokes access for users banned after they logged in: if the

@@ -6,9 +6,12 @@ import (
 	"encoding/hex"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
+	"flutter-admin-go/internal/admin"
 	"flutter-admin-go/internal/common"
+	"flutter-admin-go/internal/store"
 )
 
 type ctxKey string
@@ -97,6 +100,47 @@ func withObservability(next http.Handler) http.Handler {
 
 		next.ServeHTTP(rec, r)
 	})
+}
+
+// withAudit records every admin mutation (POST/PUT/DELETE under /api/admin/) to
+// the audit_logs table after the handler runs, capturing the acting admin, the
+// resulting status and the client IP. The write happens on a background
+// goroutine so it never adds latency to the response.
+func withAudit(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !auditableRequest(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+
+		username, _ := admin.CurrentAdminUsername(r)
+		entry := store.AuditLog{
+			RequestID: RequestID(r.Context()),
+			Username:  username,
+			Method:    r.Method,
+			Path:      r.URL.Path,
+			Status:    rec.status,
+			IP:        common.ClientIP(r),
+			CreatedAt: time.Now(),
+		}
+		go store.WriteAuditLog(entry)
+	})
+}
+
+// auditableRequest reports whether a request is an admin mutation worth
+// recording. Reads (GET) and non-admin endpoints are skipped.
+func auditableRequest(r *http.Request) bool {
+	if !strings.HasPrefix(r.URL.Path, "/api/admin/") {
+		return false
+	}
+	switch r.Method {
+	case http.MethodPost, http.MethodPut, http.MethodDelete:
+		return true
+	default:
+		return false
+	}
 }
 
 func newRequestID() string {

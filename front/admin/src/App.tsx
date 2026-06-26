@@ -31,6 +31,7 @@ import type {
 } from './adminTypes'
 import { ConfirmDialog } from './components/confirm'
 import { AppUserManagementSection } from './features/appUsers'
+import { AuditLogsSection } from './features/audit'
 import { CategoryManagementSection } from './features/categories'
 import { CommentModerationSection } from './features/comments'
 import { DashboardSection } from './features/dashboard'
@@ -178,6 +179,11 @@ const pageHeaders: Record<Entity, { eyebrow: string; title: string; subtitle: st
     title: '评论',
     subtitle: '查看用户评论与评分，删除违规内容。',
   },
+  'audit-logs': {
+    eyebrow: '安全中心',
+    title: '审计日志',
+    subtitle: '查看后台增删改操作的执行人、对象和结果。',
+  },
 }
 
 const routeMetaByPath = new Map<string, { key: Entity; label: string; iconCode: string }>([
@@ -192,6 +198,7 @@ const routeMetaByPath = new Map<string, { key: Entity; label: string; iconCode: 
   ['/videos/extracts', { key: 'video-extracts', label: '提取历史', iconCode: 'AudioLines' }],
   ['/payments', { key: 'payments', label: '支付', iconCode: 'CreditCard' }],
   ['/comments', { key: 'comments', label: '评论', iconCode: 'MessageSquare' }],
+  ['/audit-logs', { key: 'audit-logs', label: '审计日志', iconCode: 'ScrollText' }],
 ])
 
 const legacyMenuNames = new Set([
@@ -225,6 +232,7 @@ const entityKeys = new Set<Entity>([
   'app-users',
   'payments',
   'comments',
+  'audit-logs',
 ])
 
 function isEntityKey(key: string): key is Entity {
@@ -1065,6 +1073,10 @@ function AdminDashboard({
 
         {active === 'comments' && (
           <CommentModerationSection token={session.token} can={can} />
+        )}
+
+        {active === 'audit-logs' && (
+          <AuditLogsSection token={session.token} />
         )}
       </section>
 

@@ -8,15 +8,37 @@ import (
 	"time"
 )
 
-// LoginLimiter is a process-local fixed-window failure counter used to slow down
-// credential brute-force on the login endpoints. It counts only failed attempts
-// per key (typically client IP) and blocks further tries once the threshold is
-// reached within the window.
-//
-// It is intentionally in-memory so that login keeps working even when Redis is
-// down. For multi-instance deployments this should be backed by a shared store
-// (e.g. Redis) so the limit is enforced cluster-wide.
-type LoginLimiter struct {
+// SharedStore is an optional cluster-wide counter backend (e.g. Redis) used to
+// enforce rate limits across instances. It is injected at startup via
+// UseSharedStore so this package keeps no hard dependency on Redis; when unset,
+// or when a call reports ok=false (backend unreachable), limiters transparently
+// fall back to a process-local counter. Keys are already namespaced per limiter.
+type SharedStore interface {
+	// Incr increments the counter at key, applying ttl on first increment, and
+	// returns the new count.
+	Incr(key string, ttl time.Duration) (count int64, ok bool)
+	// Count reads the current counter value (0 when absent).
+	Count(key string) (count int64, ok bool)
+	// TTL reports the remaining lifetime of key.
+	TTL(key string) (ttl time.Duration, ok bool)
+	// Del removes the counter at key.
+	Del(key string)
+}
+
+var shared SharedStore
+
+// UseSharedStore installs the shared rate-limit backend. Call once at startup
+// before serving traffic; limiters read it dynamically so package-level limiters
+// constructed at init time pick it up.
+func UseSharedStore(s SharedStore) { shared = s }
+
+// Limiter is a fixed-window counter used both as a login brute-force guard
+// (count only failures via Fail, gate with Blocked, clear on success via Reset)
+// and as a generic per-action throttle (count every call via Allow). When a
+// shared store is installed it enforces the limit cluster-wide; otherwise it
+// uses an in-memory map so limiting keeps working even when Redis is down.
+type Limiter struct {
+	name     string
 	mu       sync.Mutex
 	attempts map[string]*failureWindow
 	max      int
@@ -28,19 +50,33 @@ type failureWindow struct {
 	resetAt time.Time
 }
 
-// NewLoginLimiter creates a limiter that blocks a key after max failures inside
-// the rolling window.
-func NewLoginLimiter(max int, window time.Duration) *LoginLimiter {
-	return &LoginLimiter{
+// NewLimiter creates a limiter that trips a key once its count reaches max
+// inside window. name namespaces the key so distinct limiters (e.g. admin vs
+// mobile login) never share a counter in the shared store.
+func NewLimiter(name string, max int, window time.Duration) *Limiter {
+	return &Limiter{
+		name:     name,
 		attempts: make(map[string]*failureWindow),
 		max:      max,
 		window:   window,
 	}
 }
 
-// Blocked reports whether the key has exceeded the failure threshold within the
-// current window, plus how long until the window resets.
-func (l *LoginLimiter) Blocked(key string) (bool, time.Duration) {
+func (l *Limiter) sharedKey(key string) string {
+	return "rl:" + l.name + ":" + key
+}
+
+// Blocked reports whether the key has reached the failure threshold within the
+// current window, plus how long until it resets.
+func (l *Limiter) Blocked(key string) (bool, time.Duration) {
+	if s := shared; s != nil {
+		if n, ok := s.Count(l.sharedKey(key)); ok {
+			if n >= int64(l.max) {
+				return true, l.retryAfter(s, key)
+			}
+			return false, 0
+		}
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	w := l.attempts[key]
@@ -53,10 +89,61 @@ func (l *LoginLimiter) Blocked(key string) (bool, time.Duration) {
 	return false, 0
 }
 
-// Fail records one failed attempt for the key, starting a fresh window when the
-// previous one has expired. It opportunistically sweeps stale entries so the map
-// does not grow without bound.
-func (l *LoginLimiter) Fail(key string) {
+// Fail records one failed attempt, starting a fresh window when the previous one
+// expired. It opportunistically sweeps stale entries so the map stays bounded.
+func (l *Limiter) Fail(key string) {
+	if s := shared; s != nil {
+		if _, ok := s.Incr(l.sharedKey(key), l.window); ok {
+			return
+		}
+	}
+	l.localIncr(key)
+}
+
+// Allow records one action and reports whether it is still within max per
+// window. Unlike Fail/Blocked, every call counts — use it to throttle actions
+// such as posting comments.
+func (l *Limiter) Allow(key string) (bool, time.Duration) {
+	if s := shared; s != nil {
+		if n, ok := s.Incr(l.sharedKey(key), l.window); ok {
+			if n > int64(l.max) {
+				return false, l.retryAfter(s, key)
+			}
+			return true, 0
+		}
+	}
+	count := l.localIncr(key)
+	if count > l.max {
+		l.mu.Lock()
+		w := l.attempts[key]
+		l.mu.Unlock()
+		if w != nil {
+			return false, time.Until(w.resetAt)
+		}
+		return false, l.window
+	}
+	return true, 0
+}
+
+// Reset clears recorded counts for the key, e.g. after a successful login.
+func (l *Limiter) Reset(key string) {
+	if s := shared; s != nil {
+		s.Del(l.sharedKey(key))
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.attempts, key)
+}
+
+func (l *Limiter) retryAfter(s SharedStore, key string) time.Duration {
+	if ttl, ok := s.TTL(l.sharedKey(key)); ok && ttl > 0 {
+		return ttl
+	}
+	return l.window
+}
+
+// localIncr increments the in-memory counter and returns the new count.
+func (l *Limiter) localIncr(key string) int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := time.Now()
@@ -70,16 +157,10 @@ func (l *LoginLimiter) Fail(key string) {
 	w := l.attempts[key]
 	if w == nil || now.After(w.resetAt) {
 		l.attempts[key] = &failureWindow{count: 1, resetAt: now.Add(l.window)}
-		return
+		return 1
 	}
 	w.count++
-}
-
-// Reset clears recorded failures for the key, e.g. after a successful login.
-func (l *LoginLimiter) Reset(key string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	delete(l.attempts, key)
+	return w.count
 }
 
 // ClientIP best-effort extracts the originating client IP, honouring the first

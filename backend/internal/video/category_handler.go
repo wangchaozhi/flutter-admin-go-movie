@@ -5,9 +5,16 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
+	"flutter-admin-go/internal/cache"
 	"flutter-admin-go/internal/common"
 	"flutter-admin-go/internal/store"
+)
+
+const (
+	categoriesCacheKey = "cache:categories:v1"
+	categoriesCacheTTL = 60 * time.Second
 )
 
 // GET /api/admin/categories
@@ -36,6 +43,7 @@ func AdminCategoriesHandler(w http.ResponseWriter, r *http.Request) {
 			common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
 			return
 		}
+		cache.Del(r.Context(), categoriesCacheKey)
 		common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: cat})
 	default:
 		common.WriteJSON(w, http.StatusMethodNotAllowed, common.APIResponse{Code: 405, Msg: "method not allowed"})
@@ -67,9 +75,11 @@ func AdminCategoryByIDHandler(w http.ResponseWriter, r *http.Request) {
 			common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
 			return
 		}
+		cache.Del(r.Context(), categoriesCacheKey)
 		common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok"})
 	case http.MethodDelete:
 		store.DB().Delete(&store.Category{}, id)
+		cache.Del(r.Context(), categoriesCacheKey)
 		common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok"})
 	default:
 		common.WriteJSON(w, http.StatusMethodNotAllowed, common.APIResponse{Code: 405, Msg: "method not allowed"})
@@ -82,7 +92,11 @@ func AppListCategoriesHandler(w http.ResponseWriter, r *http.Request) {
 		common.WriteJSON(w, http.StatusMethodNotAllowed, common.APIResponse{Code: 405, Msg: "method not allowed"})
 		return
 	}
+	ctx := r.Context()
 	var cats []store.Category
-	store.DB().Order("sort_order ASC, id ASC").Find(&cats)
+	if !cache.GetJSON(ctx, categoriesCacheKey, &cats) {
+		store.DB().Order("sort_order ASC, id ASC").Find(&cats)
+		cache.SetJSON(ctx, categoriesCacheKey, cats, categoriesCacheTTL)
+	}
 	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: cats})
 }
