@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/api_client.dart';
+import '../../core/l10n/app_strings.dart';
 import '../../core/session.dart';
 
 /// Self-service sign-up. On success the new account is signed straight in (the
@@ -18,6 +19,7 @@ class _RegisterPageState extends State<RegisterPage> {
   final _confirm = TextEditingController();
   final _nickname = TextEditingController();
   final _email = TextEditingController();
+  final _invite = TextEditingController();
 
   bool _loading = false;
   String? _error;
@@ -29,21 +31,24 @@ class _RegisterPageState extends State<RegisterPage> {
     _confirm.dispose();
     _nickname.dispose();
     _email.dispose();
+    _invite.dispose();
     super.dispose();
   }
 
-  String? _validate() {
+  String? _validate(AppStrings s) {
     final username = _username.text.trim();
-    if (username.length < 3 || username.length > 32) return '用户名长度需为 3-32 个字符';
-    if (_password.text.length < 6) return '密码至少 6 位';
-    if (_password.text != _confirm.text) return '两次输入的密码不一致';
+    if (username.length < 3 || username.length > 32) return s.t('register.errUsernameLen');
+    if (_password.text.length < 6) return s.t('register.errPasswordLen');
+    if (_password.text != _confirm.text) return s.t('register.errMismatch');
     final email = _email.text.trim();
-    if (email.isNotEmpty && !email.contains('@')) return '邮箱格式不正确';
+    if (email.isNotEmpty && !email.contains('@')) return s.t('register.errEmail');
+    if (_invite.text.trim().isEmpty) return s.t('register.errInvite');
     return null;
   }
 
   Future<void> _register() async {
-    final problem = _validate();
+    final s = AppStrings.of(context);
+    final problem = _validate(s);
     if (problem != null) {
       setState(() => _error = problem);
       return;
@@ -59,10 +64,11 @@ class _RegisterPageState extends State<RegisterPage> {
         'password': _password.text,
         'nickname': _nickname.text.trim(),
         'email': _email.text.trim(),
+        'invite_code': _invite.text.trim(),
       });
       if (!mounted) return;
       if (resp['code'] != 0) {
-        setState(() => _error = resp['msg']?.toString() ?? '注册失败');
+        setState(() => _error = resp['msg']?.toString() ?? s.t('register.failed'));
         return;
       }
       final data = resp['data'] as Map<String, dynamic>?;
@@ -72,7 +78,7 @@ class _RegisterPageState extends State<RegisterPage> {
       Navigator.pushNamedAndRemoveUntil(context, '/home', (route) => false);
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = '注册失败: $e');
+      setState(() => _error = '${s.t('register.failed')}: $e');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -80,13 +86,14 @@ class _RegisterPageState extends State<RegisterPage> {
 
   @override
   Widget build(BuildContext context) {
+    final s = AppStrings.of(context);
     return Scaffold(
       backgroundColor: const Color(0xFF0D0F14),
       appBar: AppBar(
         backgroundColor: const Color(0xFF0D0F14),
         foregroundColor: Colors.white,
         elevation: 0,
-        title: const Text('注册账号'),
+        title: Text(s.t('register.title')),
       ),
       body: SafeArea(
         child: Center(
@@ -97,15 +104,17 @@ class _RegisterPageState extends State<RegisterPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  _field(_username, '用户名', '3-32 个字符', Icons.person_outline_rounded),
+                  _field(_username, s.t('register.username'), s.t('register.usernameHint'), Icons.person_outline_rounded),
                   const SizedBox(height: 14),
-                  _field(_password, '密码', '至少 6 位', Icons.lock_outline_rounded, obscure: true),
+                  _field(_password, s.t('register.password'), s.t('register.passwordHint'), Icons.lock_outline_rounded, obscure: true),
                   const SizedBox(height: 14),
-                  _field(_confirm, '确认密码', '再次输入密码', Icons.lock_outline_rounded, obscure: true),
+                  _field(_confirm, s.t('register.confirm'), s.t('register.confirmHint'), Icons.lock_outline_rounded, obscure: true),
                   const SizedBox(height: 14),
-                  _field(_nickname, '昵称（可选）', '展示名称', Icons.badge_outlined),
+                  _field(_invite, s.t('register.invite'), s.t('register.inviteHint'), Icons.confirmation_number_outlined),
                   const SizedBox(height: 14),
-                  _field(_email, '邮箱（可选）', 'name@example.com', Icons.mail_outline_rounded),
+                  _field(_nickname, s.t('register.nickname'), s.t('register.nicknameHint'), Icons.badge_outlined),
+                  const SizedBox(height: 14),
+                  _field(_email, s.t('register.email'), s.t('register.emailHint'), Icons.mail_outline_rounded),
                   if (_error != null) ...[
                     const SizedBox(height: 14),
                     Text(
@@ -129,7 +138,7 @@ class _RegisterPageState extends State<RegisterPage> {
                             height: 18,
                             child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF101318)),
                           )
-                        : const Text('注册并登录'),
+                        : Text(s.t('register.submit')),
                   ),
                 ],
               ),

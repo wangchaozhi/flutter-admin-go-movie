@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/api_client.dart';
+import '../../core/l10n/app_strings.dart';
 import '../../core/session.dart';
 import 'login_storage.dart';
 import 'widgets/login_header.dart';
@@ -62,7 +63,7 @@ class _MobileLoginPageState extends State<MobileLoginPage> {
 
       if (!mounted) return;
       if (resp['code'] != 0) {
-        _showMessage(resp['msg']?.toString() ?? '登录失败');
+        _showMessage(resp['msg']?.toString() ?? AppStrings.of(context).t('login.failed'));
         return;
       }
 
@@ -78,17 +79,18 @@ class _MobileLoginPageState extends State<MobileLoginPage> {
       Navigator.pushReplacementNamed(context, '/home');
     } catch (e) {
       if (!mounted) return;
-      _showMessage('登录失败: $e');
+      _showMessage('${AppStrings.of(context).t('login.failed')}: $e');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
   bool _validate() {
+    final s = AppStrings.of(context);
     final usernameError = _usernameController.text.trim().isEmpty
-        ? '请输入账号'
+        ? s.t('login.errAccount')
         : '';
-    final passwordError = _passwordController.text.isEmpty ? '请输入登录密码' : '';
+    final passwordError = _passwordController.text.isEmpty ? s.t('login.errPassword') : '';
     setState(() {
       _usernameError = usernameError;
       _passwordError = passwordError;
@@ -185,6 +187,7 @@ class _LoginCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = AppStrings.of(context);
     return Material(
       color: const Color(0xFF171B24),
       elevation: 18,
@@ -207,8 +210,8 @@ class _LoginCard extends StatelessWidget {
               style: const TextStyle(color: Colors.white),
               textInputAction: TextInputAction.next,
               decoration: _fieldDecoration(
-                label: '账号',
-                hint: '请输入 Go Movie 账号',
+                label: s.t('login.account'),
+                hint: s.t('login.accountHint'),
                 icon: Icons.person_outline_rounded,
                 error: usernameError,
               ),
@@ -226,8 +229,8 @@ class _LoginCard extends StatelessWidget {
                 if (!loading) onLogin();
               },
               decoration: _fieldDecoration(
-                label: '密码',
-                hint: '请输入登录密码',
+                label: s.t('login.password'),
+                hint: s.t('login.passwordHint'),
                 icon: Icons.lock_outline_rounded,
                 error: passwordError,
               ),
@@ -251,21 +254,21 @@ class _LoginCard extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(width: 4),
-                    const Expanded(
+                    Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            '记住本机登录信息',
-                            style: TextStyle(
+                            s.t('login.rememberTitle'),
+                            style: const TextStyle(
                               color: Colors.white,
                               fontWeight: FontWeight.w800,
                             ),
                           ),
-                          SizedBox(height: 2),
+                          const SizedBox(height: 2),
                           Text(
-                            '下次打开更快回到影片',
-                            style: TextStyle(
+                            s.t('login.rememberSubtitle'),
+                            style: const TextStyle(
                               color: Color(0xFF9CA3AF),
                               fontSize: 12,
                             ),
@@ -294,7 +297,7 @@ class _LoginCard extends StatelessWidget {
                       ),
                     )
                   : const Icon(Icons.arrow_forward_rounded),
-              label: Text(loading ? '正在登录...' : '立即登录'),
+              label: Text(loading ? s.t('login.signingIn') : s.t('login.signIn')),
               style: FilledButton.styleFrom(
                 backgroundColor: const Color(0xFF25D0AB),
                 disabledBackgroundColor: const Color(0xFF83E5D3),
@@ -313,7 +316,7 @@ class _LoginCard extends StatelessWidget {
               style: TextButton.styleFrom(
                 foregroundColor: const Color(0xFF9CA3AF),
               ),
-              child: const Text('还没有账号？立即注册'),
+              child: Text(s.t('login.toRegister')),
             ),
           ],
         ),

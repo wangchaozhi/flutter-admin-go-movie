@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/l10n/app_strings.dart';
+import '../../../core/l10n/locale_controller.dart';
 import '../../../models/video.dart';
 import '../../auth/change_password_sheet.dart';
 import '../../search/search_page.dart';
@@ -28,6 +30,7 @@ class HomeTopBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = AppStrings.of(context);
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 10, 6),
       child: Row(
@@ -45,7 +48,9 @@ class HomeTopBar extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  username.isNotEmpty ? '你好，$username' : '今晚想看点什么？',
+                  username.isNotEmpty
+                      ? s.t('home.greeting', {'name': username})
+                      : s.t('home.greetingGuest'),
                   style: const TextStyle(
                     color: Color(0xFF9CA3AF),
                     fontSize: 13,
@@ -55,14 +60,14 @@ class HomeTopBar extends StatelessWidget {
             ),
           ),
           IconButton(
-            tooltip: '搜索',
+            tooltip: s.t('home.search'),
             icon: const Icon(Icons.search, color: Colors.white),
             onPressed: () => Navigator.of(context).push(
               MaterialPageRoute<void>(builder: (_) => const SearchPage()),
             ),
           ),
           PopupMenuButton<_UserMenuAction>(
-            tooltip: '我的',
+            tooltip: s.t('home.mine'),
             color: const Color(0xFF171B24),
             position: PopupMenuPosition.under,
             offset: const Offset(0, 8),
@@ -76,25 +81,25 @@ class HomeTopBar extends StatelessWidget {
                   onLogout();
               }
             },
-            itemBuilder: (context) => const [
+            itemBuilder: (context) => [
               PopupMenuItem(
                 value: _UserMenuAction.profile,
-                child: _UserMenuItem(icon: Icons.badge_outlined, label: '资料'),
+                child: _UserMenuItem(icon: Icons.badge_outlined, label: s.t('home.profile')),
               ),
               PopupMenuItem(
                 value: _UserMenuAction.vip,
                 child: _UserMenuItem(
                   icon: Icons.workspace_premium_rounded,
-                  label: 'VIP',
+                  label: s.t('home.vip'),
                   vip: true,
                 ),
               ),
-              PopupMenuDivider(),
+              const PopupMenuDivider(),
               PopupMenuItem(
                 value: _UserMenuAction.logout,
                 child: _UserMenuItem(
                   icon: Icons.logout_rounded,
-                  label: '退出登录',
+                  label: s.t('home.logout'),
                   danger: true,
                 ),
               ),
@@ -222,7 +227,8 @@ class _ProfileSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final displayName = username.isEmpty ? '移动端用户' : username;
+    final s = AppStrings.of(context);
+    final displayName = username.isEmpty ? s.t('profile.mobileUser') : username;
 
     return SafeArea(
       top: false,
@@ -249,9 +255,9 @@ class _ProfileSheet extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(height: 3),
-                      const Text(
-                        'Go Movie 会员账号',
-                        style: TextStyle(color: Color(0xFF9CA3AF)),
+                      Text(
+                        s.t('profile.memberAccount'),
+                        style: const TextStyle(color: Color(0xFF9CA3AF)),
                       ),
                     ],
                   ),
@@ -262,13 +268,13 @@ class _ProfileSheet extends StatelessWidget {
             const SizedBox(height: 20),
             _ProfileInfoRow(
               icon: Icons.person_outline_rounded,
-              label: '用户名',
+              label: s.t('profile.username'),
               value: displayName,
             ),
-            const _ProfileInfoRow(
+            _ProfileInfoRow(
               icon: Icons.shield_outlined,
-              label: '账号状态',
-              value: '正常',
+              label: s.t('profile.accountStatus'),
+              value: s.t('common.normal'),
             ),
           ],
         ),
@@ -363,8 +369,9 @@ class ProfileCenter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = AppStrings.of(context);
     final displayName =
-        profile?.displayName ?? (username.isEmpty ? '移动端用户' : username);
+        profile?.displayName ?? (username.isEmpty ? s.t('profile.mobileUser') : username);
     final isVip = profile?.isVip ?? false;
     final readyCount = videos.where((video) => video.isReady).length;
     final vipCount = videos
@@ -381,7 +388,7 @@ class ProfileCenter extends StatelessWidget {
             children: [
               Expanded(
                 child: Text(
-                  '我的',
+                  s.t('center.mine'),
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                     color: Colors.white,
                     fontWeight: FontWeight.w900,
@@ -392,7 +399,7 @@ class ProfileCenter extends StatelessWidget {
                 onPressed: onRefresh,
                 icon: const Icon(Icons.refresh_rounded),
                 color: Colors.white,
-                tooltip: '刷新',
+                tooltip: s.t('center.refresh'),
               ),
             ],
           ),
@@ -416,26 +423,30 @@ class ProfileCenter extends StatelessWidget {
             items: [
               _ShortcutItem(
                 Icons.history_rounded,
-                '观看记录',
-                historyCount > 0 ? '$historyCount 条记录' : '$readyCount 部可观看',
+                s.t('center.history'),
+                historyCount > 0
+                    ? s.t('center.historyCount', {'n': '$historyCount'})
+                    : s.t('center.watchable', {'n': '$readyCount'}),
                 onOpenHistory,
               ),
               _ShortcutItem(
                 Icons.bookmark_rounded,
-                '我的收藏',
-                favoriteCount > 0 ? '$favoriteCount 部影片' : '暂无收藏',
+                s.t('center.favorites'),
+                favoriteCount > 0
+                    ? s.t('center.favoriteFilms', {'n': '$favoriteCount'})
+                    : s.t('center.noFavorites'),
                 onOpenFavorites,
               ),
               _ShortcutItem(
                 Icons.receipt_long_rounded,
-                '订单记录',
-                '${orders.length} 条最近订单',
+                s.t('center.orders'),
+                s.t('center.recentOrders', {'n': '${orders.length}'}),
                 onOpenOrders,
               ),
               _ShortcutItem(
                 Icons.settings_rounded,
-                '设置',
-                '偏好与缓存',
+                s.t('center.settings'),
+                s.t('center.prefsCache'),
                 onOpenSettings,
               ),
             ],
@@ -471,6 +482,7 @@ class _ProfileHeaderCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = AppStrings.of(context);
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -496,15 +508,17 @@ class _ProfileHeaderCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 if (loading)
-                  const Text(
-                    '资料加载中...',
-                    style: TextStyle(color: Color(0xFF9CA3AF)),
+                  Text(
+                    s.t('center.loading'),
+                    style: const TextStyle(color: Color(0xFF9CA3AF)),
                   )
                 else if (error.isNotEmpty)
                   Text(error, style: const TextStyle(color: Color(0xFFF87171)))
                 else
                   Text(
-                    isVip ? 'VIP 有效期至 $vipUntilLabel' : '普通用户',
+                    isVip
+                        ? s.t('center.vipUntil', {'date': vipUntilLabel})
+                        : s.t('center.normalUser'),
                     style: const TextStyle(color: Color(0xFF9CA3AF)),
                   ),
               ],
@@ -522,7 +536,7 @@ class _ProfileHeaderCard extends StatelessWidget {
                   borderRadius: BorderRadius.circular(8),
                 ),
               ),
-              child: const Text('开通'),
+              child: Text(s.t('center.open')),
             ),
         ],
       ),
@@ -543,6 +557,7 @@ class _VipMemberCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = AppStrings.of(context);
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -567,9 +582,9 @@ class _VipMemberCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'VIP 会员',
-                      style: TextStyle(
+                    Text(
+                      s.t('center.vipMember'),
+                      style: const TextStyle(
                         color: Colors.white,
                         fontSize: 17,
                         fontWeight: FontWeight.w900,
@@ -577,7 +592,9 @@ class _VipMemberCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      isVip ? '会员有效期至 $vipUntilLabel' : '解锁会员专属影片与更多权益',
+                      isVip
+                          ? s.t('center.vipMemberUntil', {'date': vipUntilLabel})
+                          : s.t('center.vipDesc'),
                       style: const TextStyle(
                         color: Color(0xFFE5E7EB),
                         height: 1.35,
@@ -745,15 +762,16 @@ class HistorySheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = AppStrings.of(context);
     return _ContentSheet(
-      title: '观看记录',
+      title: s.t('center.history'),
       loading: loading,
-      emptyText: '暂无观看记录',
+      emptyText: s.t('center.noHistory'),
       children: [
         for (final item in items)
           _VideoActionRow(
             video: item.video,
-            subtitle: '已观看 ${item.progress}%',
+            subtitle: s.t('center.watched', {'progress': '${item.progress}'}),
             trailing: item.video.durationLabel,
             onTap: () {
               Navigator.pop(context);
@@ -781,18 +799,19 @@ class FavoritesSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = AppStrings.of(context);
     return _ContentSheet(
-      title: '我的收藏',
+      title: s.t('center.favorites'),
       loading: loading,
-      emptyText: '暂无收藏影片',
+      emptyText: s.t('center.noFavoriteFilms'),
       children: [
         for (final item in items)
           _VideoActionRow(
             video: item.video,
             subtitle: item.video.categoryName.isEmpty
-                ? '已收藏'
+                ? s.t('center.favorited')
                 : item.video.categoryName,
-            trailing: '移除',
+            trailing: s.t('center.remove'),
             onTap: () {
               Navigator.pop(context);
               onOpenVideo(item.video);
@@ -812,10 +831,11 @@ class OrdersSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = AppStrings.of(context);
     return _ContentSheet(
-      title: '订单记录',
+      title: s.t('center.orders'),
       loading: loading,
-      emptyText: '暂无订单',
+      emptyText: s.t('center.noOrders'),
       children: [for (final order in orders) _OrderRow(order: order)],
     );
   }
@@ -846,6 +866,8 @@ class _SettingsSheetState extends State<SettingsSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final s = AppStrings.of(context);
+    final currentCode = AppLocale.codeOf(Localizations.localeOf(context));
     return SafeArea(
       top: false,
       child: Padding(
@@ -854,9 +876,9 @@ class _SettingsSheetState extends State<SettingsSheet> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              '设置',
-              style: TextStyle(
+            Text(
+              s.t('settings.title'),
+              style: const TextStyle(
                 color: Colors.white,
                 fontSize: 20,
                 fontWeight: FontWeight.w900,
@@ -867,10 +889,10 @@ class _SettingsSheetState extends State<SettingsSheet> {
               value: _setting.autoPlay,
               activeThumbColor: const Color(0xFF25D0AB),
               contentPadding: EdgeInsets.zero,
-              title: const Text('自动播放', style: TextStyle(color: Colors.white)),
-              subtitle: const Text(
-                '进入播放页后自动继续',
-                style: TextStyle(color: Color(0xFF9CA3AF)),
+              title: Text(s.t('settings.autoPlay'), style: const TextStyle(color: Colors.white)),
+              subtitle: Text(
+                s.t('settings.autoPlaySub'),
+                style: const TextStyle(color: Color(0xFF9CA3AF)),
               ),
               onChanged: _saving
                   ? null
@@ -880,13 +902,13 @@ class _SettingsSheetState extends State<SettingsSheet> {
               value: _setting.wifiOnly,
               activeThumbColor: const Color(0xFF25D0AB),
               contentPadding: EdgeInsets.zero,
-              title: const Text(
-                '仅 Wi-Fi 播放',
-                style: TextStyle(color: Colors.white),
+              title: Text(
+                s.t('settings.wifiOnly'),
+                style: const TextStyle(color: Colors.white),
               ),
-              subtitle: const Text(
-                '移动网络下减少误播放',
-                style: TextStyle(color: Color(0xFF9CA3AF)),
+              subtitle: Text(
+                s.t('settings.wifiOnlySub'),
+                style: const TextStyle(color: Color(0xFF9CA3AF)),
               ),
               onChanged: _saving
                   ? null
@@ -896,21 +918,21 @@ class _SettingsSheetState extends State<SettingsSheet> {
             DropdownButtonFormField<String>(
               initialValue: _setting.preferredQuality,
               dropdownColor: const Color(0xFF171B24),
-              decoration: const InputDecoration(
-                labelText: '默认清晰度',
-                labelStyle: TextStyle(color: Color(0xFF9CA3AF)),
-                enabledBorder: OutlineInputBorder(
+              decoration: InputDecoration(
+                labelText: s.t('settings.quality'),
+                labelStyle: const TextStyle(color: Color(0xFF9CA3AF)),
+                enabledBorder: const OutlineInputBorder(
                   borderSide: BorderSide(color: Color(0xFF2B3140)),
                 ),
-                focusedBorder: OutlineInputBorder(
+                focusedBorder: const OutlineInputBorder(
                   borderSide: BorderSide(color: Color(0xFF25D0AB)),
                 ),
               ),
               style: const TextStyle(color: Colors.white),
-              items: const [
-                DropdownMenuItem(value: 'auto', child: Text('自动')),
-                DropdownMenuItem(value: '720p', child: Text('720p')),
-                DropdownMenuItem(value: '1080p', child: Text('1080p')),
+              items: [
+                DropdownMenuItem(value: 'auto', child: Text(s.t('settings.qualityAuto'))),
+                const DropdownMenuItem(value: '720p', child: Text('720p')),
+                const DropdownMenuItem(value: '1080p', child: Text('1080p')),
               ],
               onChanged: _saving || _setting.preferredQuality.isEmpty
                   ? null
@@ -918,14 +940,38 @@ class _SettingsSheetState extends State<SettingsSheet> {
                       _setting.copyWith(preferredQuality: value ?? 'auto'),
                     ),
             ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              initialValue: currentCode,
+              dropdownColor: const Color(0xFF171B24),
+              decoration: InputDecoration(
+                labelText: s.t('settings.language'),
+                labelStyle: const TextStyle(color: Color(0xFF9CA3AF)),
+                prefixIcon: const Icon(Icons.language_rounded, color: Color(0xFF25D0AB)),
+                enabledBorder: const OutlineInputBorder(
+                  borderSide: BorderSide(color: Color(0xFF2B3140)),
+                ),
+                focusedBorder: const OutlineInputBorder(
+                  borderSide: BorderSide(color: Color(0xFF25D0AB)),
+                ),
+              ),
+              style: const TextStyle(color: Colors.white),
+              items: [
+                for (final item in AppLocale.values)
+                  DropdownMenuItem(value: item.code, child: Text(item.label)),
+              ],
+              onChanged: (code) {
+                if (code != null) localeController.setLocale(AppLocale.byCode(code).locale);
+              },
+            ),
             const SizedBox(height: 8),
             ListTile(
               contentPadding: EdgeInsets.zero,
               leading: const Icon(Icons.lock_reset_rounded, color: Color(0xFF25D0AB)),
-              title: const Text('修改密码', style: TextStyle(color: Colors.white)),
-              subtitle: const Text(
-                '验证当前密码后设置新密码',
-                style: TextStyle(color: Color(0xFF9CA3AF)),
+              title: Text(s.t('settings.changePassword'), style: const TextStyle(color: Colors.white)),
+              subtitle: Text(
+                s.t('settings.changePasswordSub'),
+                style: const TextStyle(color: Color(0xFF9CA3AF)),
               ),
               trailing: const Icon(Icons.chevron_right_rounded, color: Color(0xFF9CA3AF)),
               onTap: () => showChangePasswordSheet(context),
@@ -1018,17 +1064,18 @@ class _WatchSummaryCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = AppStrings.of(context);
     return _SectionCard(
-      title: '观看记录',
-      trailing: '继续观看',
+      title: s.t('center.history'),
+      trailing: s.t('center.continueWatch'),
       child: Row(
         children: [
           Expanded(
-            child: _MetricBox(label: '可观看', value: '$readyCount'),
+            child: _MetricBox(label: s.t('center.watchableShort'), value: '$readyCount'),
           ),
           const SizedBox(width: 10),
           Expanded(
-            child: _MetricBox(label: 'VIP 专属', value: '$vipCount'),
+            child: _MetricBox(label: s.t('center.vipExclusive'), value: '$vipCount'),
           ),
         ],
       ),
@@ -1044,9 +1091,10 @@ class _RecentOrdersCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = AppStrings.of(context);
     return _SectionCard(
-      title: '订单记录',
-      trailing: loading ? '加载中' : '最近订单',
+      title: s.t('center.orders'),
+      trailing: loading ? s.t('center.loadingShort') : s.t('center.recentOrder'),
       child: loading
           ? const Padding(
               padding: EdgeInsets.symmetric(vertical: 16),
@@ -1055,9 +1103,9 @@ class _RecentOrdersCard extends StatelessWidget {
               ),
             )
           : orders.isEmpty
-          ? const Padding(
-              padding: EdgeInsets.symmetric(vertical: 12),
-              child: Text('暂无订单', style: TextStyle(color: Color(0xFF9CA3AF))),
+          ? Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              child: Text(s.t('center.noOrders'), style: const TextStyle(color: Color(0xFF9CA3AF))),
             )
           : Column(
               children: [for (final order in orders) _OrderRow(order: order)],
@@ -1144,26 +1192,27 @@ class _SettingsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final s = AppStrings.of(context);
     return _SectionCard(
-      title: '设置',
-      trailing: '基础',
+      title: s.t('settings.title'),
+      trailing: s.t('settings.basic'),
       child: Column(
         children: [
-          const _SettingRow(
+          _SettingRow(
             icon: Icons.cleaning_services_outlined,
-            label: '清理缓存',
-            value: '可用',
+            label: s.t('settings.clearCache'),
+            value: s.t('settings.clearCacheValue'),
           ),
-          const _SettingRow(
+          _SettingRow(
             icon: Icons.info_outline_rounded,
-            label: '关于 App',
-            value: 'Go Movie',
+            label: s.t('settings.about'),
+            value: s.t('center.aboutValue'),
           ),
           const SizedBox(height: 8),
           OutlinedButton.icon(
             onPressed: onLogout,
             icon: const Icon(Icons.logout_rounded),
-            label: const Text('退出登录'),
+            label: Text(s.t('settings.logout')),
             style: OutlinedButton.styleFrom(
               foregroundColor: const Color(0xFFF87171),
               side: const BorderSide(color: Color(0x66F87171)),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/api_client.dart';
+import '../../core/l10n/app_strings.dart';
 
 /// Opens a modal sheet to change the signed-in user's password. Verifies the
 /// current password server-side and reports success/failure via a snackbar.
@@ -44,12 +45,13 @@ class _ChangePasswordFormState extends State<_ChangePasswordForm> {
   }
 
   Future<void> _submit() async {
+    final s = AppStrings.of(context);
     if (_next.text.length < 6) {
-      setState(() => _error = '新密码至少 6 位');
+      setState(() => _error = s.t('changePwd.errLen'));
       return;
     }
     if (_next.text != _confirm.text) {
-      setState(() => _error = '两次输入的新密码不一致');
+      setState(() => _error = s.t('changePwd.errMismatch'));
       return;
     }
     setState(() {
@@ -63,16 +65,16 @@ class _ChangePasswordFormState extends State<_ChangePasswordForm> {
       });
       if (!mounted) return;
       if (resp['code'] != 0) {
-        setState(() => _error = resp['msg']?.toString() ?? '修改失败');
+        setState(() => _error = resp['msg']?.toString() ?? s.t('changePwd.failed'));
         return;
       }
       Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('密码已修改'), behavior: SnackBarBehavior.floating),
+        SnackBar(content: Text(s.t('changePwd.success')), behavior: SnackBarBehavior.floating),
       );
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = '修改失败: $e');
+      setState(() => _error = '${s.t('changePwd.failed')}: $e');
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -80,6 +82,7 @@ class _ChangePasswordFormState extends State<_ChangePasswordForm> {
 
   @override
   Widget build(BuildContext context) {
+    final s = AppStrings.of(context);
     return SafeArea(
       top: false,
       child: Padding(
@@ -88,16 +91,16 @@ class _ChangePasswordFormState extends State<_ChangePasswordForm> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Text(
-              '修改密码',
-              style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w900),
+            Text(
+              s.t('changePwd.title'),
+              style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w900),
             ),
             const SizedBox(height: 16),
-            _field(_old, '当前密码'),
+            _field(_old, s.t('changePwd.old')),
             const SizedBox(height: 12),
-            _field(_next, '新密码（至少 6 位）'),
+            _field(_next, s.t('changePwd.new')),
             const SizedBox(height: 12),
-            _field(_confirm, '确认新密码'),
+            _field(_confirm, s.t('changePwd.confirm')),
             if (_error != null) ...[
               const SizedBox(height: 12),
               Text(_error!, style: const TextStyle(color: Color(0xFFFCA5A5), fontSize: 13)),
@@ -118,7 +121,7 @@ class _ChangePasswordFormState extends State<_ChangePasswordForm> {
                       height: 18,
                       child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF101318)),
                     )
-                  : const Text('保存'),
+                  : Text(s.t('changePwd.submit')),
             ),
           ],
         ),

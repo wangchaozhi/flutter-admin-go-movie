@@ -35,11 +35,13 @@ import { AuditLogsSection } from './features/audit'
 import { CategoryManagementSection } from './features/categories'
 import { CommentModerationSection } from './features/comments'
 import { DashboardSection } from './features/dashboard'
+import { InviteCodeManagementSection } from './features/inviteCodes'
 import { MenuManagementSection, buildMenuTree } from './features/menus'
 import type { MenuNodeType } from './features/menus'
 import { PaymentManagementSection } from './features/payments'
 import { RoleManagementSection } from './features/roles'
 import { UserManagementSection } from './features/users'
+import { useI18n, LanguageSwitcher } from './i18n'
 import {
   VideoManagementSection,
   VideoTranscodeHistorySection,
@@ -106,6 +108,7 @@ const tabs: NavItem[] = [
     path: '/app',
     children: [
       { key: 'app-users', label: '用户', iconCode: 'Users', path: '/app-users' },
+      { key: 'invite-codes', label: '邀请码', iconCode: 'Ticket', path: '/invite-codes' },
     ],
   },
   {
@@ -123,67 +126,17 @@ const tabs: NavItem[] = [
   { key: 'payments', label: '支付', iconCode: 'CreditCard', path: '/payments' },
 ]
 
-const pageHeaders: Record<Entity, { eyebrow: string; title: string; subtitle: string }> = {
-  dashboard: {
-    eyebrow: '概览',
-    title: '仪表盘',
-    subtitle: '查看内容、用户、订单和收入的整体数据。',
-  },
-  users: {
-    eyebrow: '权限中心',
-    title: '管理员',
-    subtitle: '维护后台登录账号、昵称和角色分配。',
-  },
-  roles: {
-    eyebrow: '权限中心',
-    title: '角色',
-    subtitle: '配置角色可访问的菜单和按钮权限。',
-  },
-  menus: {
-    eyebrow: '权限中心',
-    title: '菜单',
-    subtitle: '维护后台导航结构、路由和权限标识。',
-  },
-  'app-users': {
-    eyebrow: '用户中心',
-    title: 'App 用户',
-    subtitle: '管理移动端用户资料、状态和登录密码。',
-  },
-  categories: {
-    eyebrow: '内容中心',
-    title: '类别',
-    subtitle: '整理视频分类和前台内容筛选入口。',
-  },
-  videos: {
-    eyebrow: '内容中心',
-    title: '视频',
-    subtitle: '管理视频资料、封面、上传和转码状态。',
-  },
-  'video-transcodes': {
-    eyebrow: '内容中心',
-    title: '转码历史',
-    subtitle: '查看视频转码任务、清晰度进度和失败重试记录。',
-  },
-  'video-extracts': {
-    eyebrow: '内容中心',
-    title: '提取历史',
-    subtitle: '查看音轨/字幕提取任务、轨道数量和失败记录。',
-  },
-  payments: {
-    eyebrow: '商业中心',
-    title: '支付',
-    subtitle: '查看套餐、订单和支付处理状态。',
-  },
-  comments: {
-    eyebrow: '内容中心',
-    title: '评论',
-    subtitle: '查看用户评论与评分，删除违规内容。',
-  },
-  'audit-logs': {
-    eyebrow: '安全中心',
-    title: '审计日志',
-    subtitle: '查看后台增删改操作的执行人、对象和结果。',
-  },
+// Page header (eyebrow/title/subtitle) is resolved from the i18n dictionary by
+// entity key so it follows the active language. See src/i18n/messages.ts.
+function getPageHeader(
+  entity: Entity,
+  t: (key: string, vars?: Record<string, string | number>) => string,
+) {
+  return {
+    eyebrow: t(`headers.${entity}.eyebrow`),
+    title: t(`headers.${entity}.title`),
+    subtitle: t(`headers.${entity}.subtitle`),
+  }
 }
 
 const routeMetaByPath = new Map<string, { key: Entity; label: string; iconCode: string }>([
@@ -192,6 +145,7 @@ const routeMetaByPath = new Map<string, { key: Entity; label: string; iconCode: 
   ['/system/role', { key: 'roles', label: '角色', iconCode: 'Shield' }],
   ['/system/menu', { key: 'menus', label: '菜单', iconCode: 'Menu' }],
   ['/app-users', { key: 'app-users', label: '用户', iconCode: 'Users' }],
+  ['/invite-codes', { key: 'invite-codes', label: '邀请码', iconCode: 'Ticket' }],
   ['/videos', { key: 'videos', label: '视频列表', iconCode: 'Clapperboard' }],
   ['/categories', { key: 'categories', label: '类别', iconCode: 'FolderOpen' }],
   ['/videos/transcodes', { key: 'video-transcodes', label: '转码历史', iconCode: 'History' }],
@@ -230,6 +184,7 @@ const entityKeys = new Set<Entity>([
   'video-extracts',
   'categories',
   'app-users',
+  'invite-codes',
   'payments',
   'comments',
   'audit-logs',
@@ -356,12 +311,6 @@ const themeOrder: ThemeMode[] = ['system', 'light', 'dark']
 function getStoredTheme(): ThemeMode {
   const value = localStorage.getItem(adminThemeKey)
   return value === 'light' || value === 'dark' || value === 'system' ? value : 'system'
-}
-
-function getThemeLabel(theme: ThemeMode) {
-  if (theme === 'light') return '明亮'
-  if (theme === 'dark') return '暗色'
-  return '跟随系统'
 }
 
 function getThemeIcon(theme: ThemeMode) {
@@ -502,6 +451,7 @@ function AdminLogin({
   onThemeChange: () => void
   onLoggedIn: (session: AdminSession) => void
 }) {
+  const { t } = useI18n()
   const [username, setUsername] = useState(() => localStorage.getItem(adminUsernameKey) ?? 'admin')
   const [password, setPassword] = useState(() => localStorage.getItem(adminPasswordKey) ?? '')
   const [remember, setRemember] = useState(() => localStorage.getItem(adminRememberKey) === 'true')
@@ -511,7 +461,7 @@ function AdminLogin({
   async function login(event: FormEvent) {
     event.preventDefault()
     if (!username.trim() || !password) {
-      setError('请输入用户名和密码')
+      setError(t('login.errCredentials'))
       return
     }
     setLoading(true)
@@ -532,7 +482,7 @@ function AdminLogin({
       }
       onLoggedIn(data)
     } catch (err) {
-      setError(err instanceof Error ? err.message : '登录失败')
+      setError(err instanceof Error ? err.message : t('login.errFailed'))
     } finally {
       setLoading(false)
     }
@@ -540,22 +490,25 @@ function AdminLogin({
 
   return (
     <main className="login-shell">
-      <ThemeButton theme={theme} onThemeChange={onThemeChange} className="login-theme" />
+      <div className="login-toolbar">
+        <LanguageSwitcher />
+        <ThemeButton theme={theme} onThemeChange={onThemeChange} />
+      </div>
       <form className="login-card" onSubmit={login}>
         <span className="brand-mark">
           <PanelLeft size={18} strokeWidth={2.2} />
         </span>
         <div className="login-heading">
-          <p className="eyebrow">Admin Go</p>
-          <h1>后台登录</h1>
-          <p>使用角色和按钮权限管理后台操作。</p>
+          <p className="eyebrow">{t('login.eyebrow')}</p>
+          <h1>{t('login.title')}</h1>
+          <p>{t('login.subtitle')}</p>
         </div>
         <label>
-          用户名
+          {t('login.username')}
           <input value={username} onChange={(event) => setUsername(event.target.value)} />
         </label>
         <label>
-          密码
+          {t('login.password')}
           <input
             type="password"
             value={password}
@@ -568,12 +521,12 @@ function AdminLogin({
             type="checkbox"
             onChange={(event) => setRemember(event.target.checked)}
           />
-          <span>记住密码</span>
+          <span>{t('login.remember')}</span>
         </label>
         {error && <span className="status error">{error}</span>}
         <button className="primary-button" disabled={loading} type="submit">
           <KeyRound size={15} />
-          {loading ? '登录中...' : '登录'}
+          {loading ? t('login.signingIn') : t('login.signIn')}
         </button>
       </form>
     </main>
@@ -593,6 +546,7 @@ function AdminDashboard({
   onThemeChange: () => void
   onLogout: () => void
 }) {
+  const { t } = useI18n()
   const [active, setActive] = useState<Entity>('users')
   const [users, setUsers] = useState<User[]>([])
   const [roles, setRoles] = useState<Role[]>([])
@@ -639,8 +593,21 @@ function AdminDashboard({
       }),
     [visibleTabs],
   )
-  const activeHeader = pageHeaders[active]
+  const activeHeader = getPageHeader(active, t)
   const can = (permission: string) => permissions.has(permission)
+
+  // Nav labels follow the active language for known routes/entities, falling
+  // back to the (DB-supplied) label for any custom menu without a translation.
+  const navGroupLabel = (path: string, fallback: string) => {
+    const key = `navGroup.${path}`
+    const value = t(key)
+    return value === key ? fallback : value
+  }
+  const navEntityLabel = (entity: string, fallback: string) => {
+    const key = `navEntity.${entity}`
+    const value = t(key)
+    return value === key ? fallback : value
+  }
 
   function toggleNavGroup(key: string) {
     setOpenNavGroups((current) => ({ ...current, [key]: !(current[key] ?? true) }))
@@ -889,16 +856,21 @@ function AdminDashboard({
           </span>
           <div>
             <strong>Admin Go</strong>
-            <small>系统管理</small>
+            <small>{t('brand.subtitle')}</small>
           </div>
         </div>
-        <nav className="nav-tabs" aria-label="系统管理">
+        <nav className="nav-tabs" aria-label={t('brand.subtitle')}>
           {visibleTabs.map((tab) => {
             const Icon = resolveIcon(tab.iconCode)
             const children = tab.children ?? []
             const activeChild = children.some((child) => child.key === active)
             const isGroup = children.length > 0
             const groupOpen = isGroup ? openNavGroups[tab.key] ?? true : false
+            const tabLabel = isGroup
+              ? navGroupLabel(tab.path, tab.label)
+              : isEntityKey(tab.key)
+                ? navEntityLabel(tab.key, tab.label)
+                : tab.label
             return (
               <div className="nav-group" key={tab.key}>
                 <button
@@ -916,7 +888,7 @@ function AdminDashboard({
                   }}
                 >
                   <Icon size={16} />
-                  <span>{tab.label}</span>
+                  <span>{tabLabel}</span>
                   <ChevronRight className={groupOpen ? 'nav-chevron open' : 'nav-chevron'} size={15} />
                 </button>
                 {children.length > 0 && groupOpen && (
@@ -931,7 +903,7 @@ function AdminDashboard({
                           onClick={() => setActive(child.key)}
                         >
                           <ChildIcon size={14} />
-                          <span>{child.label}</span>
+                          <span>{navEntityLabel(child.key, child.label)}</span>
                         </button>
                       )
                     })}
@@ -953,8 +925,9 @@ function AdminDashboard({
           <div className="toolbar-actions">
             <button className="ghost-button" type="button" onClick={loadAll}>
               <RefreshCw size={15} />
-              刷新
+              {t('common.refresh')}
             </button>
+            <LanguageSwitcher />
             <ThemeButton theme={theme} onThemeChange={onThemeChange} />
             <div className="user-menu" ref={userMenuRef}>
               <button
@@ -964,7 +937,7 @@ function AdminDashboard({
                 onClick={() => setUserMenuOpen((open) => !open)}
               >
                 {avatarPreview ? (
-                  <img alt={`${session.username} 头像`} src={avatarPreview} />
+                  <img alt={session.username} src={avatarPreview} />
                 ) : (
                   <BadgeCheck size={14} />
                 )}
@@ -975,7 +948,7 @@ function AdminDashboard({
                 <div className="user-menu-popover">
                   <label className="user-menu-item">
                     <ImageUp size={15} />
-                    更换头像
+                    {t('userMenu.changeAvatar')}
                     <input
                       accept="image/png,image/jpeg"
                       type="file"
@@ -987,7 +960,7 @@ function AdminDashboard({
                   </label>
                   <button className="user-menu-item danger" type="button" onClick={onLogout}>
                     <LogOut size={15} />
-                    退出登录
+                    {t('userMenu.logout')}
                   </button>
                 </div>
               )}
@@ -997,7 +970,7 @@ function AdminDashboard({
 
         <div className="status-row">
           <span className={error ? 'status error' : 'status'}>{error || notice}</span>
-          {loading && <span className="status subtle">加载中...</span>}
+          {loading && <span className="status subtle">{t('common.loading')}</span>}
         </div>
 
         {active === 'dashboard' && (
@@ -1051,6 +1024,10 @@ function AdminDashboard({
           <AppUserManagementSection token={session.token} can={can} />
         )}
 
+        {active === 'invite-codes' && (
+          <InviteCodeManagementSection token={session.token} can={can} />
+        )}
+
         {active === 'categories' && (
           <CategoryManagementSection token={session.token} can={can} />
         )}
@@ -1098,16 +1075,18 @@ function ThemeButton({
   onThemeChange: () => void
   className?: string
 }) {
+  const { t } = useI18n()
   const Icon = getThemeIcon(theme)
+  const label = t(`theme.${theme}`)
   return (
     <button
       className={`ghost-button theme-button ${className}`.trim()}
       type="button"
-      title={`主题：${getThemeLabel(theme)}`}
+      title={`${t('theme.label')}: ${label}`}
       onClick={onThemeChange}
     >
       <Icon size={15} />
-      <span>{getThemeLabel(theme)}</span>
+      <span>{label}</span>
     </button>
   )
 }

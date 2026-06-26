@@ -140,19 +140,40 @@ func (AdminMenu) TableName() string {
 }
 
 type MobileUser struct {
-	ID        int        `gorm:"primaryKey;column:id"   json:"id"`
-	Username  string     `gorm:"column:username"        json:"username"`
-	Password  string     `gorm:"column:password"        json:"-"`
-	Nickname  string     `gorm:"column:nickname"        json:"nickname"`
-	Email     string     `gorm:"column:email"           json:"email"`
-	Status    string     `gorm:"column:status"          json:"status"`
-	VIPUntil  *time.Time `gorm:"column:vip_until"       json:"vip_until"`
-	CreatedAt time.Time  `gorm:"column:created_at"      json:"created_at"`
-	UpdatedAt time.Time  `gorm:"column:updated_at"      json:"updated_at"`
+	ID         int        `gorm:"primaryKey;column:id"   json:"id"`
+	Username   string     `gorm:"column:username"        json:"username"`
+	Password   string     `gorm:"column:password"        json:"-"`
+	Nickname   string     `gorm:"column:nickname"        json:"nickname"`
+	Email      string     `gorm:"column:email"           json:"email"`
+	Status     string     `gorm:"column:status"          json:"status"`
+	VIPUntil   *time.Time `gorm:"column:vip_until"       json:"vip_until"`
+	InviteCode string     `gorm:"column:invite_code"     json:"invite_code"`
+	CreatedAt  time.Time  `gorm:"column:created_at"      json:"created_at"`
+	UpdatedAt  time.Time  `gorm:"column:updated_at"      json:"updated_at"`
 }
 
 func (MobileUser) TableName() string {
 	return "mobile_users"
+}
+
+// InviteCode is an admin-issued sign-up token. MaxUses == 0 means unlimited;
+// otherwise registration is allowed while UsedCount < MaxUses. Status is
+// "active" or "disabled".
+type InviteCode struct {
+	ID        int        `gorm:"primaryKey;column:id"   json:"id"`
+	Code      string     `gorm:"column:code"            json:"code"`
+	MaxUses   int        `gorm:"column:max_uses"        json:"max_uses"`
+	UsedCount int        `gorm:"column:used_count"      json:"used_count"`
+	Status    string     `gorm:"column:status"          json:"status"`
+	Note      string     `gorm:"column:note"            json:"note"`
+	CreatedBy string     `gorm:"column:created_by"      json:"created_by"`
+	ExpiresAt *time.Time `gorm:"column:expires_at"      json:"expires_at"`
+	CreatedAt time.Time  `gorm:"column:created_at"      json:"created_at"`
+	UpdatedAt time.Time  `gorm:"column:updated_at"      json:"updated_at"`
+}
+
+func (InviteCode) TableName() string {
+	return "invite_codes"
 }
 
 func Init(cfg config.Config) error {

@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:forui/forui.dart';
 
 import '../core/api_client.dart';
+import '../core/l10n/app_strings.dart';
+import '../core/l10n/locale_controller.dart';
 import '../core/session.dart';
 import '../features/auth/mobile_login_page.dart';
 import '../features/auth/register_page.dart';
@@ -34,36 +37,48 @@ class MobileApp extends StatelessWidget {
       );
     };
 
-    return MaterialApp(
-      title: 'Go Movie',
-      debugShowCheckedModeBanner: false,
-      navigatorKey: navigatorKey,
-      localizationsDelegates: FLocalizations.localizationsDelegates,
-      supportedLocales: FLocalizations.supportedLocales,
-      theme: foruiTheme.toApproximateMaterialTheme().copyWith(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF25D0AB),
-          brightness: Brightness.light,
+    // Rebuilds the whole app when the language changes so every Localizations
+    // consumer picks up the new locale immediately.
+    return ValueListenableBuilder<Locale>(
+      valueListenable: localeController,
+      builder: (context, locale, _) => MaterialApp(
+        title: 'Go Movie',
+        debugShowCheckedModeBanner: false,
+        navigatorKey: navigatorKey,
+        locale: locale,
+        localizationsDelegates: [
+          AppStrings.delegate,
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+          ...FLocalizations.localizationsDelegates,
+        ],
+        supportedLocales: AppLocale.supportedLocales,
+        theme: foruiTheme.toApproximateMaterialTheme().copyWith(
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: const Color(0xFF25D0AB),
+            brightness: Brightness.light,
+          ),
+          scaffoldBackgroundColor: const Color(0xFFF6F7FB),
         ),
-        scaffoldBackgroundColor: const Color(0xFFF6F7FB),
+        builder: (context, child) => FTheme(data: foruiTheme, child: child!),
+        home: const _AuthGate(),
+        routes: {
+          '/login': (_) => const MobileLoginPage(),
+          '/register': (_) => const RegisterPage(),
+          '/home': (_) => const MobileHomePage(),
+          '/vip': (_) => const VipPage(),
+        },
+        onGenerateRoute: (settings) {
+          if (settings.name == '/player') {
+            final video = settings.arguments as model.Video;
+            return MaterialPageRoute(
+              builder: (_) => VideoPlayerPage(video: video),
+            );
+          }
+          return null;
+        },
       ),
-      builder: (context, child) => FTheme(data: foruiTheme, child: child!),
-      home: const _AuthGate(),
-      routes: {
-        '/login': (_) => const MobileLoginPage(),
-        '/register': (_) => const RegisterPage(),
-        '/home': (_) => const MobileHomePage(),
-        '/vip': (_) => const VipPage(),
-      },
-      onGenerateRoute: (settings) {
-        if (settings.name == '/player') {
-          final video = settings.arguments as model.Video;
-          return MaterialPageRoute(
-            builder: (_) => VideoPlayerPage(video: video),
-          );
-        }
-        return null;
-      },
     );
   }
 }

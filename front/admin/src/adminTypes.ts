@@ -1,4 +1,17 @@
-export type Entity = 'dashboard' | 'users' | 'roles' | 'menus' | 'videos' | 'video-transcodes' | 'video-extracts' | 'categories' | 'app-users' | 'payments' | 'comments' | 'audit-logs'
+export type Entity = 'dashboard' | 'users' | 'roles' | 'menus' | 'videos' | 'video-transcodes' | 'video-extracts' | 'categories' | 'app-users' | 'invite-codes' | 'payments' | 'comments' | 'audit-logs'
+
+export type InviteCode = {
+  id: number
+  code: string
+  max_uses: number
+  used_count: number
+  status: 'active' | 'disabled'
+  note: string
+  created_by: string
+  expires_at: string | null
+  created_at: string
+  updated_at: string
+}
 
 export type AuditLog = {
   id: number

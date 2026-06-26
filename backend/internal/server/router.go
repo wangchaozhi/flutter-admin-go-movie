@@ -158,6 +158,14 @@ func NewRouter() http.Handler {
 		http.MethodDelete: "comment:delete",
 	}, http.HandlerFunc(video.AdminDeleteCommentHandler)))
 
+	// admin invite codes (list open to any admin; generate/disable gated)
+	mux.Handle("/api/admin/invite-codes", requirePerm(map[string]string{
+		http.MethodPost: "invite:create",
+	}, http.HandlerFunc(admin.InviteCodesHandler)))
+	mux.Handle("/api/admin/invite-codes/", requirePerm(map[string]string{
+		http.MethodPost: "invite:disable",
+	}, http.HandlerFunc(admin.InviteCodeByIDHandler)))
+
 	// admin audit trail (read-only)
 	mux.Handle("/api/admin/audit-logs", requireAdminAuth(http.HandlerFunc(admin.AuditLogsHandler)))
 

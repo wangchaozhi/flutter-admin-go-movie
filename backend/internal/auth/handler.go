@@ -194,10 +194,11 @@ func MobileRegisterHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-		Nickname string `json:"nickname"`
-		Email    string `json:"email"`
+		Username   string `json:"username"`
+		Password   string `json:"password"`
+		Nickname   string `json:"nickname"`
+		Email      string `json:"email"`
+		InviteCode string `json:"invite_code"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "invalid body"})
@@ -206,6 +207,7 @@ func MobileRegisterHandler(w http.ResponseWriter, r *http.Request) {
 	req.Username = strings.TrimSpace(req.Username)
 	req.Nickname = strings.TrimSpace(req.Nickname)
 	req.Email = strings.TrimSpace(req.Email)
+	req.InviteCode = strings.ToUpper(strings.TrimSpace(req.InviteCode))
 	if n := len([]rune(req.Username)); n < 3 || n > 32 {
 		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "用户名长度需为 3-32 个字符"})
 		return
@@ -218,6 +220,10 @@ func MobileRegisterHandler(w http.ResponseWriter, r *http.Request) {
 		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "邮箱格式不正确"})
 		return
 	}
+	if req.InviteCode == "" {
+		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "请输入邀请码"})
+		return
+	}
 
 	var count int64
 	if err := store.DB().Model(&store.MobileUser{}).Where("username = ?", req.Username).Count(&count).Error; err != nil {
@@ -226,6 +232,13 @@ func MobileRegisterHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if count > 0 {
 		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "用户名已被占用"})
+		return
+	}
+
+	// Invite-only sign-up: atomically consume one use of the code. Done after the
+	// username check so a taken username doesn't burn an invite.
+	if err := store.ConsumeInviteCode(req.InviteCode); err != nil {
+		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: inviteCodeErrorMessage(err)})
 		return
 	}
 
@@ -240,13 +253,14 @@ func MobileRegisterHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now()
 	user := store.MobileUser{
-		Username:  req.Username,
-		Password:  hashed,
-		Nickname:  nickname,
-		Email:     req.Email,
-		Status:    "active",
-		CreatedAt: now,
-		UpdatedAt: now,
+		Username:   req.Username,
+		Password:   hashed,
+		Nickname:   nickname,
+		Email:      req.Email,
+		Status:     "active",
+		InviteCode: req.InviteCode,
+		CreatedAt:  now,
+		UpdatedAt:  now,
 	}
 	if err := store.DB().Create(&user).Error; err != nil {
 		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
@@ -308,6 +322,22 @@ func MobileChangePasswordHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok"})
+}
+
+// inviteCodeErrorMessage maps a store invite-code error to a user-facing message.
+func inviteCodeErrorMessage(err error) string {
+	switch {
+	case errors.Is(err, store.ErrInviteRequired):
+		return "请输入邀请码"
+	case errors.Is(err, store.ErrInviteDisabled):
+		return "邀请码已停用"
+	case errors.Is(err, store.ErrInviteExpired):
+		return "邀请码已过期"
+	case errors.Is(err, store.ErrInviteExhausted):
+		return "邀请码使用次数已达上限"
+	default:
+		return "邀请码无效"
+	}
 }
 
 func currentMobileUserID(r *http.Request) (int, bool) {

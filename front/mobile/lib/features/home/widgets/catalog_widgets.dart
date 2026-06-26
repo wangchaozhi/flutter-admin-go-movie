@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/l10n/app_strings.dart';
 import '../../../models/video.dart';
 import '../models/home_models.dart';
 
@@ -1109,11 +1110,12 @@ class HomeBottomNav extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const items = [
-      (Icons.home_rounded, '首页'),
-      (Icons.explore_rounded, '发现'),
-      (Icons.bookmark_rounded, '片单'),
-      (Icons.person_rounded, '我的'),
+    final s = AppStrings.of(context);
+    final items = [
+      (Icons.home_rounded, s.t('nav.home')),
+      (Icons.explore_rounded, s.t('nav.discover')),
+      (Icons.bookmark_rounded, s.t('nav.library')),
+      (Icons.person_rounded, s.t('nav.mine')),
     ];
 
     return NavigationBar(

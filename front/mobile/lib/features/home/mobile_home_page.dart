@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/api_client.dart';
+import '../../core/l10n/app_strings.dart';
 import '../../core/session.dart';
 import '../../models/video.dart';
 import 'models/home_models.dart';
@@ -203,14 +204,14 @@ class _MobileHomePageState extends State<MobileHomePage> {
         });
       } else {
         setState(() {
-          _profileError = resp['msg']?.toString() ?? '资料加载失败';
+          _profileError = resp['msg']?.toString() ?? AppStrings.of(context).t('home.profileLoadFailed');
           _loadingProfile = false;
         });
       }
     } catch (_) {
       if (mounted) {
         setState(() {
-          _profileError = '资料加载失败';
+          _profileError = AppStrings.of(context).t('home.profileLoadFailed');
           _loadingProfile = false;
         });
       }
@@ -390,7 +391,8 @@ class _MobileHomePageState extends State<MobileHomePage> {
 
   @override
   Widget build(BuildContext context) {
-    final tabs = ['全部', 'VIP', ..._categories.map((c) => c.name)];
+    final s = AppStrings.of(context);
+    final tabs = [s.t('home.all'), 'VIP', ..._categories.map((c) => c.name)];
     final featuredVideo = _videos.where((v) => v.isReady).firstOrNull;
     final favoriteVideoIds = _favorites.map((entry) => entry.video.id).toSet();
 
@@ -482,7 +484,7 @@ class _MobileHomePageState extends State<MobileHomePage> {
           if (_selectedCategoryIndex == 0) ...[
             SliverToBoxAdapter(
               child: VideoRail(
-                title: '继续观看',
+                title: s.t('home.continueWatch'),
                 videos: _railContinue,
                 onOpenVideo: _openVideo,
                 progress: _continueProgress,
@@ -490,21 +492,21 @@ class _MobileHomePageState extends State<MobileHomePage> {
             ),
             SliverToBoxAdapter(
               child: VideoRail(
-                title: '热门',
+                title: s.t('home.popular'),
                 videos: _railPopular,
                 onOpenVideo: _openVideo,
               ),
             ),
             SliverToBoxAdapter(
               child: VideoRail(
-                title: '最新上架',
+                title: s.t('home.newArrivals'),
                 videos: _railLatest,
                 onOpenVideo: _openVideo,
               ),
             ),
             SliverToBoxAdapter(
               child: VideoRail(
-                title: 'VIP 精选',
+                title: s.t('home.vipPicks'),
                 videos: _railVip,
                 onOpenVideo: _openVideo,
               ),
@@ -525,7 +527,7 @@ class _MobileHomePageState extends State<MobileHomePage> {
                 padding: const EdgeInsets.all(48),
                 child: Center(
                   child: Text(
-                    _selectedCategoryIndex == 1 ? '暂无 VIP 影片' : '暂无视频',
+                    _selectedCategoryIndex == 1 ? s.t('home.emptyVip') : s.t('home.emptyVideos'),
                     style: const TextStyle(color: Color(0xFF9CA3AF)),
                   ),
                 ),

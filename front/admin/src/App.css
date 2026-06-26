@@ -97,6 +97,37 @@
   right: 18px;
 }
 
+.login-toolbar {
+  position: fixed;
+  top: 18px;
+  right: 18px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+/* Language picker styled to match the ghost buttons it sits beside. */
+.lang-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.lang-switcher select {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  outline: none;
+  padding-right: 2px;
+}
+
+.lang-switcher select option {
+  color: initial;
+}
+
 .login-card {
   width: min(408px, 100%);
   display: grid;
