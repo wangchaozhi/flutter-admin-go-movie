@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:media_kit/media_kit.dart';
 
@@ -135,6 +136,12 @@ class _DanmakuOverlayState extends State<DanmakuOverlay>
 
   Size _size = Size.zero;
 
+  // When a bullet is tapped it is frozen in place (the video keeps playing) and
+  // an action card is shown anchored to it. Dismissing resumes it seamlessly.
+  _ActiveBullet? _frozen;
+  Offset _frozenPos = Offset.zero;
+  Timer? _cardTimer;
+
   @override
   void initState() {
     super.initState();
@@ -166,6 +173,7 @@ class _DanmakuOverlayState extends State<DanmakuOverlay>
     _ticker.dispose();
     _posSub?.cancel();
     _playingSub?.cancel();
+    _cardTimer?.cancel();
     _clock.dispose();
     super.dispose();
   }
@@ -231,6 +239,13 @@ class _DanmakuOverlayState extends State<DanmakuOverlay>
       _topLaneUntil.clear();
       _bottomLaneUntil.clear();
       _seekCursorTo(posMs);
+      if (_frozen != null) {
+        _cardTimer?.cancel();
+        // The frozen bullet was cleared by the seek; close its card.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) setState(() => _frozen = null);
+        });
+      }
     } else {
       while (_nextIndex < _bullets.length &&
           _bullets[_nextIndex].timeMs <= posMs) {
@@ -247,9 +262,11 @@ class _DanmakuOverlayState extends State<DanmakuOverlay>
     if (_playing && deltaMs > 0) {
       _danmuClockMs += deltaMs;
     }
-    // Drop bullets that have left the screen.
+    // Drop bullets that have left the screen, but never the frozen one (its card
+    // is open).
     if (_active.isNotEmpty) {
-      _active.removeWhere((b) => b.isExpired(_danmuClockMs, _size.width));
+      _active.removeWhere((b) =>
+          !identical(b, _frozen) && b.isExpired(_danmuClockMs, _size.width));
     }
     _clock.value = _danmuClockMs;
   }
@@ -417,22 +434,213 @@ class _DanmakuOverlayState extends State<DanmakuOverlay>
     }
   }
 
+  // Current on-screen rect of a bullet, used for both hit-testing and anchoring
+  // the action card.
+  Rect _bulletRect(_ActiveBullet b) {
+    if (identical(b, _frozen)) {
+      return Rect.fromLTWH(_frozenPos.dx, _frozenPos.dy, b.width, _laneHeight);
+    }
+    double x;
+    double y;
+    if (b.mode == 0) {
+      x = b.scrollX(_danmuClockMs, _size.width);
+      y = 4 + b.lane * _laneHeight;
+    } else if (b.mode == 1) {
+      x = (_size.width - b.width) / 2;
+      y = 4 + b.lane * _laneHeight;
+    } else {
+      x = (_size.width - b.width) / 2;
+      y = _size.height - 8 - (b.lane + 1) * _laneHeight;
+    }
+    return Rect.fromLTWH(x, y, b.width, _laneHeight);
+  }
+
+  // Topmost bullet under a point (later-drawn bullets win), with a small
+  // tap-tolerance inflation. Returns null when the point misses every bullet.
+  _ActiveBullet? _bulletAt(Offset p) {
+    for (int i = _active.length - 1; i >= 0; i--) {
+      final b = _active[i];
+      if (_bulletRect(b).inflate(4).contains(p)) return b;
+    }
+    return null;
+  }
+
+  void _onTapBullet(Offset pos) {
+    final b = _bulletAt(pos);
+    if (b == null) return;
+    final rect = _bulletRect(b);
+    setState(() {
+      _frozen = b;
+      _frozenPos = Offset(rect.left, rect.top);
+    });
+    _restartCardTimer();
+  }
+
+  void _restartCardTimer() {
+    _cardTimer?.cancel();
+    _cardTimer = Timer(const Duration(seconds: 5), _dismissCard);
+  }
+
+  void _dismissCard() {
+    _cardTimer?.cancel();
+    final b = _frozen;
+    if (b != null && _active.contains(b)) {
+      if (b.mode == 0) {
+        // Resume scrolling seamlessly from the frozen x position.
+        final travel = _size.width + b.width;
+        final p = (_size.width - _frozenPos.dx) / travel;
+        b.startClock = _danmuClockMs - p * _ActiveBullet._scrollDurationMs;
+      } else {
+        b.startClock = _danmuClockMs; // restart the dwell for a fixed bullet
+      }
+    }
+    if (mounted) {
+      setState(() => _frozen = null);
+    } else {
+      _frozen = null;
+    }
+  }
+
+  Future<void> _likeFrozen(_ActiveBullet b) async {
+    final err = await _toggleLike(b.item);
+    if (!mounted) return;
+    if (err != null) {
+      _snack(err);
+      return;
+    }
+    setState(() {}); // refresh the card's heart + count
+    _restartCardTimer();
+  }
+
+  Future<void> _deleteFrozen(_ActiveBullet b) async {
+    final err = await _deleteOwn(b.item);
+    if (!mounted) return;
+    if (err != null) {
+      _snack(err);
+      return;
+    }
+    _dismissCard();
+  }
+
+  void _snack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
+
   @override
   Widget build(BuildContext context) {
     if (!widget.enabled) return const SizedBox.shrink();
-    return IgnorePointer(
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          _size = Size(constraints.maxWidth, constraints.maxHeight);
-          return CustomPaint(
-            size: _size,
-            painter: _DanmakuPainter(
-              repaint: _clock,
-              active: _active,
-              clockProvider: () => _danmuClockMs,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        _size = Size(constraints.maxWidth, constraints.maxHeight);
+        final showCard = _frozen != null && _active.contains(_frozen);
+        return Stack(
+          children: [
+            // Bullet layer: consumes a tap only when it lands on a bullet
+            // (see _DanmakuHitTarget); a miss passes through to the player so
+            // tap-to-toggle-controls keeps working.
+            _DanmakuHitTarget(
+              hitTester: (pos) => _bulletAt(pos) != null,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTapUp: (details) => _onTapBullet(details.localPosition),
+                child: CustomPaint(
+                  size: _size,
+                  painter: _DanmakuPainter(
+                    repaint: _clock,
+                    active: _active,
+                    clockProvider: () => _danmuClockMs,
+                    frozen: _frozen,
+                    frozenPos: _frozenPos,
+                  ),
+                ),
+              ),
             ),
-          );
-        },
+            if (showCard) ...[
+              Positioned.fill(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: _dismissCard,
+                ),
+              ),
+              _buildActionCard(_frozen!),
+            ],
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildActionCard(_ActiveBullet b) {
+    const cardW = 170.0;
+    const cardH = 44.0;
+    final maxLeft = (_size.width - cardW - 8).clamp(8.0, double.infinity);
+    final left = _frozenPos.dx.clamp(8.0, maxLeft);
+    double top = _frozenPos.dy - cardH - 8;
+    if (top < 8) top = _frozenPos.dy + _laneHeight + 8;
+    final isOwn = _currentUserId != null && b.item.userId == _currentUserId;
+    return Positioned(
+      left: left,
+      top: top,
+      child: Material(
+        color: Colors.transparent,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: const Color(0xF21A1F28),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: const Color(0xFF2B3140)),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _cardButton(
+                  icon: b.item.liked ? Icons.favorite : Icons.favorite_border,
+                  iconColor: b.item.liked
+                      ? const Color(0xFFFF5A79)
+                      : Colors.white,
+                  label: '${b.item.likeCount}',
+                  onTap: () => _likeFrozen(b),
+                ),
+                if (isOwn)
+                  _cardButton(
+                    icon: Icons.delete_outline,
+                    iconColor: Colors.white,
+                    label: '删除',
+                    onTap: () => _deleteFrozen(b),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _cardButton({
+    required IconData icon,
+    required Color iconColor,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 18, color: iconColor),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: const TextStyle(color: Colors.white, fontSize: 13),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -444,7 +652,7 @@ class _ActiveBullet {
   double width;
   final int mode; // 0 scroll, 1 top, 2 bottom
   final int lane;
-  final double startClock;
+  double startClock;
 
   _ActiveBullet.scroll({
     required this.item,
@@ -488,11 +696,15 @@ class _ActiveBullet {
 class _DanmakuPainter extends CustomPainter {
   final List<_ActiveBullet> active;
   final double Function() clockProvider;
+  final _ActiveBullet? frozen;
+  final Offset frozenPos;
 
   _DanmakuPainter({
     required Listenable repaint,
     required this.active,
     required this.clockProvider,
+    required this.frozen,
+    required this.frozenPos,
   }) : super(repaint: repaint);
 
   @override
@@ -502,7 +714,24 @@ class _DanmakuPainter extends CustomPainter {
     for (final b in active) {
       double x;
       double y;
-      if (b.mode == 0) {
+      if (identical(b, frozen)) {
+        // A tapped bullet is pinned in place and highlighted while its card is
+        // open; the rest of the track keeps flowing.
+        x = frozenPos.dx;
+        y = frozenPos.dy;
+        final box = RRect.fromRectAndRadius(
+          Rect.fromLTWH(x - 4, y - 2, b.width + 8, laneHeight),
+          const Radius.circular(6),
+        );
+        canvas.drawRRect(box, Paint()..color = const Color(0xB3000000));
+        canvas.drawRRect(
+          box,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.5
+            ..color = const Color(0xFF25D0AB),
+        );
+      } else if (b.mode == 0) {
         x = b.scrollX(clock, size.width);
         y = 4 + b.lane * laneHeight;
       } else if (b.mode == 1) {
@@ -518,6 +747,43 @@ class _DanmakuPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _DanmakuPainter oldDelegate) => true;
+}
+
+/// A render object that consumes a pointer only when it lands on a bullet
+/// (decided by [hitTester]); otherwise it reports a miss so the event falls
+/// through to the player controls behind it in the Stack. This is what lets a
+/// tap on a bullet open its action card while a tap on empty space still
+/// toggles the player controls.
+class _DanmakuHitTarget extends SingleChildRenderObjectWidget {
+  const _DanmakuHitTarget({required this.hitTester, required Widget super.child});
+
+  final bool Function(Offset localPosition) hitTester;
+
+  @override
+  RenderObject createRenderObject(BuildContext context) =>
+      _RenderDanmakuHitTarget(hitTester);
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    _RenderDanmakuHitTarget renderObject,
+  ) {
+    renderObject.hitTester = hitTester;
+  }
+}
+
+class _RenderDanmakuHitTarget extends RenderProxyBox {
+  _RenderDanmakuHitTarget(this.hitTester);
+
+  bool Function(Offset localPosition) hitTester;
+
+  @override
+  bool hitTest(BoxHitTestResult result, {required Offset position}) {
+    if (size.contains(position) && hitTester(position)) {
+      return super.hitTest(result, position: position);
+    }
+    return false;
+  }
 }
 
 /// Opens the danmaku list sheet — the mainstream way to interact with bullets
