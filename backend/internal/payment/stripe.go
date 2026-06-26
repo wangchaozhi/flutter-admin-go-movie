@@ -183,6 +183,20 @@ type stripeEvent struct {
 	} `json:"data"`
 }
 
+// stripeWebhook verifies the Stripe-Signature header and applies the event.
+func stripeWebhook(_ context.Context, cfg Config, r *http.Request, body []byte) ackResponse {
+	if cfg.StripeWebhookKey == "" {
+		return ackJSON(http.StatusBadRequest, `{"error":"STRIPE_WEBHOOK_SECRET is not configured"}`)
+	}
+	if err := verifyStripeSignature(body, r.Header.Get("Stripe-Signature"), cfg.StripeWebhookKey); err != nil {
+		return ackJSON(http.StatusBadRequest, `{"error":"signature verification failed"}`)
+	}
+	if err := handleStripeEvent(body); err != nil {
+		return ackJSON(http.StatusInternalServerError, `{"error":"processing failed"}`) // Stripe retries
+	}
+	return ackJSON(http.StatusOK, `{"received":true}`)
+}
+
 // handleStripeEvent records the event for idempotency and, for a completed paid
 // checkout, marks the matching order paid (granting VIP time). Unknown event
 // types are accepted and ignored so Stripe does not retry them.

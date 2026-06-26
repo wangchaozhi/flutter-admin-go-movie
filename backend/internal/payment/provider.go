@@ -38,6 +38,10 @@ func providerFor(name string, cfg Config) (Provider, error) {
 		return stripeProvider{cfg: cfg}, nil
 	case "paypal":
 		return paypalProvider{cfg: cfg}, nil
+	case "wechat":
+		return wechatProvider{cfg: cfg}, nil
+	case "alipay":
+		return alipayProvider{cfg: cfg}, nil
 	default:
 		return nil, fmt.Errorf("unsupported provider")
 	}
@@ -75,3 +79,19 @@ type paypalProvider struct {
 }
 
 func (p paypalProvider) Name() string { return "paypal" }
+
+// wechatProvider implements WeChat Pay v3 Native (QR) checkout + refund. Its
+// methods live in wechat.go.
+type wechatProvider struct {
+	cfg Config
+}
+
+func (p wechatProvider) Name() string { return "wechat" }
+
+// alipayProvider implements Alipay precreate (QR) checkout + refund. Its methods
+// live in alipay.go.
+type alipayProvider struct {
+	cfg Config
+}
+
+func (p alipayProvider) Name() string { return "alipay" }

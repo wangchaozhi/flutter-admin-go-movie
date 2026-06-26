@@ -293,6 +293,26 @@ type paypalEvent struct {
 	} `json:"resource"`
 }
 
+// paypalWebhook verifies the transmission signature with PayPal and applies the
+// event (capturing an approved order / marking it paid).
+func paypalWebhook(ctx context.Context, cfg Config, r *http.Request, body []byte) ackResponse {
+	if cfg.PayPalWebhookID == "" {
+		return ackJSON(http.StatusBadRequest, `{"error":"PAYPAL_WEBHOOK_ID is not configured"}`)
+	}
+	provider := paypalProvider{cfg: cfg}
+	verified, err := provider.verifyWebhook(ctx, r.Header, body)
+	if err != nil {
+		return ackJSON(http.StatusInternalServerError, `{"error":"verification call failed"}`) // transient → retry
+	}
+	if !verified {
+		return ackJSON(http.StatusBadRequest, `{"error":"signature verification failed"}`)
+	}
+	if err := handlePayPalEvent(ctx, provider, body); err != nil {
+		return ackJSON(http.StatusInternalServerError, `{"error":"processing failed"}`)
+	}
+	return ackJSON(http.StatusOK, `{"status":"ok"}`)
+}
+
 // handlePayPalEvent verifies-then-applies an incoming PayPal webhook. On order
 // approval it captures the funds; on capture completion it marks the order paid.
 func handlePayPalEvent(ctx context.Context, provider paypalProvider, payload []byte) error {

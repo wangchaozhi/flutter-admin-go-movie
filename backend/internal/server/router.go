@@ -198,8 +198,9 @@ func NewRouter() http.Handler {
 	})
 
 	mux.HandleFunc("/api/health", healthHandler)
-	mux.HandleFunc("/api/webhooks/stripe", payment.StripeWebhookHandler)
-	mux.HandleFunc("/api/webhooks/paypal", payment.PayPalWebhookHandler)
+	// Single dispatcher for all gateway callbacks: /api/webhooks/{provider}
+	// (stripe, paypal, wechat, alipay). Adding a gateway needs no route change.
+	mux.HandleFunc("/api/webhooks/", payment.WebhookHandler)
 
 	// Observability wraps everything (including CORS) so it can trace and recover
 	// from panics in any layer. Audit sits innermost so it sees the final status

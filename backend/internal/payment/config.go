@@ -16,6 +16,19 @@ type Config struct {
 	PayPalSecret     string
 	PayPalWebhookID  string
 	PayPalBaseURL    string
+
+	WeChatAppID      string
+	WeChatMchID      string
+	WeChatAPIv3Key   string
+	WeChatSerialNo   string
+	WeChatPrivateKey string
+	WeChatNotifyURL  string
+
+	AlipayAppID      string
+	AlipayPrivateKey string
+	AlipayPublicKey  string
+	AlipayGateway    string
+	AlipayNotifyURL  string
 }
 
 func LoadConfig() Config {
@@ -32,5 +45,18 @@ func LoadConfig() Config {
 		PayPalSecret:     cfg.PayPalSecret,
 		PayPalWebhookID:  cfg.PayPalWebhookID,
 		PayPalBaseURL:    cfg.PayPalBaseURL,
+
+		WeChatAppID:      cfg.WeChatAppID,
+		WeChatMchID:      cfg.WeChatMchID,
+		WeChatAPIv3Key:   cfg.WeChatAPIv3Key,
+		WeChatSerialNo:   cfg.WeChatSerialNo,
+		WeChatPrivateKey: cfg.WeChatPrivateKey,
+		WeChatNotifyURL:  cfg.WeChatNotifyURL,
+
+		AlipayAppID:      cfg.AlipayAppID,
+		AlipayPrivateKey: cfg.AlipayPrivateKey,
+		AlipayPublicKey:  cfg.AlipayPublicKey,
+		AlipayGateway:    cfg.AlipayGateway,
+		AlipayNotifyURL:  cfg.AlipayNotifyURL,
 	}
 }

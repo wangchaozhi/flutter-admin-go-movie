@@ -81,6 +81,21 @@ type PaymentConfig struct {
 	PayPalSecret     string `yaml:"paypal_secret"`
 	PayPalWebhookID  string `yaml:"paypal_webhook_id"`
 	PayPalBaseURL    string `yaml:"paypal_base_url"`
+
+	// WeChat Pay v3 (Native / QR). Keys are PEM strings; do not commit real ones.
+	WeChatAppID      string `yaml:"wechat_app_id"`
+	WeChatMchID      string `yaml:"wechat_mch_id"`
+	WeChatAPIv3Key   string `yaml:"wechat_api_v3_key"`
+	WeChatSerialNo   string `yaml:"wechat_serial_no"`
+	WeChatPrivateKey string `yaml:"wechat_private_key"`
+	WeChatNotifyURL  string `yaml:"wechat_notify_url"`
+
+	// Alipay (precreate / QR). RSA2 signing.
+	AlipayAppID      string `yaml:"alipay_app_id"`
+	AlipayPrivateKey string `yaml:"alipay_private_key"`
+	AlipayPublicKey  string `yaml:"alipay_public_key"`
+	AlipayGateway    string `yaml:"alipay_gateway"`
+	AlipayNotifyURL  string `yaml:"alipay_notify_url"`
 }
 
 type WorkerConfig struct {
@@ -204,6 +219,7 @@ func localDefaults() Config {
 			PublicBaseURL:   "http://localhost:8080",
 			DefaultCurrency: "USD",
 			PayPalBaseURL:   "https://api-m.sandbox.paypal.com",
+			AlipayGateway:   "https://openapi.alipay.com/gateway.do",
 		},
 		Worker: WorkerConfig{
 			TranscodeConcurrency:  2,
@@ -251,6 +267,19 @@ func applyEnvOverrides(cfg *Config) {
 	cfg.Payment.PayPalSecret = envOr("PAYPAL_CLIENT_SECRET", cfg.Payment.PayPalSecret)
 	cfg.Payment.PayPalWebhookID = envOr("PAYPAL_WEBHOOK_ID", cfg.Payment.PayPalWebhookID)
 	cfg.Payment.PayPalBaseURL = envOr("PAYPAL_BASE_URL", cfg.Payment.PayPalBaseURL)
+
+	cfg.Payment.WeChatAppID = envOr("WECHAT_APP_ID", cfg.Payment.WeChatAppID)
+	cfg.Payment.WeChatMchID = envOr("WECHAT_MCH_ID", cfg.Payment.WeChatMchID)
+	cfg.Payment.WeChatAPIv3Key = envOr("WECHAT_API_V3_KEY", cfg.Payment.WeChatAPIv3Key)
+	cfg.Payment.WeChatSerialNo = envOr("WECHAT_SERIAL_NO", cfg.Payment.WeChatSerialNo)
+	cfg.Payment.WeChatPrivateKey = envOr("WECHAT_PRIVATE_KEY", cfg.Payment.WeChatPrivateKey)
+	cfg.Payment.WeChatNotifyURL = envOr("WECHAT_NOTIFY_URL", cfg.Payment.WeChatNotifyURL)
+
+	cfg.Payment.AlipayAppID = envOr("ALIPAY_APP_ID", cfg.Payment.AlipayAppID)
+	cfg.Payment.AlipayPrivateKey = envOr("ALIPAY_PRIVATE_KEY", cfg.Payment.AlipayPrivateKey)
+	cfg.Payment.AlipayPublicKey = envOr("ALIPAY_PUBLIC_KEY", cfg.Payment.AlipayPublicKey)
+	cfg.Payment.AlipayGateway = envOr("ALIPAY_GATEWAY", cfg.Payment.AlipayGateway)
+	cfg.Payment.AlipayNotifyURL = envOr("ALIPAY_NOTIFY_URL", cfg.Payment.AlipayNotifyURL)
 
 	cfg.Worker.TranscodeConcurrency = envInt("TRANSCODE_CONCURRENCY", cfg.Worker.TranscodeConcurrency)
 	cfg.Worker.TranscodeVideoEncoder = envOr("TRANSCODE_VIDEO_ENCODER", cfg.Worker.TranscodeVideoEncoder)

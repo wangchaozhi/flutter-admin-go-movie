@@ -238,7 +238,7 @@ export type AppUserForm = {
 export type CurrencyCode = 'CNY' | 'USD' | 'EUR' | 'JPY' | 'HKD' | 'TWD' | 'GBP' | 'AUD' | 'CAD' | 'SGD'
 export type ProductKind = 'vip' | 'video'
 export type ProductStatus = 'active' | 'inactive'
-export type OrderProvider = 'stripe' | 'paypal' | 'mock'
+export type OrderProvider = 'stripe' | 'paypal' | 'wechat' | 'alipay' | 'mock'
 export type OrderStatus = 'pending' | 'paying' | 'paid' | 'failed' | 'cancelled' | 'refunded'
 
 export type Product = {

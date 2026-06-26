@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -450,61 +449,6 @@ func parseAdminOrderPath(path string) (int, string) {
 		return id, parts[1]
 	}
 	return id, ""
-}
-
-// StripeWebhookHandler verifies the Stripe-Signature header against the webhook
-// secret, then applies the event (marking the order paid on a completed
-// checkout). A 5xx asks Stripe to retry; a 400 (bad signature) does not.
-func StripeWebhookHandler(w http.ResponseWriter, r *http.Request) {
-	raw, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
-	if err != nil {
-		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "read body failed"})
-		return
-	}
-	cfg := LoadConfig()
-	if cfg.StripeWebhookKey == "" {
-		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "STRIPE_WEBHOOK_SECRET is not configured"})
-		return
-	}
-	if err := verifyStripeSignature(raw, r.Header.Get("Stripe-Signature"), cfg.StripeWebhookKey); err != nil {
-		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "signature verification failed"})
-		return
-	}
-	if err := handleStripeEvent(raw); err != nil {
-		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
-		return
-	}
-	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok"})
-}
-
-// PayPalWebhookHandler verifies the transmission signature with PayPal, then
-// applies the event (capturing an approved order / marking it paid).
-func PayPalWebhookHandler(w http.ResponseWriter, r *http.Request) {
-	raw, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
-	if err != nil {
-		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "read body failed"})
-		return
-	}
-	cfg := LoadConfig()
-	if cfg.PayPalWebhookID == "" {
-		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "PAYPAL_WEBHOOK_ID is not configured"})
-		return
-	}
-	provider := paypalProvider{cfg: cfg}
-	verified, err := provider.verifyWebhook(r.Context(), r.Header, raw)
-	if err != nil {
-		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
-		return
-	}
-	if !verified {
-		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "signature verification failed"})
-		return
-	}
-	if err := handlePayPalEvent(r.Context(), provider, raw); err != nil {
-		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
-		return
-	}
-	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok"})
 }
 
 func saveProduct(w http.ResponseWriter, r *http.Request, id int) {

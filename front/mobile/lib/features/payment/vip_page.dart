@@ -13,7 +13,14 @@ class VipPage extends StatefulWidget {
 
 class _VipPageState extends State<VipPage> with WidgetsBindingObserver {
   final _api = ApiClient();
-  final _providers = const ['mock', 'stripe', 'paypal'];
+  final _providers = const ['mock', 'stripe', 'paypal', 'wechat', 'alipay'];
+  static const _providerLabels = {
+    'mock': '模拟支付',
+    'stripe': 'Stripe',
+    'paypal': 'PayPal',
+    'wechat': '微信支付',
+    'alipay': '支付宝',
+  };
   var _provider = 'mock';
   var _loading = true;
   var _paying = false;
@@ -235,7 +242,7 @@ class _VipPageState extends State<VipPage> with WidgetsBindingObserver {
                         for (final provider in _providers)
                           DropdownMenuItem(
                             value: provider,
-                            child: Text(provider.toUpperCase()),
+                            child: Text(_providerLabels[provider] ?? provider.toUpperCase()),
                           ),
                       ],
                       onChanged: (value) =>

@@ -33,7 +33,12 @@
 - AI 元信息补全：管理端可调用 DeepSeek / OpenAI-compatible API 自动生成视频简介、看点和标签；移动端播放页展示简介、看点、标签和结构化影片资料。
 - App 管理：移动端用户资料、状态和登录密码维护。
 - 支付管理：会员套餐、单片套餐、订单列表、订单删除和**订单退款**（退款会回收会员套餐对应的 VIP 天数并把订单置为 `refunded`），订单列表会展示 App 用户名。
-- 真实支付链路：**Stripe**（Checkout Session 下单 + 退款）与 **PayPal**（Orders v2 下单 + 捕获 + 退款）均为原生 HTTP 实现;`POST /api/webhooks/stripe` 校验 `Stripe-Signature`（HMAC-SHA256 + 时间戳容差），`POST /api/webhooks/paypal` 调用 PayPal `verify-webhook-signature` 校验签名;回调以 `payment_events`（`UNIQUE(provider,event_id)`）+ `markOrderPaid` 行锁做**幂等**,确认到账后发放 VIP。未配置密钥时仍可用 `mock` 渠道走通本地流程。
+- 真实支付链路（模块化,均为原生 HTTP,无第三方 SDK）：每个网关一个文件,共享 `crypto.go`（RSA 签名/验签、密钥解析、AES-GCM 解密）和幂等处理 `events.go`;回调由统一分发器 `POST /api/webhooks/{provider}`（见 `payment/webhook.go` 的 `webhookRegistry`）路由,新增网关只需加一个实现文件 + 注册表一行。已接入四个渠道:
+  - **Stripe**：Checkout Session 下单 + 退款;回调校验 `Stripe-Signature`（HMAC-SHA256 + 时间戳容差）。
+  - **PayPal**：Orders v2 下单 + 捕获 + 退款;回调调用 `verify-webhook-signature` 验签。
+  - **微信支付 v3**：Native（扫码 `code_url`）下单 + 退款;请求用商户私钥 RSA 签名,回调用 APIv3 密钥 AES-256-GCM 认证解密。
+  - **支付宝**：`alipay.trade.precreate`（扫码 `qr_code`）下单 + `alipay.trade.refund` 退款;请求 RSA2 签名,异步通知用支付宝公钥验签。
+  - 统一以 `payment_events`（`UNIQUE(provider,event_id)`）+ `markOrderPaid` 行锁做**幂等**,确认到账后发放 VIP;未配置密钥时仍可用 `mock` 渠道走通本地流程。移动端 VIP 页可选 模拟/Stripe/PayPal/微信/支付宝 五种渠道。
 - 移动端账号:支持自助**注册**（`POST /api/mobile/register`,用户名/密码/可选昵称邮箱,带按 IP 限流,注册成功自动登录）和登录后**修改密码**（`PUT /api/mobile/password`,校验当前密码;无邮件设施,暂不提供邮箱找回）。
 - 移动端：视频浏览、搜索（带本地搜索历史）、播放、收藏、观看历史、个人设置、商品和订单。
 - 评论与评分：移动端播放页可发表评论和 1–5 星评分、查看平均分和他人评论、删除自己的评论；管理端「评论」菜单可搜索并删除违规评论（`comment:delete`）。**每个用户对同一视频只保留一条评分**（数据库 `(video_id, user_id) WHERE rating > 0` 部分唯一索引 + upsert，重复评分自动覆盖，平均分不再被刷）；评论/评分发表带**按用户限流**（默认每分钟 10 次）防刷。
@@ -224,6 +229,23 @@ user / 123456
 - 登录接口带**失败限流**（防爆破）：按客户端 IP 计数，管理端 5 分钟内失败 5 次、移动端 10 次后临时拒绝并返回 `429`（含 `Retry-After`），登录成功即清零。限流器在配置了可用 Redis 时使用**共享计数**（多实例集群级生效），Redis 不可用时自动**降级为进程内计数**，保证 Redis 故障也不影响登录。评论/评分发表复用同一限流器（按用户）。
 - CORS 默认在 `local`/`dev` 放开（`allowed_origins: ["*"]`），生产环境应在 `config/prod.yml` 的 `allowed_origins` 或环境变量 `CORS_ALLOWED_ORIGINS`（逗号分隔）中配置白名单。
 
+## 支付网关配置
+
+通过环境变量提供密钥（**不要**把真实密钥写进 `config/*.yml` 或提交仓库）。未配置某渠道时，选择它下单会返回明确的「未配置」错误，本地可继续用 `mock`。
+
+```text
+# Stripe
+STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET / STRIPE_SUCCESS_URL / STRIPE_CANCEL_URL
+# PayPal
+PAYPAL_CLIENT_ID / PAYPAL_CLIENT_SECRET / PAYPAL_WEBHOOK_ID / PAYPAL_BASE_URL
+# 微信支付 v3（PEM 私钥可用 \n 转义或文件内容注入）
+WECHAT_APP_ID / WECHAT_MCH_ID / WECHAT_SERIAL_NO / WECHAT_API_V3_KEY(32 字节) / WECHAT_PRIVATE_KEY / WECHAT_NOTIFY_URL
+# 支付宝（RSA2）
+ALIPAY_APP_ID / ALIPAY_PRIVATE_KEY / ALIPAY_PUBLIC_KEY / ALIPAY_GATEWAY / ALIPAY_NOTIFY_URL
+```
+
+回调地址默认 `<APP_PUBLIC_BASE_URL>/api/webhooks/{provider}`，微信/支付宝可用各自的 `*_NOTIFY_URL` 覆盖。
+
 ## 后端接口
 
 认证相关：
@@ -317,8 +339,7 @@ POST   /api/videos/{id}/comments          # 发表评论/评分（移动端 JWT�
 DELETE /api/mobile/comments/{id}          # 删除自己的评论（移动端 JWT）
 GET    /api/hls/{...}/master.m3u8
 GET    /api/hls/{...}/index.m3u8
-POST   /api/webhooks/stripe               # 校验 Stripe-Signature 后确认订单到账
-POST   /api/webhooks/paypal               # PayPal 验签后捕获/确认订单到账
+POST   /api/webhooks/{provider}           # 网关回调统一分发：stripe|paypal|wechat|alipay（各自验签后确认到账）
 ```
 
 统一响应格式：
