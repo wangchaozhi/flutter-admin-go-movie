@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../models/video.dart';
+import '../../auth/change_password_sheet.dart';
 import '../../search/search_page.dart';
 import '../models/home_models.dart';
 
@@ -916,6 +917,18 @@ class _SettingsSheetState extends State<SettingsSheet> {
                   : (value) => _save(
                       _setting.copyWith(preferredQuality: value ?? 'auto'),
                     ),
+            ),
+            const SizedBox(height: 8),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.lock_reset_rounded, color: Color(0xFF25D0AB)),
+              title: const Text('修改密码', style: TextStyle(color: Colors.white)),
+              subtitle: const Text(
+                '验证当前密码后设置新密码',
+                style: TextStyle(color: Color(0xFF9CA3AF)),
+              ),
+              trailing: const Icon(Icons.chevron_right_rounded, color: Color(0xFF9CA3AF)),
+              onTap: () => showChangePasswordSheet(context),
             ),
           ],
         ),

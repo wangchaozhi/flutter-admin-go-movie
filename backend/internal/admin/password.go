@@ -15,6 +15,13 @@ func HashPassword(plain string) (string, error) {
 	return string(hash), nil
 }
 
+// CheckPasswordHash reports whether plain matches the stored credential. Exported
+// so other packages (e.g. mobile change-password) can verify the current
+// password without duplicating the legacy-plaintext fallback logic.
+func CheckPasswordHash(stored, plain string) bool {
+	return checkPassword(stored, plain)
+}
+
 // looksHashed reports whether stored already holds a bcrypt hash.
 // It lets us transparently accept legacy plaintext rows that predate hashing.
 func looksHashed(stored string) bool {

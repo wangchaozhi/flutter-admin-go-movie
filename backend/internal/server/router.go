@@ -21,6 +21,8 @@ func NewRouter() http.Handler {
 
 	mux.HandleFunc("/api/admin/login", auth.AdminLoginHandler)
 	mux.HandleFunc("/api/mobile/login", auth.MobileLoginHandler)
+	mux.HandleFunc("/api/mobile/register", auth.MobileRegisterHandler)
+	mux.Handle("/api/mobile/password", mobileBanGuard(http.HandlerFunc(auth.MobileChangePasswordHandler)))
 	mux.Handle("/api/mobile/profile", mobileBanGuard(http.HandlerFunc(auth.MobileProfileHandler)))
 	mux.Handle("/api/mobile/watch-history", mobileBanGuard(http.HandlerFunc(video.AppWatchHistoryHandler)))
 	mux.Handle("/api/mobile/favorites", mobileBanGuard(http.HandlerFunc(video.AppFavoritesHandler)))

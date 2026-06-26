@@ -33,6 +33,8 @@
 - AI 元信息补全：管理端可调用 DeepSeek / OpenAI-compatible API 自动生成视频简介、看点和标签；移动端播放页展示简介、看点、标签和结构化影片资料。
 - App 管理：移动端用户资料、状态和登录密码维护。
 - 支付管理：会员套餐、单片套餐、订单列表、订单删除和**订单退款**（退款会回收会员套餐对应的 VIP 天数并把订单置为 `refunded`），订单列表会展示 App 用户名。
+- 真实支付链路：**Stripe**（Checkout Session 下单 + 退款）与 **PayPal**（Orders v2 下单 + 捕获 + 退款）均为原生 HTTP 实现;`POST /api/webhooks/stripe` 校验 `Stripe-Signature`（HMAC-SHA256 + 时间戳容差），`POST /api/webhooks/paypal` 调用 PayPal `verify-webhook-signature` 校验签名;回调以 `payment_events`（`UNIQUE(provider,event_id)`）+ `markOrderPaid` 行锁做**幂等**,确认到账后发放 VIP。未配置密钥时仍可用 `mock` 渠道走通本地流程。
+- 移动端账号:支持自助**注册**（`POST /api/mobile/register`,用户名/密码/可选昵称邮箱,带按 IP 限流,注册成功自动登录）和登录后**修改密码**（`PUT /api/mobile/password`,校验当前密码;无邮件设施,暂不提供邮箱找回）。
 - 移动端：视频浏览、搜索（带本地搜索历史）、播放、收藏、观看历史、个人设置、商品和订单。
 - 评论与评分：移动端播放页可发表评论和 1–5 星评分、查看平均分和他人评论、删除自己的评论；管理端「评论」菜单可搜索并删除违规评论（`comment:delete`）。**每个用户对同一视频只保留一条评分**（数据库 `(video_id, user_id) WHERE rating > 0` 部分唯一索引 + upsert，重复评分自动覆盖，平均分不再被刷）；评论/评分发表带**按用户限流**（默认每分钟 10 次）防刷。
 - 操作审计：后台所有写操作（`/api/admin` 下的 POST/PUT/DELETE）异步写入 `audit_logs`，记录执行人、方法、路径、状态码、IP 和 `request_id`；管理端「审计日志」菜单可搜索（按管理员/路径）和分页查看。
@@ -229,7 +231,9 @@ user / 123456
 ```text
 POST   /api/admin/login                 # 管理端登录，返回 JWT
 POST   /api/mobile/login                # 移动端登录，返回 JWT
-GET    /api/health                      # 健康检查
+POST   /api/mobile/register             # 移动端自助注册，返回 JWT（带 IP 限流）
+PUT    /api/mobile/password             # 移动端修改密码（需移动端 JWT，校验当前密码）
+GET    /api/health                      # 健康检查（探测 DB/MinIO/Redis）
 ```
 
 管理端 - 仪表盘（需管理员 JWT）：
@@ -313,8 +317,8 @@ POST   /api/videos/{id}/comments          # 发表评论/评分（移动端 JWT�
 DELETE /api/mobile/comments/{id}          # 删除自己的评论（移动端 JWT）
 GET    /api/hls/{...}/master.m3u8
 GET    /api/hls/{...}/index.m3u8
-POST   /api/webhooks/stripe
-POST   /api/webhooks/paypal
+POST   /api/webhooks/stripe               # 校验 Stripe-Signature 后确认订单到账
+POST   /api/webhooks/paypal               # PayPal 验签后捕获/确认订单到账
 ```
 
 统一响应格式：

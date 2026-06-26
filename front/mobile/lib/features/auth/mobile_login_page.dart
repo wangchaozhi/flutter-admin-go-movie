@@ -130,6 +130,7 @@ class _MobileLoginPageState extends State<MobileLoginPage> {
                     onRememberChanged: (value) =>
                         setState(() => _remember = value),
                     onLogin: _login,
+                    onRegister: () => Navigator.pushNamed(context, '/register'),
                   ),
                 ),
               ),
@@ -169,6 +170,7 @@ class _LoginCard extends StatelessWidget {
     required this.loading,
     required this.onRememberChanged,
     required this.onLogin,
+    required this.onRegister,
   });
 
   final TextEditingController usernameController;
@@ -179,6 +181,7 @@ class _LoginCard extends StatelessWidget {
   final bool loading;
   final ValueChanged<bool> onRememberChanged;
   final VoidCallback onLogin;
+  final VoidCallback onRegister;
 
   @override
   Widget build(BuildContext context) {
@@ -303,6 +306,14 @@ class _LoginCard extends StatelessWidget {
                   borderRadius: BorderRadius.circular(8),
                 ),
               ),
+            ),
+            const SizedBox(height: 6),
+            TextButton(
+              onPressed: loading ? null : onRegister,
+              style: TextButton.styleFrom(
+                foregroundColor: const Color(0xFF9CA3AF),
+              ),
+              child: const Text('还没有账号？立即注册'),
             ),
           ],
         ),

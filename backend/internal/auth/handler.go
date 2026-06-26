@@ -17,6 +17,8 @@ import (
 var (
 	adminLoginLimiter  = common.NewLimiter("admin_login", 5, 5*time.Minute)
 	mobileLoginLimiter = common.NewLimiter("mobile_login", 10, 5*time.Minute)
+	// registerLimiter caps self-service sign-ups per IP to curb abuse.
+	registerLimiter = common.NewLimiter("mobile_register", 5, time.Hour)
 )
 
 // tooManyLoginAttempts writes a 429 with Retry-After when the caller is blocked,
@@ -174,6 +176,138 @@ func MobileProfileHandler(w http.ResponseWriter, r *http.Request) {
 		IsVIP:         isVIP,
 		DaysRemaining: daysRemaining,
 	}})
+}
+
+// MobileRegisterHandler creates a new mobile account and returns a token so the
+// app can sign the user straight in. Rate-limited per IP. No email verification
+// (the project has no mail infrastructure), so the email is informational only.
+func MobileRegisterHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		common.WriteJSON(w, http.StatusMethodNotAllowed, common.APIResponse{Code: 405, Msg: "method not allowed"})
+		return
+	}
+	ip := common.ClientIP(r)
+	if allowed, retry := registerLimiter.Allow(ip); !allowed {
+		w.Header().Set("Retry-After", strconv.Itoa(int(retry.Seconds())+1))
+		common.WriteJSON(w, http.StatusTooManyRequests, common.APIResponse{Code: 429, Msg: "注册过于频繁，请稍后再试"})
+		return
+	}
+
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+		Nickname string `json:"nickname"`
+		Email    string `json:"email"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "invalid body"})
+		return
+	}
+	req.Username = strings.TrimSpace(req.Username)
+	req.Nickname = strings.TrimSpace(req.Nickname)
+	req.Email = strings.TrimSpace(req.Email)
+	if n := len([]rune(req.Username)); n < 3 || n > 32 {
+		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "用户名长度需为 3-32 个字符"})
+		return
+	}
+	if len(req.Password) < 6 {
+		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "密码至少 6 位"})
+		return
+	}
+	if req.Email != "" && !strings.Contains(req.Email, "@") {
+		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "邮箱格式不正确"})
+		return
+	}
+
+	var count int64
+	if err := store.DB().Model(&store.MobileUser{}).Where("username = ?", req.Username).Count(&count).Error; err != nil {
+		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
+		return
+	}
+	if count > 0 {
+		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "用户名已被占用"})
+		return
+	}
+
+	hashed, err := admin.HashPassword(req.Password)
+	if err != nil {
+		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: "hash password failed"})
+		return
+	}
+	nickname := req.Nickname
+	if nickname == "" {
+		nickname = req.Username
+	}
+	now := time.Now()
+	user := store.MobileUser{
+		Username:  req.Username,
+		Password:  hashed,
+		Nickname:  nickname,
+		Email:     req.Email,
+		Status:    "active",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := store.DB().Create(&user).Error; err != nil {
+		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
+		return
+	}
+	token, err := admin.BuildMobileToken(user.ID, user.Username)
+	if err != nil {
+		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: "token generation failed"})
+		return
+	}
+	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: LoginResponse{
+		Token: token, Username: user.Username, Client: "mobile",
+	}})
+}
+
+// MobileChangePasswordHandler updates the signed-in user's password after
+// verifying the current one.
+func MobileChangePasswordHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		common.WriteJSON(w, http.StatusMethodNotAllowed, common.APIResponse{Code: 405, Msg: "method not allowed"})
+		return
+	}
+	userID, ok := currentMobileUserID(r)
+	if !ok {
+		common.WriteJSON(w, http.StatusUnauthorized, common.APIResponse{Code: 401, Msg: "unauthorized"})
+		return
+	}
+	var req struct {
+		OldPassword string `json:"old_password"`
+		NewPassword string `json:"new_password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "invalid body"})
+		return
+	}
+	if len(req.NewPassword) < 6 {
+		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "新密码至少 6 位"})
+		return
+	}
+	var user store.MobileUser
+	if err := store.DB().First(&user, userID).Error; err != nil {
+		common.WriteJSON(w, http.StatusNotFound, common.APIResponse{Code: 404, Msg: "not found"})
+		return
+	}
+	if !admin.CheckPasswordHash(user.Password, req.OldPassword) {
+		common.WriteJSON(w, http.StatusBadRequest, common.APIResponse{Code: 400, Msg: "当前密码不正确"})
+		return
+	}
+	hashed, err := admin.HashPassword(req.NewPassword)
+	if err != nil {
+		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: "hash password failed"})
+		return
+	}
+	if err := store.DB().Model(&store.MobileUser{}).Where("id = ?", userID).Updates(map[string]interface{}{
+		"password":   hashed,
+		"updated_at": time.Now(),
+	}).Error; err != nil {
+		common.WriteJSON(w, http.StatusInternalServerError, common.APIResponse{Code: 500, Msg: err.Error()})
+		return
+	}
+	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok"})
 }
 
 func currentMobileUserID(r *http.Request) (int, bool) {

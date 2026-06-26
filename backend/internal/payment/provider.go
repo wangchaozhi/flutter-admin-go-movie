@@ -60,42 +60,18 @@ func (p mockProvider) Refund(_ context.Context, order store.Order) (RefundResult
 	return RefundResult{RefundID: "mock_refund_" + order.OrderNo}, nil
 }
 
+// stripeProvider implements the Stripe Checkout + refund flow. Its methods live
+// in stripe.go.
 type stripeProvider struct {
 	cfg Config
 }
 
 func (p stripeProvider) Name() string { return "stripe" }
 
-func (p stripeProvider) CreateCheckout(_ context.Context, _ store.Order, _ store.Product) (CheckoutSession, error) {
-	if p.cfg.StripeSecretKey == "" {
-		return CheckoutSession{}, fmt.Errorf("STRIPE_SECRET_KEY is not configured")
-	}
-	return CheckoutSession{}, fmt.Errorf("stripe checkout is not implemented yet")
-}
-
-func (p stripeProvider) Refund(_ context.Context, _ store.Order) (RefundResult, error) {
-	if p.cfg.StripeSecretKey == "" {
-		return RefundResult{}, fmt.Errorf("STRIPE_SECRET_KEY is not configured")
-	}
-	return RefundResult{}, fmt.Errorf("stripe refund is not implemented yet")
-}
-
+// paypalProvider implements the PayPal Orders v2 checkout + capture + refund
+// flow. Its methods live in paypal.go.
 type paypalProvider struct {
 	cfg Config
 }
 
 func (p paypalProvider) Name() string { return "paypal" }
-
-func (p paypalProvider) CreateCheckout(_ context.Context, _ store.Order, _ store.Product) (CheckoutSession, error) {
-	if p.cfg.PayPalClientID == "" || p.cfg.PayPalSecret == "" {
-		return CheckoutSession{}, fmt.Errorf("PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET are not configured")
-	}
-	return CheckoutSession{}, fmt.Errorf("paypal orders v2 checkout is not implemented yet")
-}
-
-func (p paypalProvider) Refund(_ context.Context, _ store.Order) (RefundResult, error) {
-	if p.cfg.PayPalClientID == "" || p.cfg.PayPalSecret == "" {
-		return RefundResult{}, fmt.Errorf("PAYPAL_CLIENT_ID and PAYPAL_CLIENT_SECRET are not configured")
-	}
-	return RefundResult{}, fmt.Errorf("paypal refund is not implemented yet")
-}

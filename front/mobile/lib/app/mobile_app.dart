@@ -4,6 +4,7 @@ import 'package:forui/forui.dart';
 import '../core/api_client.dart';
 import '../core/session.dart';
 import '../features/auth/mobile_login_page.dart';
+import '../features/auth/register_page.dart';
 import '../features/home/mobile_home_page.dart';
 import '../features/payment/vip_page.dart';
 import '../features/video/video_player_page.dart';
@@ -50,6 +51,7 @@ class MobileApp extends StatelessWidget {
       home: const _AuthGate(),
       routes: {
         '/login': (_) => const MobileLoginPage(),
+        '/register': (_) => const RegisterPage(),
         '/home': (_) => const MobileHomePage(),
         '/vip': (_) => const VipPage(),
       },
