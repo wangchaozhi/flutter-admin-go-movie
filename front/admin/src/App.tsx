@@ -40,6 +40,7 @@ import { MenuManagementSection, buildMenuTree } from './features/menus'
 import type { MenuNodeType } from './features/menus'
 import { PaymentManagementSection } from './features/payments'
 import { RoleManagementSection } from './features/roles'
+import { SeriesManagementSection } from './features/series'
 import { UserManagementSection } from './features/users'
 import { useI18n, LanguageSwitcher } from './i18n'
 import {
@@ -118,6 +119,7 @@ const tabs: NavItem[] = [
     path: '/videos',
     children: [
       { key: 'videos', label: '视频列表', iconCode: 'Clapperboard', path: '/videos' },
+      { key: 'series', label: '剧集', iconCode: 'Layers', path: '/videos/series' },
       { key: 'categories', label: '类别', iconCode: 'FolderOpen', path: '/categories' },
       { key: 'video-transcodes', label: '转码历史', iconCode: 'History', path: '/videos/transcodes' },
       { key: 'video-extracts', label: '提取历史', iconCode: 'AudioLines', path: '/videos/extracts' },
@@ -147,6 +149,7 @@ const routeMetaByPath = new Map<string, { key: Entity; label: string; iconCode: 
   ['/app-users', { key: 'app-users', label: '用户', iconCode: 'Users' }],
   ['/invite-codes', { key: 'invite-codes', label: '邀请码', iconCode: 'Ticket' }],
   ['/videos', { key: 'videos', label: '视频列表', iconCode: 'Clapperboard' }],
+  ['/videos/series', { key: 'series', label: '剧集', iconCode: 'Layers' }],
   ['/categories', { key: 'categories', label: '类别', iconCode: 'FolderOpen' }],
   ['/videos/transcodes', { key: 'video-transcodes', label: '转码历史', iconCode: 'History' }],
   ['/videos/extracts', { key: 'video-extracts', label: '提取历史', iconCode: 'AudioLines' }],
@@ -180,6 +183,7 @@ const entityKeys = new Set<Entity>([
   'roles',
   'menus',
   'videos',
+  'series',
   'video-transcodes',
   'video-extracts',
   'categories',
@@ -1034,6 +1038,10 @@ function AdminDashboard({
 
         {active === 'videos' && (
           <VideoManagementSection token={session.token} can={can} />
+        )}
+
+        {active === 'series' && (
+          <SeriesManagementSection token={session.token} can={can} />
         )}
 
         {active === 'video-transcodes' && (

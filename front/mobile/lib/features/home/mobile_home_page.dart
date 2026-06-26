@@ -4,6 +4,9 @@ import '../../core/api_client.dart';
 import '../../core/l10n/app_strings.dart';
 import '../../core/session.dart';
 import '../../models/video.dart';
+import '../series/series_detail_page.dart';
+import '../series/series_models.dart';
+import '../series/series_rail.dart';
 import 'models/home_models.dart';
 import 'widgets/home_widgets.dart';
 import 'widgets/video_rail.dart';
@@ -25,6 +28,7 @@ class _MobileHomePageState extends State<MobileHomePage> {
   List<Video> _railLatest = [];
   List<Video> _railVip = [];
   List<Video> _railContinue = [];
+  List<Series> _seriesList = [];
   Map<int, int> _continueProgress = {};
   List<OrderSummary> _orders = [];
   List<HistoryEntry> _history = [];
@@ -56,7 +60,35 @@ class _MobileHomePageState extends State<MobileHomePage> {
       _loadCategories(),
       _loadVideos(categoryId: 0),
       _loadHomeRails(),
+      _loadSeries(),
     ]);
+  }
+
+  // Top series shown as a rail on the 全部 channel. Best-effort: a failure just
+  // hides the rail and never blocks the rest of the home page.
+  Future<void> _loadSeries() async {
+    try {
+      final resp = await ApiClient().get('/api/series');
+      if (!mounted) return;
+      if (resp['code'] == 0) {
+        final data = resp['data'] as Map<String, dynamic>? ?? {};
+        final list = (data['items'] as List<dynamic>? ?? [])
+            .map((e) => Series.fromJson(e as Map<String, dynamic>))
+            .where((series) => series.episodeCount > 0)
+            .toList();
+        setState(() => _seriesList = list);
+      }
+    } catch (_) {
+      // series rail is optional; ignore network errors
+    }
+  }
+
+  void _openSeries(Series series) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => SeriesDetailPage(seriesId: series.id, initial: series),
+      ),
+    );
   }
 
   // Aggregated recommendation rails shown on the 全部 channel. Sent with the auth
@@ -502,6 +534,13 @@ class _MobileHomePageState extends State<MobileHomePage> {
                 title: s.t('home.newArrivals'),
                 videos: _railLatest,
                 onOpenVideo: _openVideo,
+              ),
+            ),
+            SliverToBoxAdapter(
+              child: SeriesRail(
+                title: s.t('home.series'),
+                series: _seriesList,
+                onOpenSeries: _openSeries,
               ),
             ),
             SliverToBoxAdapter(
