@@ -26,6 +26,8 @@ type Video struct {
 	Status             string      `gorm:"column:status"                  json:"status"`
 	IsVip              bool        `gorm:"column:is_vip"                  json:"is_vip"`
 	IsFree             bool        `gorm:"column:is_free"                 json:"is_free"`
+	SeriesID           int64       `gorm:"column:series_id"               json:"series_id"`
+	EpisodeNumber      int         `gorm:"column:episode_number"          json:"episode_number"`
 	CreatedAt          time.Time   `gorm:"column:created_at"              json:"created_at"`
 	UpdatedAt          time.Time   `gorm:"column:updated_at"              json:"updated_at"`
 
@@ -134,6 +136,20 @@ type VideoComment struct {
 }
 
 func (VideoComment) TableName() string { return "video_comments" }
+
+// VideoDanmaku is one bullet comment anchored to a playback position (TimeMS).
+type VideoDanmaku struct {
+	ID        int64     `gorm:"primaryKey;column:id" json:"id"`
+	VideoID   int64     `gorm:"column:video_id"      json:"video_id"`
+	UserID    int64     `gorm:"column:user_id"       json:"user_id"`
+	Content   string    `gorm:"column:content"       json:"content"`
+	TimeMS    int       `gorm:"column:time_ms"       json:"time_ms"`
+	Color     int       `gorm:"column:color"         json:"color"`
+	Mode      int       `gorm:"column:mode"          json:"mode"`
+	CreatedAt time.Time `gorm:"column:created_at"    json:"created_at"`
+}
+
+func (VideoDanmaku) TableName() string { return "video_danmaku" }
 
 type VideoAIMetadata struct {
 	VideoID      int64       `gorm:"primaryKey;column:video_id"       json:"video_id"`

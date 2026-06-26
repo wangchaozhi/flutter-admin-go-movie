@@ -1,4 +1,47 @@
-export type Entity = 'dashboard' | 'users' | 'roles' | 'menus' | 'videos' | 'video-transcodes' | 'video-extracts' | 'categories' | 'app-users' | 'invite-codes' | 'payments' | 'comments' | 'audit-logs'
+export type Entity = 'dashboard' | 'users' | 'roles' | 'menus' | 'videos' | 'series' | 'video-transcodes' | 'video-extracts' | 'categories' | 'app-users' | 'invite-codes' | 'payments' | 'comments' | 'audit-logs'
+
+export type SeriesStatus = 'ongoing' | 'completed' | 'offline'
+
+export type Series = {
+  id: number
+  title: string
+  description: string
+  cover_key: string
+  category_id: number
+  region: string
+  release_year: number
+  genres: string[]
+  is_vip: boolean
+  status: SeriesStatus
+  created_at: string
+  updated_at: string
+  episode_count?: number
+  cover_url?: string
+  category_name?: string
+}
+
+export type SeriesForm = {
+  id?: number
+  title: string
+  description: string
+  category_id: number
+  region: string
+  release_year: number
+  genres: string[]
+  is_vip: boolean
+  status: SeriesStatus
+}
+
+export type SeriesEpisode = {
+  id: number
+  title: string
+  episode_number: number
+  duration: number
+  status: VideoStatus
+  is_vip: boolean
+  is_free: boolean
+  cover_url: string
+}
 
 export type InviteCode = {
   id: number
@@ -85,6 +128,8 @@ export type Video = {
   status: VideoStatus
   is_vip: boolean
   is_free: boolean
+  series_id: number
+  episode_number: number
   transcoded_qualities?: string[]
   available_transcode_qualities?: string[]
   transcoding?: boolean

@@ -9,8 +9,10 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
 import '../../core/api_client.dart';
+import '../../core/session.dart';
 import '../../models/video.dart' as model;
 import 'comments_section.dart';
+import 'danmaku_overlay.dart';
 import 'playback_parsers.dart';
 import 'playback_progress_service.dart';
 import 'track_options.dart';
@@ -94,6 +96,12 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   bool _vipLocked = false;
   Duration _previewLimit = Duration.zero;
   bool _previewBlocked = false;
+  // Danmaku (bullet comments) overlay state.
+  bool _danmakuVisible = true;
+  bool _sendingDanmaku = false;
+  int _danmakuColor = 0xFFFFFF;
+  final DanmakuController _danmakuController = DanmakuController();
+  final TextEditingController _danmakuInput = TextEditingController();
 
   @override
   void initState() {
@@ -135,6 +143,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     unawaited(_restoreSystemUi());
     _player.dispose();
     _webSubtitleText.dispose();
+    _danmakuInput.dispose();
     super.dispose();
   }
 
@@ -866,6 +875,8 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                       ],
                     ),
                     const SizedBox(height: 12),
+                    _buildDanmakuBar(),
+                    const SizedBox(height: 12),
                     _buildVideoInfoSection(),
                     CommentsSection(videoId: _video.id),
                   ],
@@ -1095,6 +1106,15 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     return Stack(
       children: [
         Video(controller: _controller, controls: AdaptiveVideoControls),
+        if (_danmakuVisible && !_previewBlocked)
+          Positioned.fill(
+            child: DanmakuOverlay(
+              videoId: widget.video.id,
+              player: _player,
+              enabled: _danmakuVisible,
+              controller: _danmakuController,
+            ),
+          ),
         _buildBufferingIndicator(),
         _buildCenterPlayButton(),
         _buildCompletedOverlay(),
@@ -1102,6 +1122,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
         Positioned(left: 48, bottom: 4, child: _buildPlaybackTools()),
         Positioned(right: 48, bottom: 4, child: _buildTrackAndQualityMenus()),
         Positioned(right: 8, top: 8, child: _buildFullscreenButton()),
+        Positioned(right: 8, top: 52, child: _buildDanmakuToggle()),
         if (_vipLocked && !_previewBlocked)
           Positioned(left: 8, top: 8, child: _buildPreviewBadge()),
         if (_previewBlocked) _buildVipPaywallOverlay(),
@@ -1499,6 +1520,179 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
           : Icons.fullscreen_rounded,
       onPressed: () => unawaited(_toggleFullscreen()),
     );
+  }
+
+  Widget _buildDanmakuToggle() {
+    return _glassIconButton(
+      tooltip: _danmakuVisible ? '关闭弹幕' : '开启弹幕',
+      icon: _danmakuVisible
+          ? Icons.subtitles_rounded
+          : Icons.subtitles_off_rounded,
+      onPressed: () => setState(() => _danmakuVisible = !_danmakuVisible),
+    );
+  }
+
+  // Preset danmaku colours users can pick from when sending a bullet.
+  static const List<int> _danmakuPalette = [
+    0xFFFFFF, // white
+    0xFF4D4F, // red
+    0xFFD93D, // yellow
+    0x25D0AB, // teal (app accent)
+    0x4DA3FF, // blue
+    0xFF7AC6, // pink
+  ];
+
+  Widget _buildDanmakuBar() {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFF171B24),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: const Color(0xFF2B3140)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        child: Row(
+          children: [
+            _buildDanmakuColorButton(),
+            Expanded(
+              child: TextField(
+                controller: _danmakuInput,
+                maxLength: 100,
+                style: const TextStyle(color: Colors.white, fontSize: 14),
+                cursorColor: const Color(0xFF25D0AB),
+                textInputAction: TextInputAction.send,
+                onSubmitted: (_) => unawaited(_sendDanmaku()),
+                decoration: const InputDecoration(
+                  hintText: '发个友善的弹幕…',
+                  hintStyle: TextStyle(color: Color(0xFF9CA3AF), fontSize: 14),
+                  border: InputBorder.none,
+                  counterText: '',
+                  isDense: true,
+                ),
+              ),
+            ),
+            _sendingDanmaku
+                ? const Padding(
+                    padding: EdgeInsets.all(8),
+                    child: SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Color(0xFF25D0AB),
+                      ),
+                    ),
+                  )
+                : IconButton(
+                    icon: const Icon(Icons.send_rounded, color: Color(0xFF25D0AB)),
+                    onPressed: () => unawaited(_sendDanmaku()),
+                  ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDanmakuColorButton() {
+    return PopupMenuButton<int>(
+      tooltip: '弹幕颜色',
+      color: const Color(0xFF111827),
+      initialValue: _danmakuColor,
+      onSelected: (color) => setState(() => _danmakuColor = color),
+      itemBuilder: (context) => _danmakuPalette
+          .map(
+            (color) => PopupMenuItem<int>(
+              value: color,
+              child: Row(
+                children: [
+                  Container(
+                    width: 18,
+                    height: 18,
+                    decoration: BoxDecoration(
+                      color: Color(0xFF000000 | color),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white24),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  if (color == _danmakuColor)
+                    const Icon(Icons.check, color: Color(0xFF25D0AB), size: 16),
+                ],
+              ),
+            ),
+          )
+          .toList(),
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child: Container(
+          width: 20,
+          height: 20,
+          decoration: BoxDecoration(
+            color: Color(0xFF000000 | _danmakuColor),
+            shape: BoxShape.circle,
+            border: Border.all(color: Colors.white38, width: 2),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _sendDanmaku() async {
+    final text = _danmakuInput.text.trim();
+    if (text.isEmpty) {
+      _snack('请输入弹幕内容');
+      return;
+    }
+    if (text.runes.length > 100) {
+      _snack('弹幕最多 100 字');
+      return;
+    }
+    final token = await Session.token();
+    if (token == null) {
+      _snack('发弹幕需要先登录');
+      return;
+    }
+    setState(() => _sendingDanmaku = true);
+    final timeMs = _player.state.position.inMilliseconds;
+    try {
+      final resp = await ApiClient().postAuth(
+        '/api/videos/${widget.video.id}/danmaku',
+        {
+          'content': text,
+          'time_ms': timeMs,
+          'color': _danmakuColor,
+          'mode': 0,
+        },
+      );
+      if (!mounted) return;
+      if (resp['code'] == 0) {
+        _danmakuInput.clear();
+        if (!_danmakuVisible) {
+          setState(() => _danmakuVisible = true);
+        }
+        _danmakuController.addLocal(
+          DanmakuItem(
+            content: text,
+            timeMs: timeMs,
+            color: _danmakuColor,
+            mode: 0,
+          ),
+        );
+      } else {
+        _snack(resp['msg']?.toString() ?? '弹幕发送失败');
+      }
+    } catch (_) {
+      if (mounted) _snack('弹幕发送失败，请稍后再试');
+    } finally {
+      if (mounted) setState(() => _sendingDanmaku = false);
+    }
+  }
+
+  void _snack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   Widget _buildError() {

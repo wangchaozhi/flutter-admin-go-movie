@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -152,6 +153,13 @@ func NewRouter() http.Handler {
 		http.MethodDelete: "category:delete",
 	}, http.HandlerFunc(video.AdminCategoryByIDHandler)))
 
+	// admin series management (create gated here; per-action perms inside the
+	// sub-handler, mirroring the videos sub-handler above)
+	mux.Handle("/api/admin/series", requirePerm(map[string]string{
+		http.MethodPost: "series:create",
+	}, http.HandlerFunc(video.AdminSeriesHandler)))
+	mux.Handle("/api/admin/series/", requireAdminAuth(http.HandlerFunc(video.AdminSeriesByIDHandler)))
+
 	// admin comment moderation
 	mux.Handle("/api/admin/comments", requireAdminAuth(http.HandlerFunc(video.AdminListCommentsHandler)))
 	mux.Handle("/api/admin/comments/", requirePerm(map[string]string{
@@ -175,6 +183,21 @@ func NewRouter() http.Handler {
 	mux.Handle("/api/orders", mobileBanGuard(http.HandlerFunc(payment.OrdersHandler)))
 	mux.Handle("/api/orders/", mobileBanGuard(http.HandlerFunc(payment.OrderByNoHandler)))
 	mux.HandleFunc("/api/home", video.AppHomeHandler)
+	mux.HandleFunc("/api/series", video.AppListSeriesHandler)
+	mux.HandleFunc("/api/series/", func(w http.ResponseWriter, r *http.Request) {
+		rest := strings.TrimPrefix(r.URL.Path, "/api/series/")
+		parts := strings.Split(strings.Trim(rest, "/"), "/")
+		id, err := strconv.ParseInt(parts[0], 10, 64)
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		if len(parts) >= 2 && parts[1] == "cover" {
+			video.AppSeriesCoverHandler(w, r, id)
+			return
+		}
+		video.AppGetSeriesHandler(w, r, id)
+	})
 	mux.HandleFunc("/api/videos", video.AppListVideosHandler)
 	mux.Handle("/api/videos/", mobileBanGuard(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -186,6 +209,8 @@ func NewRouter() http.Handler {
 			video.AppProgressHandler(w, r)
 		case strings.HasSuffix(r.URL.Path, "/comments"):
 			video.AppVideoCommentsHandler(w, r)
+		case strings.HasSuffix(r.URL.Path, "/danmaku"):
+			video.AppVideoDanmakuHandler(w, r)
 		default:
 			video.AppGetVideoHandler(w, r)
 		}

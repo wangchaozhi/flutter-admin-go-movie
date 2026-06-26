@@ -30,6 +30,7 @@
 - 管理端 RBAC：管理员、角色、菜单和按钮权限管理，主界面菜单会根据 `admin_menus` 的父子关系、排序和图标编码动态渲染。
 - 仪表盘：登录后默认进入「仪表盘」，展示视频/类别/用户/订单总量、各状态分布、已支付收入（按币种）和热门视频（按播放量）。
 - 内容管理：视频、类别、影片资料（演员、导演、地区、年份、语言、类型）、转码任务、转码历史记录和多清晰度 HLS 资源管理。
+- 剧集/选集：支持电视剧/动漫/综艺等**多集内容**。「一集即一个视频」——`series` 表只做分组和元信息，分集复用 `videos` 表（带 `series_id`/`episode_number`），因此转码、HLS、VIP 试看、评论、弹幕、播放进度等能力对每一集自动生效。管理端「剧集」菜单可创建剧集、上传封面、从未分配视频中挑选并编号为分集（`series:create/edit/delete`）；移动端首页有「热门剧集」横向 rail，点进剧集详情页可选集播放。分集视频不会再出现在 App 的扁平视频列表里，只通过剧集入口浏览。
 - AI 元信息补全：管理端可调用 DeepSeek / OpenAI-compatible API 自动生成视频简介、看点和标签；移动端播放页展示简介、看点、标签和结构化影片资料。
 - App 管理：移动端用户资料、状态和登录密码维护。
 - 支付管理：会员套餐、单片套餐、订单列表、订单删除和**订单退款**（退款会回收会员套餐对应的 VIP 天数并把订单置为 `refunded`），订单列表会展示 App 用户名。
@@ -42,6 +43,7 @@
 - 移动端账号:支持自助**注册**（`POST /api/mobile/register`,用户名/密码/可选昵称邮箱,带按 IP 限流,注册成功自动登录）和登录后**修改密码**（`PUT /api/mobile/password`,校验当前密码;无邮件设施,暂不提供邮箱找回）。
 - 移动端：视频浏览、搜索（带本地搜索历史）、播放、收藏、观看历史、个人设置、商品和订单。
 - 评论与评分：移动端播放页可发表评论和 1–5 星评分、查看平均分和他人评论、删除自己的评论；管理端「评论」菜单可搜索并删除违规评论（`comment:delete`）。**每个用户对同一视频只保留一条评分**（数据库 `(video_id, user_id) WHERE rating > 0` 部分唯一索引 + upsert，重复评分自动覆盖，平均分不再被刷）；评论/评分发表带**按用户限流**（默认每分钟 10 次）防刷。
+- 弹幕：移动端播放页支持发送和展示**弹幕**（点播弹幕，按 `time_ms` 锚定到播放进度回放），支持滚动/顶部/底部三种模式和颜色选择；弹幕轨道用 Ticker + CustomPainter 渲染，暂停时冻结、seek 时重新对齐，并做轨道防重叠。发送带**按用户限流**（默认每分钟 20 条）。后端表 `video_danmaku` 按 `(video_id, time_ms)` 建索引；点播场景无需消息队列/实时广播。
 - 操作审计：后台所有写操作（`/api/admin` 下的 POST/PUT/DELETE）异步写入 `audit_logs`，记录执行人、方法、路径、状态码、IP 和 `request_id`；管理端「审计日志」菜单可搜索（按管理员/路径）和分页查看。
 - 数据导出：管理端订单列表支持「导出 CSV」（`GET /api/admin/orders?format=csv`，带 UTF-8 BOM，便于财务对账）。仪表盘新增「收入趋势」近 30 天按主货币的每日已支付收入柱状图。
 - 视频搜索：管理端视频列表支持按标题/ID 关键字和类别筛选；App 与管理端的视频列表接口均支持 `q` 关键字（标题，忽略大小写）、`category_id`、分页等查询参数。
@@ -197,6 +199,7 @@ role:create / role:edit / role:delete
 menu:create / menu:edit / menu:delete
 app_user:create / app_user:edit / app_user:delete
 category:create / category:edit / category:delete
+series:create / series:edit / series:delete
 payment:product / payment:order / payment:refund
 video:create / video:edit / video:delete
 video:transcode-history    # 转码历史删除
@@ -306,6 +309,11 @@ GET               /api/admin/video/transcode-tasks
 DELETE            /api/admin/video/transcode-tasks/{id}
 GET|POST          /api/admin/categories
 PUT|DELETE        /api/admin/categories/{id}
+GET|POST          /api/admin/series                # 剧集列表 / 新建（POST 需 series:create）
+GET|PUT|DELETE    /api/admin/series/{id}           # 剧集详情（含分集）/ 编辑 / 删除（需 series:edit / series:delete）
+POST              /api/admin/series/{id}/cover     # 上传剧集封面（series:edit）
+GET|POST          /api/admin/series/{id}/episodes  # 分集列表 / 关联一个视频为分集（POST 需 series:edit）
+DELETE            /api/admin/series/{id}/episodes/{videoId}  # 解除分集关联（series:edit）
 GET               /api/admin/comments              # 评论审核列表，支持 q 搜索
 DELETE            /api/admin/comments/{id}         # 删除评论，需 comment:delete
 GET               /api/admin/audit-logs            # 操作审计日志，支持 q（管理员/路径）+ 分页
@@ -326,6 +334,9 @@ App 公开 / 播放：
 ```text
 GET    /api/categories
 GET    /api/home                            # 首页推荐聚合：热门/最新/VIP 精选
+GET    /api/series                          # 剧集列表（公开，排除已下架）
+GET    /api/series/{id}                      # 剧集详情 + 已就绪分集列表（公开）
+GET    /api/series/{id}/cover                # 剧集封面（公开）
 GET    /api/products
 POST   /api/orders
 GET    /api/orders/{orderNo}
@@ -337,6 +348,8 @@ POST   /api/videos/{id}/progress
 GET    /api/videos/{id}/comments          # 评论列表 + 评分汇总（公开）
 POST   /api/videos/{id}/comments          # 发表评论/评分（移动端 JWT）
 DELETE /api/mobile/comments/{id}          # 删除自己的评论（移动端 JWT）
+GET    /api/videos/{id}/danmaku           # 弹幕列表，按 time_ms 排序（公开）
+POST   /api/videos/{id}/danmaku           # 发送弹幕（移动端 JWT，按用户限流）
 GET    /api/hls/{...}/master.m3u8
 GET    /api/hls/{...}/index.m3u8
 POST   /api/webhooks/{provider}           # 网关回调统一分发：stripe|paypal|wechat|alipay（各自验签后确认到账）

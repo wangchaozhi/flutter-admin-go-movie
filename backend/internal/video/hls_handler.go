@@ -789,7 +789,9 @@ func AppListVideosHandler(w http.ResponseWriter, r *http.Request) {
 	vipOnly, _ := strconv.ParseBool(q.Get("is_vip"))
 	keyword := strings.TrimSpace(q.Get("q"))
 
-	db := store.DB().Where("status = ?", "ready")
+	// Episodes (series_id > 0) are browsed via their series, not as standalone
+	// rows, so the flat video list only returns movies and unassigned videos.
+	db := store.DB().Where("status = ? AND series_id = ?", "ready", 0)
 	if categoryID > 0 {
 		db = db.Where("category_id = ?", categoryID)
 	}
