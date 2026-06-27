@@ -71,7 +71,16 @@ class MobileApp extends StatelessWidget {
         },
         onGenerateRoute: (settings) {
           if (settings.name == '/player') {
-            final video = settings.arguments as model.Video;
+            final args = settings.arguments;
+            if (args is PlayerArgs) {
+              return MaterialPageRoute(
+                builder: (_) => VideoPlayerPage(
+                  video: args.video,
+                  scrollToComments: args.scrollToComments,
+                ),
+              );
+            }
+            final video = args as model.Video;
             return MaterialPageRoute(
               builder: (_) => VideoPlayerPage(video: video),
             );

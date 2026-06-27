@@ -126,16 +126,51 @@ type VideoFavorite struct {
 func (VideoFavorite) TableName() string { return "video_favorites" }
 
 type VideoComment struct {
-	ID        int64     `gorm:"primaryKey;column:id"   json:"id"`
-	VideoID   int64     `gorm:"column:video_id"        json:"video_id"`
-	UserID    int64     `gorm:"column:user_id"         json:"user_id"`
-	Content   string    `gorm:"column:content"         json:"content"`
-	Rating    int       `gorm:"column:rating"          json:"rating"`
-	CreatedAt time.Time `gorm:"column:created_at"      json:"created_at"`
-	UpdatedAt time.Time `gorm:"column:updated_at"      json:"updated_at"`
+	ID            int64     `gorm:"primaryKey;column:id"   json:"id"`
+	VideoID       int64     `gorm:"column:video_id"        json:"video_id"`
+	UserID        int64     `gorm:"column:user_id"         json:"user_id"`
+	Content       string    `gorm:"column:content"         json:"content"`
+	Rating        int       `gorm:"column:rating"          json:"rating"`
+	ParentID      *int64    `gorm:"column:parent_id"       json:"parent_id,omitempty"`        // nil = top-level review, set = reply
+	ReplyToUserID *int64    `gorm:"column:reply_to_user_id" json:"reply_to_user_id,omitempty"` // @someone when replying to a reply
+	LikeCount     int       `gorm:"column:like_count"      json:"like_count"`
+	CreatedAt     time.Time `gorm:"column:created_at"      json:"created_at"`
+	UpdatedAt     time.Time `gorm:"column:updated_at"      json:"updated_at"`
+
+	// Liked reports whether the requesting user has liked this comment. Only set
+	// for authenticated list requests; not persisted.
+	Liked bool `gorm:"-" json:"liked"`
 }
 
 func (VideoComment) TableName() string { return "video_comments" }
+
+// CommentLike records one user's like of one comment. The UNIQUE(comment_id,
+// user_id) constraint (see migration 040) keeps likes idempotent.
+type CommentLike struct {
+	ID        int64     `gorm:"primaryKey;column:id" json:"id"`
+	CommentID int64     `gorm:"column:comment_id"    json:"comment_id"`
+	UserID    int64     `gorm:"column:user_id"       json:"user_id"`
+	CreatedAt time.Time `gorm:"column:created_at"    json:"created_at"`
+}
+
+func (CommentLike) TableName() string { return "comment_likes" }
+
+// UserNotification is an in-app notification for a mobile user, raised when
+// someone replies to their comment or likes it. See migration 040.
+type UserNotification struct {
+	ID            int64     `gorm:"primaryKey;column:id"      json:"id"`
+	UserID        int64     `gorm:"column:user_id"           json:"user_id"`         // recipient
+	ActorID       int64     `gorm:"column:actor_id"          json:"actor_id"`        // who triggered it
+	Type          string    `gorm:"column:type"              json:"type"`            // 'reply' | 'like'
+	VideoID       int64     `gorm:"column:video_id"          json:"video_id"`
+	CommentID     *int64    `gorm:"column:comment_id"        json:"comment_id,omitempty"`
+	RootCommentID *int64    `gorm:"column:root_comment_id"   json:"root_comment_id,omitempty"`
+	Content       string    `gorm:"column:content"           json:"content"`
+	IsRead        bool      `gorm:"column:is_read"           json:"is_read"`
+	CreatedAt     time.Time `gorm:"column:created_at"        json:"created_at"`
+}
+
+func (UserNotification) TableName() string { return "user_notifications" }
 
 // VideoDanmaku is one bullet comment anchored to a playback position (TimeMS).
 type VideoDanmaku struct {

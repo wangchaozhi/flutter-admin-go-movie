@@ -43,10 +43,27 @@ class _PlaybackSource {
   });
 }
 
+/// Arguments for the `/player` route when the caller needs more than a [Video]
+/// (e.g. opening from a notification and jumping straight to the comments).
+class PlayerArgs {
+  final model.Video video;
+  final bool scrollToComments;
+
+  const PlayerArgs(this.video, {this.scrollToComments = false});
+}
+
 class VideoPlayerPage extends StatefulWidget {
   final model.Video video;
 
-  const VideoPlayerPage({super.key, required this.video});
+  /// When true the page scrolls to the comment section once laid out. Used when
+  /// arriving from a comment notification.
+  final bool scrollToComments;
+
+  const VideoPlayerPage({
+    super.key,
+    required this.video,
+    this.scrollToComments = false,
+  });
 
   @override
   State<VideoPlayerPage> createState() => _VideoPlayerPageState();
@@ -57,6 +74,9 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   late final Player _player;
   late final VideoController _controller;
   late model.Video _video;
+  // Scroll plumbing so a notification tap can jump straight to the comments.
+  final ScrollController _pageScrollController = ScrollController();
+  final GlobalKey _commentsKey = GlobalKey();
   StreamSubscription<String>? _playerErrorSubscription;
   StreamSubscription<bool>? _playerCompletedSubscription;
   StreamSubscription<Tracks>? _playerTracksSubscription;
@@ -128,6 +148,27 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     ]);
     unawaited(_loadVideoDetail());
     _init();
+    if (widget.scrollToComments) {
+      _scheduleScrollToComments();
+    }
+  }
+
+  // Wait for the page (player + info + comments) to lay out, then bring the
+  // comment section into view. Called when arriving from a notification.
+  void _scheduleScrollToComments() {
+    // Runs once the first frame (player + info + comments) is laid out. The
+    // comments subtree already has a position even while its data loads, so
+    // bringing it into view here lands the viewer in the discussion area.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final ctx = _commentsKey.currentContext;
+      if (ctx == null) return;
+      Scrollable.ensureVisible(
+        ctx,
+        duration: const Duration(milliseconds: 400),
+        curve: Curves.easeOut,
+        alignment: 0.05,
+      );
+    });
   }
 
   @override
@@ -142,6 +183,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     unawaited(_saveProgress(force: true));
     unawaited(_restoreSystemUi());
     _player.dispose();
+    _pageScrollController.dispose();
     _webSubtitleText.dispose();
     _danmakuInput.dispose();
     super.dispose();
@@ -847,6 +889,7 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
             ),
             Expanded(
               child: SingleChildScrollView(
+                controller: _pageScrollController,
                 padding: const EdgeInsets.all(16),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -878,7 +921,10 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
                     _buildDanmakuBar(),
                     const SizedBox(height: 12),
                     _buildVideoInfoSection(),
-                    CommentsSection(videoId: _video.id),
+                    KeyedSubtree(
+                      key: _commentsKey,
+                      child: CommentsSection(videoId: _video.id),
+                    ),
                   ],
                 ),
               ),

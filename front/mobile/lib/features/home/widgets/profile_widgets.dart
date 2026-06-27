@@ -4,6 +4,7 @@ import '../../../core/l10n/app_strings.dart';
 import '../../../core/l10n/locale_controller.dart';
 import '../../../models/video.dart';
 import '../../auth/change_password_sheet.dart';
+import '../../notifications/notifications_page.dart';
 import '../../search/search_page.dart';
 import '../models/home_models.dart';
 
@@ -66,6 +67,7 @@ class HomeTopBar extends StatelessWidget {
               context,
             ).push(MaterialPageRoute<void>(builder: (_) => const SearchPage())),
           ),
+          const NotificationBell(),
           PopupMenuButton<_UserMenuAction>(
             tooltip: s.t('home.mine'),
             color: const Color(0xFF171B24),
