@@ -1170,8 +1170,9 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
         Positioned(right: 8, top: 8, child: _buildFullscreenButton()),
         Positioned(right: 8, top: 52, child: _buildDanmakuToggle()),
         Positioned(right: 8, top: 96, child: _buildDanmakuListButton()),
+        Positioned(left: 8, top: 8, child: _buildBackButton()),
         if (_vipLocked && !_previewBlocked)
-          Positioned(left: 8, top: 8, child: _buildPreviewBadge()),
+          Positioned(left: 8, top: 52, child: _buildPreviewBadge()),
         if (_previewBlocked) _buildVipPaywallOverlay(),
       ],
     );
@@ -1557,6 +1558,25 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
           .toList(),
       child: _glassChip('${_formatRate(_playbackRate)}x'),
     );
+  }
+
+  // Top-left exit arrow on the player surface. In fullscreen it drops back to
+  // the embedded layout (matching the system back gesture); otherwise it leaves
+  // the player page entirely.
+  Widget _buildBackButton() {
+    return _glassIconButton(
+      tooltip: _isFullscreen ? '退出全屏' : '返回',
+      icon: Icons.arrow_back_rounded,
+      onPressed: _handlePlayerBack,
+    );
+  }
+
+  void _handlePlayerBack() {
+    if (_isFullscreen) {
+      unawaited(_exitFullscreen());
+    } else {
+      Navigator.pop(context);
+    }
   }
 
   Widget _buildFullscreenButton() {
