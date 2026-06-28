@@ -109,6 +109,10 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
   bool _refreshingSource = false;
   bool _recoveringPlayback = false;
   bool _isFullscreen = false;
+  // When locked, all on-screen controls hide and the player ignores taps so
+  // playback can't be disturbed by accidental touches; only the lock toggle
+  // stays reachable to unlock again.
+  bool _locked = false;
   double _playbackRate = 1.0;
   // VIP preview gating. When _vipLocked is set, playback is capped at
   // _previewLimit; reaching it pauses and flips _previewBlocked to show the
@@ -1148,31 +1152,68 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     );
   }
 
+  // media_kit only wires up its volume/brightness/seek drag handlers through its
+  // controls theme, and only the *fullscreen* default enables them. This app
+  // uses its own fullscreen (not media_kit's FullscreenInheritedWidget), so the
+  // normal theme is always in effect — enable the gestures there to get the
+  // mainstream behaviour: left-half vertical drag = brightness, right-half =
+  // volume, horizontal drag = seek. All other values match the prior default.
+  static const MaterialVideoControlsThemeData _gestureControls =
+      MaterialVideoControlsThemeData(
+        volumeGesture: true,
+        brightnessGesture: true,
+        seekGesture: true,
+      );
+
   Widget _buildPlayer() {
     return Stack(
       children: [
-        Video(controller: _controller, controls: AdaptiveVideoControls),
+        MaterialVideoControlsTheme(
+          normal: _gestureControls,
+          fullscreen: _gestureControls,
+          child: Video(
+            controller: _controller,
+            controls: _locked ? NoVideoControls : AdaptiveVideoControls,
+          ),
+        ),
         if (_danmakuVisible && !_previewBlocked)
           Positioned.fill(
-            child: DanmakuOverlay(
-              videoId: widget.video.id,
-              player: _player,
-              enabled: _danmakuVisible,
-              controller: _danmakuController,
+            child: IgnorePointer(
+              ignoring: _locked,
+              child: DanmakuOverlay(
+                videoId: widget.video.id,
+                player: _player,
+                enabled: _danmakuVisible,
+                controller: _danmakuController,
+              ),
             ),
           ),
         _buildBufferingIndicator(),
-        _buildCenterPlayButton(),
-        _buildCompletedOverlay(),
         _buildWebSubtitleOverlay(),
-        Positioned(left: 48, bottom: 4, child: _buildPlaybackTools()),
-        Positioned(right: 48, bottom: 4, child: _buildTrackAndQualityMenus()),
-        Positioned(right: 8, top: 8, child: _buildFullscreenButton()),
-        Positioned(right: 8, top: 52, child: _buildDanmakuToggle()),
-        Positioned(right: 8, top: 96, child: _buildDanmakuListButton()),
-        Positioned(left: 8, top: 8, child: _buildBackButton()),
-        if (_vipLocked && !_previewBlocked)
-          Positioned(left: 8, top: 52, child: _buildPreviewBadge()),
+        if (!_locked) ...[
+          _buildCenterPlayButton(),
+          _buildCompletedOverlay(),
+          Positioned(left: 48, bottom: 4, child: _buildPlaybackTools()),
+          Positioned(right: 48, bottom: 4, child: _buildTrackAndQualityMenus()),
+          Positioned(right: 8, top: 8, child: _buildFullscreenButton()),
+          Positioned(right: 8, top: 52, child: _buildDanmakuToggle()),
+          Positioned(right: 8, top: 96, child: _buildDanmakuListButton()),
+          Positioned(left: 8, top: 8, child: _buildBackButton()),
+          if (_vipLocked && !_previewBlocked)
+            Positioned(left: 8, top: 52, child: _buildPreviewBadge()),
+        ],
+        // The lock toggle stays reachable in both states so the screen can be
+        // unlocked again; it only hides behind the VIP paywall.
+        if (!_previewBlocked)
+          Positioned.fill(
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Padding(
+                padding: const EdgeInsets.only(left: 8),
+                child: _buildLockButton(),
+              ),
+            ),
+          ),
         if (_previewBlocked) _buildVipPaywallOverlay(),
       ],
     );
@@ -1577,6 +1618,16 @@ class _VideoPlayerPageState extends State<VideoPlayerPage>
     } else {
       Navigator.pop(context);
     }
+  }
+
+  // Left-edge lock toggle. Locking hides every other control and swallows taps
+  // on the player; tapping it again unlocks and restores the controls.
+  Widget _buildLockButton() {
+    return _glassIconButton(
+      tooltip: _locked ? '解锁屏幕' : '锁定屏幕',
+      icon: _locked ? Icons.lock_rounded : Icons.lock_open_rounded,
+      onPressed: () => setState(() => _locked = !_locked),
+    );
   }
 
   Widget _buildFullscreenButton() {

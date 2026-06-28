@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import 'session.dart';
@@ -17,13 +18,19 @@ class ApiException implements Exception {
 }
 
 class ApiClient {
-  // Default targets the backend on the same machine. Android emulator
-  // (10.0.2.2), a physical device (LAN IP) or web/desktop pointing elsewhere
-  // should override this with --dart-define=API_BASE_URL=...
-  static const String baseUrl = String.fromEnvironment(
+  static const String _configuredBaseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'http://localhost:8080',
   );
+
+  // Android devices use the host's current LAN IP in this dev environment.
+  // Override it with --dart-define=API_BASE_URL=... when the network changes.
+  static String get baseUrl {
+    if (_configuredBaseUrl.isNotEmpty) return _configuredBaseUrl;
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      return 'http://192.168.1.15:8080';
+    }
+    return 'http://localhost:8080';
+  }
 
   /// Backend code returned when the authenticated account has been banned
   /// mid-session. The app reacts by clearing the session and returning to login.

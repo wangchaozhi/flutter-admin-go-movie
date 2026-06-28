@@ -5,7 +5,7 @@ param(
   [switch]$SkipInstall,
   [switch]$Restart,
   [string]$BindHost = "0.0.0.0",
-  [string]$HostName = "localhost",
+  [string]$HostName = "192.168.1.15",
   [int]$AdminPort = 5173,
   [int]$MobilePort = 5174
 )

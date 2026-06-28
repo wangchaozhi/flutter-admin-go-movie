@@ -17,8 +17,8 @@ minio:
 
 video:
   hls_secret: "dev_secret"
-  video_base_url: ""
-  api_base_url: "http://localhost:8080"
+  video_base_url: "http://192.168.1.15:8081"
+  api_base_url: "http://192.168.1.15:8080"
 
 auth:
   jwt_secret: "dev_jwt_secret_change_in_prod"
@@ -33,7 +33,7 @@ ai:
 
 payment:
   mock_enabled: true
-  public_base_url: "http://localhost:8080"
+  public_base_url: "http://192.168.1.15:8080"
   default_currency: "USD"
   stripe_secret_key: ""
   stripe_webhook_key: ""
