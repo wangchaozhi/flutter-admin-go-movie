@@ -96,9 +96,9 @@ class _CommentsSectionState extends State<CommentsSection> {
   bool _submitting = false;
   String? _username;
 
-  // When set, the composer is in reply mode targeting this comment; otherwise
-  // it edits/creates the caller's own review.
-  VideoComment? _replyTo;
+  // True while the caller is actively editing their existing review, so the
+  // composer stays visible even though _ownReview is set.
+  bool _editing = false;
   // The caller's existing review (if any), used to prefill the composer so a
   // re-post is an explicit edit.
   VideoComment? _ownReview;
@@ -161,57 +161,55 @@ class _CommentsSectionState extends State<CommentsSection> {
   bool _isOwn(VideoComment c) =>
       _username != null && c.username.isNotEmpty && c.username == _username;
 
-  void _startReply(VideoComment target) {
-    setState(() {
-      _replyTo = target;
-      _controller.clear();
-    });
-    _inputFocus.requestFocus();
+  // Show the composer for active edits or a first-time review. Once the caller
+  // has their own review it disappears; they re-open it via the edit icon on
+  // their own review tile. Replies use a bottom sheet, not this composer.
+  bool get _showComposer => _editing || (!_loading && _ownReview == null);
+
+  // Replies are composed in a bottom sheet anchored above the keyboard. On a
+  // successful post we expand the root review and reload so the reply shows.
+  Future<void> _startReply(VideoComment target) async {
+    final sent = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _ReplySheet(target: target, videoId: widget.videoId),
+    );
+    if (sent == true && mounted) {
+      _expanded.add(target.parentId ?? target.id);
+      await _load();
+    }
   }
 
   void _startEditReview() {
     final own = _ownReview;
     if (own == null) return;
     setState(() {
-      _replyTo = null;
+      _editing = true;
       _controller.text = own.content;
       _draftRating = own.rating;
     });
     _inputFocus.requestFocus();
   }
 
-  void _cancelReply() {
+  void _cancelEdit() {
     setState(() {
-      _replyTo = null;
+      _editing = false;
+      _draftRating = 0;
       _controller.clear();
     });
   }
 
   Future<void> _submit() async {
     final content = _controller.text.trim();
-    final replyTo = _replyTo;
-    if (replyTo != null) {
-      if (content.isEmpty) {
-        _snack('写点回复内容吧');
-        return;
-      }
-    } else if (content.isEmpty && _draftRating == 0) {
+    if (content.isEmpty && _draftRating == 0) {
       _snack('写点短评或选择一个评分');
       return;
     }
     setState(() => _submitting = true);
     try {
       final Map<String, dynamic> resp;
-      if (replyTo != null) {
-        resp = await ApiClient().postAuth(
-          '/api/videos/${widget.videoId}/comments',
-          {
-            'content': content,
-            'parent_id': replyTo.id,
-            'reply_to_user_id': replyTo.userId,
-          },
-        );
-      } else if (_ownReview != null) {
+      if (_ownReview != null) {
         resp = await ApiClient().putAuth(
           '/api/mobile/comments/${_ownReview!.id}',
           {'content': content, 'rating': _draftRating},
@@ -227,10 +225,9 @@ class _CommentsSectionState extends State<CommentsSection> {
         _controller.clear();
         setState(() {
           _draftRating = 0;
-          _replyTo = null;
+          _editing = false;
         });
         FocusScope.of(context).unfocus();
-        if (replyTo != null) _expanded.add(replyTo.parentId ?? replyTo.id);
         await _load();
       } else {
         _snack(resp['msg']?.toString() ?? '提交失败');
@@ -354,8 +351,10 @@ class _CommentsSectionState extends State<CommentsSection> {
             ],
           ],
         ),
-        const SizedBox(height: 12),
-        _buildComposer(),
+        if (_showComposer) ...[
+          const SizedBox(height: 12),
+          _buildComposer(),
+        ],
         const SizedBox(height: 16),
         if (_loading)
           const Padding(
@@ -376,8 +375,6 @@ class _CommentsSectionState extends State<CommentsSection> {
   }
 
   Widget _buildComposer() {
-    final replyTo = _replyTo;
-    final isReply = replyTo != null;
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
@@ -388,38 +385,26 @@ class _CommentsSectionState extends State<CommentsSection> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (isReply)
-            Row(
-              children: [
-                const Icon(Icons.reply, color: _accent, size: 16),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    '回复 @${replyTo.displayName}',
-                    style: const TextStyle(color: _accent, fontSize: 13),
-                    overflow: TextOverflow.ellipsis,
-                  ),
+          Row(
+            children: [
+              Text(
+                _ownReview == null ? '给影片评分' : '修改你的影评',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w800,
                 ),
+              ),
+              const Spacer(),
+              _buildStarSelector(),
+              if (_editing) ...[
+                const SizedBox(width: 4),
                 GestureDetector(
-                  onTap: _cancelReply,
+                  onTap: _cancelEdit,
                   child: const Icon(Icons.close, color: _muted, size: 18),
                 ),
               ],
-            )
-          else
-            Row(
-              children: [
-                Text(
-                  _ownReview == null ? '给影片评分' : '修改你的影评',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const Spacer(),
-                _buildStarSelector(),
-              ],
-            ),
+            ],
+          ),
           const SizedBox(height: 8),
           TextField(
             controller: _controller,
@@ -429,11 +414,11 @@ class _CommentsSectionState extends State<CommentsSection> {
             maxLength: 1000,
             style: const TextStyle(color: Colors.white),
             cursorColor: _accent,
-            decoration: InputDecoration(
-              hintText: isReply ? '回复 @${replyTo.displayName}' : '写下观后感，或只给一个评分',
-              hintStyle: const TextStyle(color: _muted),
+            decoration: const InputDecoration(
+              hintText: '写下观后感，或只给一个评分',
+              hintStyle: TextStyle(color: _muted),
               border: InputBorder.none,
-              counterStyle: const TextStyle(color: _muted),
+              counterStyle: TextStyle(color: _muted),
             ),
           ),
           Align(
@@ -447,8 +432,6 @@ class _CommentsSectionState extends State<CommentsSection> {
               child: Text(
                 _submitting
                     ? '提交中...'
-                    : isReply
-                    ? '回复'
                     : _ownReview == null
                     ? '发布'
                     : '更新影评',
@@ -670,5 +653,131 @@ class _CommentsSectionState extends State<CommentsSection> {
     final local = parsed.toLocal();
     String two(int n) => n.toString().padLeft(2, '0');
     return '${local.year}-${two(local.month)}-${two(local.day)} ${two(local.hour)}:${two(local.minute)}';
+  }
+}
+
+/// Bottom-sheet composer for a single reply. Pops `true` once the reply is
+/// posted so the caller can refresh; pops `false`/null when dismissed.
+class _ReplySheet extends StatefulWidget {
+  const _ReplySheet({required this.target, required this.videoId});
+
+  final VideoComment target;
+  final int videoId;
+
+  @override
+  State<_ReplySheet> createState() => _ReplySheetState();
+}
+
+class _ReplySheetState extends State<_ReplySheet> {
+  final _controller = TextEditingController();
+  bool _submitting = false;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _snack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _send() async {
+    final content = _controller.text.trim();
+    if (content.isEmpty) {
+      _snack('写点回复内容吧');
+      return;
+    }
+    setState(() => _submitting = true);
+    try {
+      final resp = await ApiClient().postAuth(
+        '/api/videos/${widget.videoId}/comments',
+        {
+          'content': content,
+          'parent_id': widget.target.id,
+          'reply_to_user_id': widget.target.userId,
+        },
+      );
+      if (!mounted) return;
+      if (resp['code'] == 0) {
+        Navigator.pop(context, true);
+      } else {
+        setState(() => _submitting = false);
+        _snack(resp['msg']?.toString() ?? '回复失败');
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _submitting = false);
+      _snack('回复失败，请稍后再试');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hint = '回复 @${widget.target.displayName}';
+    return Padding(
+      // Lift the sheet above the on-screen keyboard.
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+        decoration: const BoxDecoration(
+          color: _surface,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.reply, color: _accent, size: 16),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    hint,
+                    style: const TextStyle(color: _accent, fontSize: 13),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                GestureDetector(
+                  onTap: () => Navigator.pop(context, false),
+                  child: const Icon(Icons.close, color: _muted, size: 18),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _controller,
+              autofocus: true,
+              maxLines: 4,
+              minLines: 1,
+              maxLength: 1000,
+              style: const TextStyle(color: Colors.white),
+              cursorColor: _accent,
+              decoration: InputDecoration(
+                hintText: hint,
+                hintStyle: const TextStyle(color: _muted),
+                border: InputBorder.none,
+                counterStyle: const TextStyle(color: _muted),
+              ),
+            ),
+            Align(
+              alignment: Alignment.centerRight,
+              child: ElevatedButton(
+                onPressed: _submitting ? null : _send,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _accent,
+                  foregroundColor: Colors.black,
+                ),
+                child: Text(_submitting ? '提交中...' : '回复'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
