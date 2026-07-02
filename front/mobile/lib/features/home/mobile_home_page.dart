@@ -24,6 +24,7 @@ class _MobileHomePageState extends State<MobileHomePage> {
 
   List<Category> _categories = [];
   List<Video> _videos = [];
+  List<Video> _catalogVideos = [];
   List<Video> _railPopular = [];
   List<Video> _railLatest = [];
   List<Video> _railVip = [];
@@ -35,6 +36,7 @@ class _MobileHomePageState extends State<MobileHomePage> {
   List<FavoriteEntry> _favorites = [];
   bool _loadingCategories = true;
   bool _loadingVideos = false;
+  bool _loadingCatalog = false;
   bool _loadingProfile = false;
   bool _loadingOrders = false;
   bool _loadingHistory = false;
@@ -99,10 +101,9 @@ class _MobileHomePageState extends State<MobileHomePage> {
       if (!mounted) return;
       if (resp['code'] == 0) {
         final data = resp['data'] as Map<String, dynamic>? ?? {};
-        List<Video> parse(String key) =>
-            (data[key] as List<dynamic>? ?? [])
-                .map((e) => Video.fromJson(e as Map<String, dynamic>))
-                .toList();
+        List<Video> parse(String key) => (data[key] as List<dynamic>? ?? [])
+            .map((e) => Video.fromJson(e as Map<String, dynamic>))
+            .toList();
         // The continue rail carries per-video watch progress alongside the
         // video, so build a lookup keyed by video id for the progress bars.
         final continueRaw = data['continue'] as List<dynamic>? ?? [];
@@ -160,12 +161,39 @@ class _MobileHomePageState extends State<MobileHomePage> {
         final list = (data?['items'] as List<dynamic>? ?? [])
             .map((e) => Video.fromJson(e as Map<String, dynamic>))
             .toList();
-        setState(() => _videos = list);
+        setState(() {
+          _videos = list;
+          if (categoryId == 0 && !vipOnly) {
+            _catalogVideos = list;
+          }
+        });
       }
     } catch (_) {
       // ignore network errors — keep existing list
     } finally {
       if (mounted) setState(() => _loadingVideos = false);
+    }
+  }
+
+  Future<void> _ensureCatalogVideos({bool force = false}) async {
+    if (!force && _catalogVideos.isNotEmpty) return;
+    if (_loadingCatalog) return;
+    if (!mounted) return;
+    setState(() => _loadingCatalog = true);
+    try {
+      final resp = await ApiClient().get('/api/videos?per_page=80');
+      if (!mounted) return;
+      if (resp['code'] == 0) {
+        final data = resp['data'] as Map<String, dynamic>?;
+        final list = (data?['items'] as List<dynamic>? ?? [])
+            .map((e) => Video.fromJson(e as Map<String, dynamic>))
+            .toList();
+        setState(() => _catalogVideos = list);
+      }
+    } catch (_) {
+      // Keep the existing catalog snapshot if refreshing fails.
+    } finally {
+      if (mounted) setState(() => _loadingCatalog = false);
     }
   }
 
@@ -236,7 +264,9 @@ class _MobileHomePageState extends State<MobileHomePage> {
         });
       } else {
         setState(() {
-          _profileError = resp['msg']?.toString() ?? AppStrings.of(context).t('home.profileLoadFailed');
+          _profileError =
+              resp['msg']?.toString() ??
+              AppStrings.of(context).t('home.profileLoadFailed');
           _loadingProfile = false;
         });
       }
@@ -412,9 +442,11 @@ class _MobileHomePageState extends State<MobileHomePage> {
     setState(() => _selectedNav = index);
     switch (index) {
       case 1:
+        _ensureCatalogVideos();
         if (!_favoritesLoaded) _loadFavorites();
         if (_profile == null) _loadProfile();
       case 2:
+        _ensureCatalogVideos();
         _loadLibrary();
       case 3:
         _loadProfileCenter(force: true);
@@ -427,12 +459,17 @@ class _MobileHomePageState extends State<MobileHomePage> {
     final tabs = [s.t('home.all'), 'VIP', ..._categories.map((c) => c.name)];
     final featuredVideo = _videos.where((v) => v.isReady).firstOrNull;
     final favoriteVideoIds = _favorites.map((entry) => entry.video.id).toSet();
+    final catalogVideos = _catalogVideos.isNotEmpty ? _catalogVideos : _videos;
+    final condenseHomeList = _selectedCategoryIndex == 0;
+    final homeListVideos = condenseHomeList
+        ? _videos.where((video) => video.isReady).take(8).toList()
+        : _videos;
 
     final content = switch (_selectedNav) {
       1 => DiscoverView(
         categories: _categories,
-        videos: _videos,
-        loading: _loadingVideos,
+        videos: catalogVideos,
+        loading: _loadingCatalog || (catalogVideos.isEmpty && _loadingVideos),
         favoriteVideoIds: favoriteVideoIds,
         onOpenVideo: _openVideo,
         onToggleFavorite: (video) => favoriteVideoIds.contains(video.id)
@@ -446,7 +483,7 @@ class _MobileHomePageState extends State<MobileHomePage> {
       2 => PlaylistView(
         favorites: _favorites,
         history: _history,
-        videos: _videos,
+        videos: catalogVideos,
         loadingFavorites: _loadingFavorites,
         loadingHistory: _loadingHistory,
         onOpenVideo: _openVideo,
@@ -463,7 +500,6 @@ class _MobileHomePageState extends State<MobileHomePage> {
         loadingProfile: _loadingProfile,
         loadingOrders: _loadingOrders,
         error: _profileError,
-        videos: _videos,
         historyCount: _history.length,
         favoriteCount: _favorites.length,
         onOpenVip: () {
@@ -560,26 +596,65 @@ class _MobileHomePageState extends State<MobileHomePage> {
                 ),
               ),
             )
-          else if (_videos.isEmpty)
+          else if (homeListVideos.isEmpty)
             SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsets.all(48),
                 child: Center(
                   child: Text(
-                    _selectedCategoryIndex == 1 ? s.t('home.emptyVip') : s.t('home.emptyVideos'),
+                    _selectedCategoryIndex == 1
+                        ? s.t('home.emptyVip')
+                        : s.t('home.emptyVideos'),
                     style: const TextStyle(color: Color(0xFF9CA3AF)),
                   ),
                 ),
               ),
             )
           else
+            SliverToBoxAdapter(
+              child: _HomeListHeader(
+                title: condenseHomeList ? '片库速览' : tabs[_selectedCategoryIndex],
+                subtitle: condenseHomeList
+                    ? '先展示最近可播放的内容，更多影片去发现页浏览'
+                    : '当前频道共 ${homeListVideos.length} 部内容',
+              ),
+            ),
+          if (!_loadingVideos && homeListVideos.isNotEmpty)
             SliverPadding(
-              padding: const EdgeInsets.fromLTRB(16, 18, 16, 112),
+              padding: EdgeInsets.fromLTRB(
+                16,
+                12,
+                16,
+                condenseHomeList && _videos.length > homeListVideos.length
+                    ? 16
+                    : 112,
+              ),
               sliver: SliverList.separated(
-                itemCount: _videos.length,
+                itemCount: homeListVideos.length,
                 separatorBuilder: (_, _) => const SizedBox(height: 14),
                 itemBuilder: (context, index) =>
-                    VideoTile(video: _videos[index], onTap: _openVideo),
+                    VideoTile(video: homeListVideos[index], onTap: _openVideo),
+              ),
+            ),
+          if (!_loadingVideos &&
+              condenseHomeList &&
+              _videos.length > homeListVideos.length)
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 112),
+                child: OutlinedButton.icon(
+                  onPressed: () => _onNavSelected(1),
+                  icon: const Icon(Icons.explore_rounded),
+                  label: const Text('去发现页浏览全部影片'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF25D0AB),
+                    side: const BorderSide(color: Color(0x6625D0AB)),
+                    minimumSize: const Size.fromHeight(44),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                ),
               ),
             ),
         ],
@@ -592,6 +667,51 @@ class _MobileHomePageState extends State<MobileHomePage> {
       bottomNavigationBar: HomeBottomNav(
         selectedIndex: _selectedNav,
         onSelected: _onNavSelected,
+      ),
+    );
+  }
+}
+
+class _HomeListHeader extends StatelessWidget {
+  const _HomeListHeader({required this.title, required this.subtitle});
+
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  subtitle,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF9CA3AF),
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

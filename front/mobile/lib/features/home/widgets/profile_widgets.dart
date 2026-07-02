@@ -349,7 +349,6 @@ class ProfileCenter extends StatelessWidget {
     required this.loadingProfile,
     required this.loadingOrders,
     required this.error,
-    required this.videos,
     required this.historyCount,
     required this.favoriteCount,
     required this.onOpenVip,
@@ -367,7 +366,6 @@ class ProfileCenter extends StatelessWidget {
   final bool loadingProfile;
   final bool loadingOrders;
   final String error;
-  final List<Video> videos;
   final int historyCount;
   final int favoriteCount;
   final VoidCallback onOpenVip;
@@ -385,10 +383,6 @@ class ProfileCenter extends StatelessWidget {
         profile?.displayName ??
         (username.isEmpty ? s.t('profile.mobileUser') : username);
     final isVip = profile?.isVip ?? false;
-    final readyCount = videos.where((video) => video.isReady).length;
-    final vipCount = videos
-        .where((video) => video.isVip && !video.isFree)
-        .length;
 
     return RefreshIndicator(
       color: const Color(0xFF25D0AB),
@@ -427,12 +421,6 @@ class ProfileCenter extends StatelessWidget {
             onOpenVip: onOpenVip,
           ),
           const SizedBox(height: 14),
-          _VipMemberCard(
-            isVip: isVip,
-            vipUntilLabel: profile?.vipUntilLabel ?? '',
-            onTap: onOpenVip,
-          ),
-          const SizedBox(height: 14),
           _ShortcutGrid(
             items: [
               _ShortcutItem(
@@ -440,7 +428,7 @@ class ProfileCenter extends StatelessWidget {
                 s.t('center.history'),
                 historyCount > 0
                     ? s.t('center.historyCount', {'n': '$historyCount'})
-                    : s.t('center.watchable', {'n': '$readyCount'}),
+                    : s.t('center.noHistory'),
                 onOpenHistory,
               ),
               _ShortcutItem(
@@ -466,7 +454,17 @@ class ProfileCenter extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 14),
-          _WatchSummaryCard(readyCount: readyCount, vipCount: vipCount),
+          _VipMemberCard(
+            isVip: isVip,
+            vipUntilLabel: profile?.vipUntilLabel ?? '',
+            onTap: onOpenVip,
+          ),
+          const SizedBox(height: 14),
+          _ActivitySummaryCard(
+            historyCount: historyCount,
+            favoriteCount: favoriteCount,
+            orderCount: orders.length,
+          ),
           const SizedBox(height: 14),
           _RecentOrdersCard(orders: orders, loading: loadingOrders),
           const SizedBox(height: 14),
@@ -910,133 +908,135 @@ class _SettingsSheetState extends State<SettingsSheet> {
     final currentCode = AppLocale.codeOf(Localizations.localeOf(context));
     return SafeArea(
       top: false,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              s.t('settings.title'),
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 20,
-                fontWeight: FontWeight.w900,
+      child: SingleChildScrollView(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                s.t('settings.title'),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w900,
+                ),
               ),
-            ),
-            const SizedBox(height: 12),
-            SwitchListTile.adaptive(
-              value: _setting.autoPlay,
-              activeThumbColor: const Color(0xFF25D0AB),
-              contentPadding: EdgeInsets.zero,
-              title: Text(
-                s.t('settings.autoPlay'),
+              const SizedBox(height: 12),
+              SwitchListTile.adaptive(
+                value: _setting.autoPlay,
+                activeThumbColor: const Color(0xFF25D0AB),
+                contentPadding: EdgeInsets.zero,
+                title: Text(
+                  s.t('settings.autoPlay'),
+                  style: const TextStyle(color: Colors.white),
+                ),
+                subtitle: Text(
+                  s.t('settings.autoPlaySub'),
+                  style: const TextStyle(color: Color(0xFF9CA3AF)),
+                ),
+                onChanged: _saving
+                    ? null
+                    : (value) => _save(_setting.copyWith(autoPlay: value)),
+              ),
+              SwitchListTile.adaptive(
+                value: _setting.wifiOnly,
+                activeThumbColor: const Color(0xFF25D0AB),
+                contentPadding: EdgeInsets.zero,
+                title: Text(
+                  s.t('settings.wifiOnly'),
+                  style: const TextStyle(color: Colors.white),
+                ),
+                subtitle: Text(
+                  s.t('settings.wifiOnlySub'),
+                  style: const TextStyle(color: Color(0xFF9CA3AF)),
+                ),
+                onChanged: _saving
+                    ? null
+                    : (value) => _save(_setting.copyWith(wifiOnly: value)),
+              ),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<String>(
+                initialValue: _setting.preferredQuality,
+                dropdownColor: const Color(0xFF171B24),
+                decoration: InputDecoration(
+                  labelText: s.t('settings.quality'),
+                  labelStyle: const TextStyle(color: Color(0xFF9CA3AF)),
+                  enabledBorder: const OutlineInputBorder(
+                    borderSide: BorderSide(color: Color(0xFF2B3140)),
+                  ),
+                  focusedBorder: const OutlineInputBorder(
+                    borderSide: BorderSide(color: Color(0xFF25D0AB)),
+                  ),
+                ),
                 style: const TextStyle(color: Colors.white),
+                items: [
+                  DropdownMenuItem(
+                    value: 'auto',
+                    child: Text(s.t('settings.qualityAuto')),
+                  ),
+                  const DropdownMenuItem(value: '720p', child: Text('720p')),
+                  const DropdownMenuItem(value: '1080p', child: Text('1080p')),
+                ],
+                onChanged: _saving || _setting.preferredQuality.isEmpty
+                    ? null
+                    : (value) => _save(
+                        _setting.copyWith(preferredQuality: value ?? 'auto'),
+                      ),
               ),
-              subtitle: Text(
-                s.t('settings.autoPlaySub'),
-                style: const TextStyle(color: Color(0xFF9CA3AF)),
-              ),
-              onChanged: _saving
-                  ? null
-                  : (value) => _save(_setting.copyWith(autoPlay: value)),
-            ),
-            SwitchListTile.adaptive(
-              value: _setting.wifiOnly,
-              activeThumbColor: const Color(0xFF25D0AB),
-              contentPadding: EdgeInsets.zero,
-              title: Text(
-                s.t('settings.wifiOnly'),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                initialValue: currentCode,
+                dropdownColor: const Color(0xFF171B24),
+                decoration: InputDecoration(
+                  labelText: s.t('settings.language'),
+                  labelStyle: const TextStyle(color: Color(0xFF9CA3AF)),
+                  prefixIcon: const Icon(
+                    Icons.language_rounded,
+                    color: Color(0xFF25D0AB),
+                  ),
+                  enabledBorder: const OutlineInputBorder(
+                    borderSide: BorderSide(color: Color(0xFF2B3140)),
+                  ),
+                  focusedBorder: const OutlineInputBorder(
+                    borderSide: BorderSide(color: Color(0xFF25D0AB)),
+                  ),
+                ),
                 style: const TextStyle(color: Colors.white),
+                items: [
+                  for (final item in AppLocale.values)
+                    DropdownMenuItem(value: item.code, child: Text(item.label)),
+                ],
+                onChanged: (code) {
+                  if (code != null) {
+                    localeController.setLocale(AppLocale.byCode(code).locale);
+                  }
+                },
               ),
-              subtitle: Text(
-                s.t('settings.wifiOnlySub'),
-                style: const TextStyle(color: Color(0xFF9CA3AF)),
-              ),
-              onChanged: _saving
-                  ? null
-                  : (value) => _save(_setting.copyWith(wifiOnly: value)),
-            ),
-            const SizedBox(height: 8),
-            DropdownButtonFormField<String>(
-              initialValue: _setting.preferredQuality,
-              dropdownColor: const Color(0xFF171B24),
-              decoration: InputDecoration(
-                labelText: s.t('settings.quality'),
-                labelStyle: const TextStyle(color: Color(0xFF9CA3AF)),
-                enabledBorder: const OutlineInputBorder(
-                  borderSide: BorderSide(color: Color(0xFF2B3140)),
-                ),
-                focusedBorder: const OutlineInputBorder(
-                  borderSide: BorderSide(color: Color(0xFF25D0AB)),
-                ),
-              ),
-              style: const TextStyle(color: Colors.white),
-              items: [
-                DropdownMenuItem(
-                  value: 'auto',
-                  child: Text(s.t('settings.qualityAuto')),
-                ),
-                const DropdownMenuItem(value: '720p', child: Text('720p')),
-                const DropdownMenuItem(value: '1080p', child: Text('1080p')),
-              ],
-              onChanged: _saving || _setting.preferredQuality.isEmpty
-                  ? null
-                  : (value) => _save(
-                      _setting.copyWith(preferredQuality: value ?? 'auto'),
-                    ),
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              initialValue: currentCode,
-              dropdownColor: const Color(0xFF171B24),
-              decoration: InputDecoration(
-                labelText: s.t('settings.language'),
-                labelStyle: const TextStyle(color: Color(0xFF9CA3AF)),
-                prefixIcon: const Icon(
-                  Icons.language_rounded,
+              const SizedBox(height: 8),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(
+                  Icons.lock_reset_rounded,
                   color: Color(0xFF25D0AB),
                 ),
-                enabledBorder: const OutlineInputBorder(
-                  borderSide: BorderSide(color: Color(0xFF2B3140)),
+                title: Text(
+                  s.t('settings.changePassword'),
+                  style: const TextStyle(color: Colors.white),
                 ),
-                focusedBorder: const OutlineInputBorder(
-                  borderSide: BorderSide(color: Color(0xFF25D0AB)),
+                subtitle: Text(
+                  s.t('settings.changePasswordSub'),
+                  style: const TextStyle(color: Color(0xFF9CA3AF)),
                 ),
+                trailing: const Icon(
+                  Icons.chevron_right_rounded,
+                  color: Color(0xFF9CA3AF),
+                ),
+                onTap: () => showChangePasswordSheet(context),
               ),
-              style: const TextStyle(color: Colors.white),
-              items: [
-                for (final item in AppLocale.values)
-                  DropdownMenuItem(value: item.code, child: Text(item.label)),
-              ],
-              onChanged: (code) {
-                if (code != null) {
-                  localeController.setLocale(AppLocale.byCode(code).locale);
-                }
-              },
-            ),
-            const SizedBox(height: 8),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: const Icon(
-                Icons.lock_reset_rounded,
-                color: Color(0xFF25D0AB),
-              ),
-              title: Text(
-                s.t('settings.changePassword'),
-                style: const TextStyle(color: Colors.white),
-              ),
-              subtitle: Text(
-                s.t('settings.changePasswordSub'),
-                style: const TextStyle(color: Color(0xFF9CA3AF)),
-              ),
-              trailing: const Icon(
-                Icons.chevron_right_rounded,
-                color: Color(0xFF9CA3AF),
-              ),
-              onTap: () => showChangePasswordSheet(context),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -1116,31 +1116,43 @@ class _VideoActionRow extends StatelessWidget {
   }
 }
 
-class _WatchSummaryCard extends StatelessWidget {
-  const _WatchSummaryCard({required this.readyCount, required this.vipCount});
+class _ActivitySummaryCard extends StatelessWidget {
+  const _ActivitySummaryCard({
+    required this.historyCount,
+    required this.favoriteCount,
+    required this.orderCount,
+  });
 
-  final int readyCount;
-  final int vipCount;
+  final int historyCount;
+  final int favoriteCount;
+  final int orderCount;
 
   @override
   Widget build(BuildContext context) {
     final s = AppStrings.of(context);
     return _SectionCard(
-      title: s.t('center.history'),
+      title: '账号活动',
       trailing: s.t('center.continueWatch'),
       child: Row(
         children: [
           Expanded(
             child: _MetricBox(
-              label: s.t('center.watchableShort'),
-              value: '$readyCount',
+              label: s.t('center.history'),
+              value: '$historyCount',
             ),
           ),
           const SizedBox(width: 10),
           Expanded(
             child: _MetricBox(
-              label: s.t('center.vipExclusive'),
-              value: '$vipCount',
+              label: s.t('center.favorites'),
+              value: '$favoriteCount',
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: _MetricBox(
+              label: s.t('center.orders'),
+              value: '$orderCount',
             ),
           ),
         ],
