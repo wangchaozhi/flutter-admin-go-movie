@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { FolderOpen, Loader, Pencil, Trash2 } from 'lucide-react'
-import type { ApiResponse, Category, CategoryForm } from '../../adminTypes'
+import type { Category, CategoryForm } from '../../adminTypes'
 import { PanelTitle } from '../../components/shared'
+import { adminRequest } from '../../core/adminApi'
+import { confirmAction, showError, showSuccess } from '../../core/feedback'
 
 const emptyForm: CategoryForm = { name: '', sort_order: 0 }
 
@@ -16,13 +18,17 @@ export function CategoryManagementSection({
   const [categories, setCategories] = useState<Category[]>([])
   const [form, setForm] = useState<CategoryForm>(emptyForm)
   const [saving, setSaving] = useState(false)
-
-  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+  const [error, setError] = useState('')
 
   async function load() {
-    const res = await fetch('/api/admin/categories', { headers })
-    const json: ApiResponse<Category[]> = await res.json()
-    if (json.code === 0) setCategories(json.data ?? [])
+    try {
+      const data = await adminRequest<Category[]>('/api/admin/categories', { token })
+      setCategories(data ?? [])
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '加载类别失败'
+      setError(message)
+      showError(message)
+    }
   }
 
   // mount-only load; `load` is recreated each render so it stays out of deps
@@ -33,32 +39,55 @@ export function CategoryManagementSection({
     e.preventDefault()
     if (!form.name.trim()) return
     setSaving(true)
+    setError('')
     try {
       const url = form.id ? `/api/admin/categories/${form.id}` : '/api/admin/categories'
       const method = form.id ? 'PUT' : 'POST'
-      await fetch(url, { method, headers, body: JSON.stringify(form) })
+      await adminRequest<unknown>(url, { method, token, body: JSON.stringify(form) })
       setForm(emptyForm)
-      load()
+      await load()
+      showSuccess(form.id ? '类别已保存' : '类别已创建')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '保存类别失败'
+      setError(message)
+      showError(message)
     } finally {
       setSaving(false)
     }
   }
 
   async function handleDelete(id: number) {
-    if (!window.confirm('确认删除该类别？')) return
-    await fetch(`/api/admin/categories/${id}`, { method: 'DELETE', headers })
+    const confirmed = await confirmAction({
+      title: '删除类别',
+      message: '确认删除该类别？删除后无法恢复。',
+      confirmLabel: '删除',
+      variant: 'danger',
+    })
+    if (!confirmed) return
+    setError('')
+    try {
+      await adminRequest<unknown>(`/api/admin/categories/${id}`, { method: 'DELETE', token })
+      showSuccess('类别已删除')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '删除类别失败'
+      setError(message)
+      showError(message)
+      return
+    }
     if (form.id === id) setForm(emptyForm)
-    load()
+    await load()
   }
 
   const canCreate = can('category:create')
   const canEdit = can('category:edit')
   const canDelete = can('category:delete')
+  const canSave = form.id ? canEdit : canCreate
 
   return (
     <section className="content-grid">
       <section className="table-panel">
         <PanelTitle title="类别列表" count={categories.length} />
+        {error && <span className="status error">{error}</span>}
         <div className="table-wrap">
           <table>
             <thead>
@@ -120,13 +149,15 @@ export function CategoryManagementSection({
             />
           </label>
           <div className="form-actions">
-            {(canCreate || canEdit) && (
+            {canSave && (
               <button type="submit" disabled={saving}>
                 {saving ? <Loader size={14} className="spin" /> : <FolderOpen size={14} />}
                 {form.id ? '保存' : '创建'}
               </button>
             )}
-            <button type="button" className="secondary" onClick={() => setForm(emptyForm)}>重置</button>
+            <button type="button" className="secondary" onClick={() => setForm(emptyForm)}>
+              {form.id ? '取消' : '重置'}
+            </button>
           </div>
         </form>
       </div>

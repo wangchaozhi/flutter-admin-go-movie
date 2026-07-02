@@ -1,18 +1,15 @@
 import { useEffect, useState } from 'react'
 import { RefreshCw } from 'lucide-react'
 
-import type { ApiResponse, AuditLog, Paged } from '../../adminTypes'
+import type { AuditLog, Paged } from '../../adminTypes'
 import { PanelTitle, Pagination } from '../../components/shared'
+import { adminRequest } from '../../core/adminApi'
+import { showError } from '../../core/feedback'
 
 const PER_PAGE = 20
 
 async function request<T>(url: string, token: string, init: RequestInit = {}): Promise<T> {
-  const headers = new Headers(init.headers)
-  headers.set('Authorization', `Bearer ${token}`)
-  const res = await fetch(url, { ...init, headers })
-  const body = (await res.json()) as ApiResponse<T>
-  if (!res.ok || body.code !== 0) throw new Error(body.msg || '请求失败')
-  return body.data as T
+  return adminRequest<T>(url, { ...init, token })
 }
 
 function formatDateTime(value: string) {
@@ -49,7 +46,9 @@ export function AuditLogsSection({ token }: { token: string }) {
       setLogs(data?.items ?? [])
       setTotal(data?.total ?? 0)
     } catch (err) {
-      setError(err instanceof Error ? err.message : '加载审计日志失败')
+      const message = err instanceof Error ? err.message : '加载审计日志失败'
+      setError(message)
+      showError(message)
     } finally {
       setLoading(false)
     }

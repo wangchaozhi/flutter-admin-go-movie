@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Ban, Check, Copy, Loader, Ticket } from 'lucide-react'
 
-import type { ApiResponse, InviteCode } from '../../adminTypes'
+import type { InviteCode } from '../../adminTypes'
 import { PanelTitle } from '../../components/shared'
+import { adminRequest } from '../../core/adminApi'
+import { confirmAction, showError, showSuccess } from '../../core/feedback'
 import { useI18n } from '../../i18n'
 
 type InviteForm = {
@@ -29,16 +31,14 @@ export function InviteCodeManagementSection({
   const [error, setError] = useState('')
   const [copied, setCopied] = useState('')
 
-  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-
   async function load() {
     try {
-      const res = await fetch('/api/admin/invite-codes', { headers })
-      const json: ApiResponse<InviteCode[]> = await res.json()
-      if (json.code === 0) setCodes(json.data ?? [])
-      else setError(json.msg || t('invite.loadFailed'))
-    } catch {
-      setError(t('invite.loadFailed'))
+      const data = await adminRequest<InviteCode[]>('/api/admin/invite-codes', { token })
+      setCodes(data ?? [])
+    } catch (err) {
+      const message = err instanceof Error ? err.message : t('invite.loadFailed')
+      setError(message)
+      showError(message)
     }
   }
 
@@ -57,30 +57,42 @@ export function InviteCodeManagementSection({
         note: form.note.trim(),
       }
       if (form.expires_at) body.expires_at = new Date(form.expires_at).toISOString()
-      const res = await fetch('/api/admin/invite-codes', {
+      await adminRequest<InviteCode>('/api/admin/invite-codes', {
         method: 'POST',
-        headers,
+        token,
         body: JSON.stringify(body),
       })
-      const json: ApiResponse<InviteCode> = await res.json()
-      if (json.code !== 0) {
-        setError(json.msg || t('invite.generateFailed'))
-        return
-      }
       setForm(emptyForm)
       await load()
-    } catch {
-      setError(t('invite.generateFailed'))
+      showSuccess(t('invite.generate'))
+    } catch (err) {
+      const message = err instanceof Error ? err.message : t('invite.generateFailed')
+      setError(message)
+      showError(message)
     } finally {
       setSaving(false)
     }
   }
 
   async function setStatus(code: InviteCode, action: 'disable' | 'enable') {
+    if (action === 'disable') {
+      const confirmed = await confirmAction({
+        title: t('invite.confirmDisableTitle'),
+        message: t('invite.confirmDisableMessage'),
+        confirmLabel: t('common.disable'),
+        variant: 'danger',
+      })
+      if (!confirmed) return
+    }
     setSaving(true)
     try {
-      await fetch(`/api/admin/invite-codes/${code.id}/${action}`, { method: 'POST', headers })
+      await adminRequest<unknown>(`/api/admin/invite-codes/${code.id}/${action}`, { method: 'POST', token })
       await load()
+      showSuccess(action === 'enable' ? t('common.enable') : t('common.disable'))
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '操作失败'
+      setError(message)
+      showError(message)
     } finally {
       setSaving(false)
     }
@@ -90,6 +102,7 @@ export function InviteCodeManagementSection({
     try {
       await navigator.clipboard.writeText(code)
       setCopied(code)
+      showSuccess(t('invite.copied'))
       setTimeout(() => setCopied(''), 1500)
     } catch {
       /* clipboard unavailable: ignore */

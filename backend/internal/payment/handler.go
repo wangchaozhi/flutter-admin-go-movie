@@ -545,7 +545,12 @@ func saveProduct(w http.ResponseWriter, r *http.Request, id int) {
 		common.WriteJSON(w, http.StatusNotFound, common.APIResponse{Code: 404, Msg: "product not found"})
 		return
 	}
-	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok"})
+	product.ID = id
+	if err := store.DB().First(&product, id).Error; err != nil {
+		common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok"})
+		return
+	}
+	common.WriteJSON(w, http.StatusOK, common.APIResponse{Code: 0, Msg: "ok", Data: product})
 }
 
 func showMobileOrder(w http.ResponseWriter, r *http.Request, orderNo string) {

@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { ImageUp, Layers, Loader, Pencil, Plus, Trash2, X } from 'lucide-react'
 import type {
-  ApiResponse,
   Category,
   Series,
   SeriesEpisode,
@@ -11,6 +10,8 @@ import type {
   Video,
 } from '../../adminTypes'
 import { PanelTitle } from '../../components/shared'
+import { adminRequest } from '../../core/adminApi'
+import { confirmAction, showError, showSuccess } from '../../core/feedback'
 
 const emptyForm: SeriesForm = {
   title: '',
@@ -72,37 +73,53 @@ export function SeriesManagementSection({
   const [error, setError] = useState('')
   const coverInputRef = useRef<HTMLInputElement | null>(null)
 
-  const jsonHeaders = useMemo(
-    () => ({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }),
-    [token],
-  )
-
   const canCreate = can('series:create')
   const canEdit = can('series:edit')
   const canDelete = can('series:delete')
+  const canSave = form.id ? canEdit : canCreate
 
   async function loadSeries() {
-    const res = await fetch('/api/admin/series', { headers: jsonHeaders })
-    const json: ApiResponse<Series[]> = await res.json()
-    if (json.code === 0) setSeriesList(json.data ?? [])
+    try {
+      const data = await adminRequest<Series[]>('/api/admin/series', { token })
+      setSeriesList(data ?? [])
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '加载剧集失败'
+      setError(message)
+      showError(message)
+    }
   }
 
   async function loadCategories() {
-    const res = await fetch('/api/admin/categories', { headers: jsonHeaders })
-    const json: ApiResponse<Category[]> = await res.json()
-    if (json.code === 0) setCategories(json.data ?? [])
+    try {
+      const data = await adminRequest<Category[]>('/api/admin/categories', { token })
+      setCategories(data ?? [])
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '加载类别失败'
+      setError(message)
+      showError(message)
+    }
   }
 
   async function loadVideos() {
-    const res = await fetch('/api/admin/videos', { headers: jsonHeaders })
-    const json: ApiResponse<Video[]> = await res.json()
-    if (json.code === 0) setVideos(json.data ?? [])
+    try {
+      const data = await adminRequest<Video[]>('/api/admin/videos', { token })
+      setVideos(data ?? [])
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '加载视频失败'
+      setError(message)
+      showError(message)
+    }
   }
 
   async function loadEpisodes(seriesId: number) {
-    const res = await fetch(`/api/admin/series/${seriesId}/episodes`, { headers: jsonHeaders })
-    const json: ApiResponse<SeriesEpisode[]> = await res.json()
-    if (json.code === 0) setEpisodes(json.data ?? [])
+    try {
+      const data = await adminRequest<SeriesEpisode[]>(`/api/admin/series/${seriesId}/episodes`, { token })
+      setEpisodes(data ?? [])
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '加载分集失败'
+      setError(message)
+      showError(message)
+    }
   }
 
   // mount-only load
@@ -126,27 +143,41 @@ export function SeriesManagementSection({
     try {
       const url = form.id ? `/api/admin/series/${form.id}` : '/api/admin/series'
       const method = form.id ? 'PUT' : 'POST'
-      const res = await fetch(url, { method, headers: jsonHeaders, body: JSON.stringify(form) })
-      const json: ApiResponse<Series> = await res.json()
-      if (json.code !== 0) {
-        setError(json.msg || '保存失败')
-        return
-      }
-      if (!form.id && json.data) {
+      const data = await adminRequest<Series>(url, { method, token, body: JSON.stringify(form) })
+      if (!form.id && data) {
         // Stay on the new series so the operator can immediately add episodes.
-        setForm(seriesToForm(json.data))
+        setForm(seriesToForm(data))
       }
-      loadSeries()
+      await loadSeries()
+      showSuccess(form.id ? '剧集已保存' : '剧集已创建')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '保存剧集失败'
+      setError(message)
+      showError(message)
     } finally {
       setSaving(false)
     }
   }
 
   async function handleDelete(id: number) {
-    if (!window.confirm('确认删除该剧集？其下分集会被解除关联（视频本身保留）。')) return
-    await fetch(`/api/admin/series/${id}`, { method: 'DELETE', headers: jsonHeaders })
+    const confirmed = await confirmAction({
+      title: '删除剧集',
+      message: '确认删除该剧集？其下分集会被解除关联（视频本身保留）。',
+      confirmLabel: '删除',
+      variant: 'danger',
+    })
+    if (!confirmed) return
+    try {
+      await adminRequest<unknown>(`/api/admin/series/${id}`, { method: 'DELETE', token })
+      showSuccess('剧集已删除')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '删除剧集失败'
+      setError(message)
+      showError(message)
+      return
+    }
     if (form.id === id) setForm(emptyForm)
-    loadSeries()
+    await loadSeries()
   }
 
   async function uploadCover(file: File | undefined) {
@@ -156,17 +187,17 @@ export function SeriesManagementSection({
     try {
       const body = new FormData()
       body.append('file', file)
-      const res = await fetch(`/api/admin/series/${form.id}/cover`, {
+      await adminRequest<unknown>(`/api/admin/series/${form.id}/cover`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
+        token,
         body,
       })
-      const json: ApiResponse<unknown> = await res.json()
-      if (json.code !== 0) {
-        setError(json.msg || '封面上传失败')
-        return
-      }
-      loadSeries()
+      await loadSeries()
+      showSuccess('封面已上传')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '封面上传失败'
+      setError(message)
+      showError(message)
     } finally {
       setSaving(false)
     }
@@ -175,30 +206,47 @@ export function SeriesManagementSection({
   async function addEpisode() {
     if (!form.id || !pickVideoId) return
     setError('')
-    const res = await fetch(`/api/admin/series/${form.id}/episodes`, {
-      method: 'POST',
-      headers: jsonHeaders,
-      body: JSON.stringify({ video_id: pickVideoId, episode_number: pickEpisodeNumber }),
-    })
-    const json: ApiResponse<unknown> = await res.json()
-    if (json.code !== 0) {
-      setError(json.msg || '添加分集失败')
+    try {
+      await adminRequest<unknown>(`/api/admin/series/${form.id}/episodes`, {
+        method: 'POST',
+        token,
+        body: JSON.stringify({ video_id: pickVideoId, episode_number: pickEpisodeNumber }),
+      })
+      setPickVideoId(0)
+      setPickEpisodeNumber(0)
+      await loadEpisodes(form.id)
+      await loadVideos()
+      showSuccess('分集已添加')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '添加分集失败'
+      setError(message)
+      showError(message)
       return
     }
-    setPickVideoId(0)
-    setPickEpisodeNumber(0)
-    loadEpisodes(form.id)
-    loadVideos()
   }
 
   async function removeEpisode(videoId: number) {
     if (!form.id) return
-    await fetch(`/api/admin/series/${form.id}/episodes/${videoId}`, {
-      method: 'DELETE',
-      headers: jsonHeaders,
+    const confirmed = await confirmAction({
+      title: '移除分集',
+      message: '确认从当前剧集中移除该分集？视频本身会保留。',
+      confirmLabel: '移除',
+      variant: 'danger',
     })
-    loadEpisodes(form.id)
-    loadVideos()
+    if (!confirmed) return
+    try {
+      await adminRequest<unknown>(`/api/admin/series/${form.id}/episodes/${videoId}`, {
+        method: 'DELETE',
+        token,
+      })
+      await loadEpisodes(form.id)
+      await loadVideos()
+      showSuccess('分集已移除')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '移除分集失败'
+      setError(message)
+      showError(message)
+    }
   }
 
   const editingSeries = form.id ? seriesList.find(s => s.id === form.id) : undefined
@@ -424,13 +472,15 @@ export function SeriesManagementSection({
           </div>
 
           <div className="form-actions">
-            {(canCreate || canEdit) && (
+            {canSave && (
               <button type="submit" disabled={saving}>
                 {saving ? <Loader size={14} className="spin" /> : <Layers size={14} />}
                 {form.id ? '保存' : '创建'}
               </button>
             )}
-            <button type="button" className="secondary" onClick={() => setForm(emptyForm)}>重置</button>
+            <button type="button" className="secondary" onClick={() => setForm(emptyForm)}>
+              {form.id ? '取消' : '重置'}
+            </button>
           </div>
         </form>
       </div>

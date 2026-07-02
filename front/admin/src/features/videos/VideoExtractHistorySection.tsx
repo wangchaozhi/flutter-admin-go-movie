@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   AudioLines,
   CheckCircle2,
@@ -11,8 +11,10 @@ import {
   XCircle,
 } from 'lucide-react'
 
-import type { ApiResponse, ExtractHistoryItem, ExtractTaskStatus, Paged } from '../../adminTypes'
+import type { ExtractHistoryItem, ExtractTaskStatus, Paged } from '../../adminTypes'
 import { PanelTitle, Pagination } from '../../components/shared'
+import { adminRequest } from '../../core/adminApi'
+import { confirmAction, showError, showSuccess } from '../../core/feedback'
 
 const PER_PAGE = 20
 
@@ -84,10 +86,6 @@ export function VideoExtractHistorySection({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [deletingId, setDeletingId] = useState<number | null>(null)
-  const headers = useMemo(
-    () => ({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }),
-    [token],
-  )
 
   const loadTasks = useCallback(async () => {
     setLoading(true)
@@ -96,17 +94,17 @@ export function VideoExtractHistorySection({
       const params = new URLSearchParams({ page: String(page), per_page: String(PER_PAGE) })
       if (status !== 'all') params.set('status', status)
       if (keyword.trim()) params.set('q', keyword.trim())
-      const res = await fetch(`/api/admin/video/extract-tasks?${params.toString()}`, { headers })
-      const json: ApiResponse<Paged<ExtractHistoryItem>> = await res.json()
-      if (json.code !== 0) throw new Error(json.msg)
-      setTasks(json.data?.items ?? [])
-      setTotal(json.data?.total ?? 0)
+      const data = await adminRequest<Paged<ExtractHistoryItem>>(`/api/admin/video/extract-tasks?${params.toString()}`, { token })
+      setTasks(data?.items ?? [])
+      setTotal(data?.total ?? 0)
     } catch (err) {
-      setError(err instanceof Error ? err.message : '提取历史加载失败')
+      const message = err instanceof Error ? err.message : '提取历史加载失败'
+      setError(message)
+      showError(message)
     } finally {
       setLoading(false)
     }
-  }, [headers, keyword, status, page])
+  }, [keyword, status, page, token])
 
   // Status-breakdown totals for the summary cards, scoped to the current
   // keyword filter but independent of the selected status tab and page.
@@ -114,9 +112,8 @@ export function VideoExtractHistorySection({
     const fetchCount = async (statusValue: string) => {
       const params = new URLSearchParams({ page: '1', per_page: '1', status: statusValue })
       if (keyword.trim()) params.set('q', keyword.trim())
-      const res = await fetch(`/api/admin/video/extract-tasks?${params.toString()}`, { headers })
-      const json: ApiResponse<Paged<ExtractHistoryItem>> = await res.json()
-      return json.code === 0 && json.data ? json.data.total : 0
+      const data = await adminRequest<Paged<ExtractHistoryItem>>(`/api/admin/video/extract-tasks?${params.toString()}`, { token })
+      return data?.total ?? 0
     }
     try {
       const [active, success, failed] = await Promise.all([
@@ -128,7 +125,7 @@ export function VideoExtractHistorySection({
     } catch {
       // summary is best-effort; ignore errors
     }
-  }, [headers, keyword])
+  }, [keyword, token])
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -146,20 +143,27 @@ export function VideoExtractHistorySection({
   async function deleteTask(task: ExtractHistoryItem) {
     if (isActiveStatus(task.status)) return
     const name = task.video_title || `视频 #${task.video_id}`
-    if (!window.confirm(`确认删除「${name}」的提取记录？`)) return
+    const confirmed = await confirmAction({
+      title: '删除提取记录',
+      message: `确认删除「${name}」的提取记录？`,
+      confirmLabel: '删除',
+      variant: 'danger',
+    })
+    if (!confirmed) return
     setDeletingId(task.id)
     setError('')
     try {
-      const res = await fetch(`/api/admin/video/extract-tasks/${task.id}`, {
+      await adminRequest<unknown>(`/api/admin/video/extract-tasks/${task.id}`, {
         method: 'DELETE',
-        headers,
+        token,
       })
-      const json: ApiResponse<unknown> = await res.json()
-      if (json.code !== 0) throw new Error(json.msg)
       await loadTasks()
       void loadCounts()
+      showSuccess('提取记录已删除')
     } catch (err) {
-      setError(err instanceof Error ? err.message : '删除提取记录失败')
+      const message = err instanceof Error ? err.message : '删除提取记录失败'
+      setError(message)
+      showError(message)
     } finally {
       setDeletingId(null)
     }

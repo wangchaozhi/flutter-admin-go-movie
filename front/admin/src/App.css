@@ -1021,6 +1021,43 @@ td small {
   gap: 8px;
 }
 
+.toast-stack {
+  position: fixed;
+  z-index: 60;
+  right: 18px;
+  bottom: 18px;
+  display: grid;
+  gap: 8px;
+  width: min(360px, calc(100vw - 36px));
+  pointer-events: none;
+}
+
+.toast {
+  justify-content: flex-start;
+  min-height: 38px;
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--text);
+  background: var(--surface);
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow);
+  pointer-events: auto;
+  text-align: left;
+  white-space: normal;
+}
+
+.toast-success {
+  border-color: var(--success-border);
+  color: var(--success-text);
+  background: var(--success-bg);
+}
+
+.toast-error {
+  border-color: var(--danger-border);
+  color: var(--danger-text);
+  background: var(--danger-bg);
+}
+
 .transcode-quality-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

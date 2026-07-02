@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import { RefreshCw } from 'lucide-react'
 
-import type { ApiResponse, DashboardStats } from '../../adminTypes'
+import type { DashboardStats } from '../../adminTypes'
 import { PanelTitle } from '../../components/shared'
+import { adminRequest } from '../../core/adminApi'
+import { showError } from '../../core/feedback'
 
 const videoStatusLabels: Record<string, string> = {
   uploading: '上传中',
@@ -83,12 +85,12 @@ export function DashboardSection({ token }: { token: string }) {
     setLoading(true)
     setError('')
     try {
-      const res = await fetch('/api/admin/stats', { headers: { Authorization: `Bearer ${token}` } })
-      const body = (await res.json()) as ApiResponse<DashboardStats>
-      if (!res.ok || body.code !== 0) throw new Error(body.msg || '加载失败')
-      setStats(body.data ?? null)
+      const data = await adminRequest<DashboardStats>('/api/admin/stats', { token })
+      setStats(data ?? null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : '加载统计失败')
+      const message = err instanceof Error ? err.message : '加载统计失败'
+      setError(message)
+      showError(message)
     } finally {
       setLoading(false)
     }

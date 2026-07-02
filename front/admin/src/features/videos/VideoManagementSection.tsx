@@ -26,6 +26,7 @@ import type {
   VideoQualityTask,
 } from '../../adminTypes'
 import { PanelTitle, Pagination } from '../../components/shared'
+import { confirmAction, showError, showSuccess } from '../../core/feedback'
 
 const PER_PAGE = 20
 
@@ -59,7 +60,7 @@ const STATUS_CLASS: Record<string, string> = {
   uploaded: 'status-uploaded',
   transcoding: 'status-transcoding',
   ready: 'status-ready',
-  failed: '  status-failed',
+  failed: 'status-failed',
   offline: 'status-offline',
 }
 
@@ -314,13 +315,19 @@ export function VideoManagementSection({
       const method = form.id ? 'PUT' : 'POST'
       const res = await fetch(url, { method, headers: jsonHeaders, body: JSON.stringify(form) })
       const json: ApiResponse<Video> = await res.json()
+      if (json.code !== 0) {
+        showError('保存失败：' + json.msg)
+        return
+      }
       if (method === 'POST' && json.code === 0 && json.data) {
         const v = json.data
         setMp4FileName('')
         setForm(videoToForm(v))
         if (createFile) handleUploadMp4(v.id, createFile)
+        showSuccess('视频已创建')
       } else if (method === 'PUT') {
         setForm(emptyForm)
+        showSuccess('视频已保存')
       }
       loadVideos()
     } finally {
@@ -329,11 +336,17 @@ export function VideoManagementSection({
   }
 
   async function handleDelete(id: number) {
-    if (!window.confirm('确认删除该视频？')) return
+    const confirmed = await confirmAction({
+      title: '删除视频',
+      message: '确认删除该视频？删除后无法恢复。',
+      confirmLabel: '删除',
+      variant: 'danger',
+    })
+    if (!confirmed) return
     cancelUploadIfActive(id)
     const res = await fetch(`/api/admin/videos/${id}`, { method: 'DELETE', headers: jsonHeaders })
     const json: ApiResponse<unknown> = await res.json()
-    if (json.code !== 0) { alert('删除失败：' + json.msg); return }
+    if (json.code !== 0) { showError('删除失败：' + json.msg); return }
     if (form.id === id) setForm(emptyForm)
     setTaskStatus(prev => {
       const next = { ...prev }
@@ -346,6 +359,7 @@ export function VideoManagementSection({
       return next
     })
     loadVideos()
+    showSuccess('视频已删除')
   }
 
   async function handleToggleStatus(v: Video) {
@@ -356,6 +370,7 @@ export function VideoManagementSection({
       body: JSON.stringify({ status: newStatus }),
     })
     loadVideos()
+    showSuccess(newStatus === 'offline' ? '视频已下架' : '视频已恢复')
   }
 
   function handleUploadMp4(videoId: number, fileOverride?: File) {
@@ -393,6 +408,7 @@ export function VideoManagementSection({
           const list = await loadVideos()
           const v = list.find(item => item.id === videoId)
           if (v && v.status === 'extracting') pollExtractionStatus(videoId)
+          showSuccess('视频上传完成')
         }
       } catch {
         setUploadError('响应解析失败，请刷新后重试')
@@ -439,6 +455,7 @@ export function VideoManagementSection({
     } else {
       if (coverRef.current) coverRef.current.value = ''
       loadVideos()
+      showSuccess('封面已上传')
     }
   }
 
@@ -475,10 +492,11 @@ export function VideoManagementSection({
         body: JSON.stringify({ qualities }),
       })
       const json = await res.json()
-      if (json.code !== 0) { alert('转码提交失败：' + json.msg); return }
+      if (json.code !== 0) { showError('转码提交失败：' + json.msg); return }
       setTranscodeDialog(null)
       loadVideos()
       startTaskPolling(videoId)
+      showSuccess('转码任务已提交')
     } finally {
       setTranscoding(false)
     }
@@ -493,10 +511,11 @@ export function VideoManagementSection({
         : `/api/admin/videos/${videoId}/transcode`
       const res = await fetch(url, { method: 'DELETE', headers: jsonHeaders })
       const json: ApiResponse<{ canceled: number }> = await res.json()
-      if (json.code !== 0) { alert('取消失败：' + json.msg); return }
+      if (json.code !== 0) { showError('取消失败：' + json.msg); return }
       await loadVideos()
       await pollTaskStatus(videoId)
       if (expandedRef.current.has(videoId)) await loadQualityTasks(videoId)
+      showSuccess('转码任务已取消')
     } finally {
       setCancelingTranscode(prev => {
         const next = new Set(prev)
@@ -578,25 +597,33 @@ export function VideoManagementSection({
         body: JSON.stringify({ qualities: [quality] }),
       })
       const json = await res.json()
-      if (json.code !== 0) { alert('重转提交失败：' + json.msg); return }
+      if (json.code !== 0) { showError('重转提交失败：' + json.msg); return }
       await loadVideos()
       startTaskPolling(videoId)
       loadQualityTasks(videoId)
+      showSuccess('重转任务已提交')
     } finally {
       setTranscoding(false)
     }
   }
 
   async function handleDeleteQuality(videoId: number, quality: string) {
-    if (!window.confirm(`确认删除 ${quality} 清晰度？该分辨率的播放文件将被移除。`)) return
+    const confirmed = await confirmAction({
+      title: '删除清晰度',
+      message: `确认删除 ${quality} 清晰度？该分辨率的播放文件将被移除。`,
+      confirmLabel: '删除',
+      variant: 'danger',
+    })
+    if (!confirmed) return
     const res = await fetch(`/api/admin/videos/${videoId}/tasks/${quality}`, {
       method: 'DELETE',
       headers: jsonHeaders,
     })
     const json = await res.json()
-    if (json.code !== 0) { alert('删除失败：' + json.msg); return }
+    if (json.code !== 0) { showError('删除失败：' + json.msg); return }
     await loadVideos()
     loadQualityTasks(videoId)
+    showSuccess('清晰度文件已删除')
   }
 
   async function handlePlay(videoId: number) {
@@ -606,7 +633,7 @@ export function VideoManagementSection({
     if (json.code === 0 && json.data) {
       setPlayUrl(json.data.url)
     } else {
-      alert('获取播放地址失败：' + json.msg)
+      showError('获取播放地址失败：' + json.msg)
       setActiveVideoId(null)
     }
   }
@@ -614,7 +641,12 @@ export function VideoManagementSection({
   async function handleGenerateMetadata(video: Pick<Video, 'id' | 'description'>) {
     if (!video.id || generatingMetadataId !== null) return
     const overwrite = video.description.trim() !== ''
-      ? window.confirm('当前简介已有内容，是否用 AI 生成内容覆盖？')
+      ? await confirmAction({
+          title: '覆盖简介',
+          message: '当前简介已有内容，是否用 AI 生成内容覆盖？',
+          confirmLabel: '覆盖',
+          variant: 'primary',
+        })
       : false
     if (video.description.trim() !== '' && !overwrite) return
     setGeneratingMetadataId(video.id)
@@ -626,11 +658,12 @@ export function VideoManagementSection({
       })
       const json: ApiResponse<VideoAIMetadata> = await res.json()
       if (json.code !== 0 || !json.data) {
-        alert('AI 补全失败：' + json.msg)
+        showError('AI 补全失败：' + json.msg)
         return
       }
       setForm(prev => prev.id === video.id ? { ...prev, description: json.data!.synopsis } : prev)
       await loadVideos()
+      showSuccess('AI 补全已完成')
     } finally {
       setGeneratingMetadataId(null)
     }
@@ -639,6 +672,7 @@ export function VideoManagementSection({
   const canCreate = can('video:create')
   const canEdit = can('video:edit')
   const canDelete = can('video:delete')
+  const canSave = form.id ? canEdit : canCreate
   const uploading = uploadProgress !== null
 
   return (
@@ -1006,13 +1040,15 @@ export function VideoManagementSection({
             </label>
           )}
           <div className="form-actions">
-            {(canCreate || canEdit) && (
+            {canSave && (
               <button type="submit" disabled={saving || (!form.id && !mp4FileName)}>
                 {saving ? <Loader size={14} className="spin" /> : <Clapperboard size={14} />}
                 {form.id ? '保存' : '创建'}
               </button>
             )}
-            <button type="button" className="secondary" onClick={() => { setForm(emptyForm); setUploadError(''); setMp4FileName('') }}>重置</button>
+            <button type="button" className="secondary" onClick={() => { setForm(emptyForm); setUploadError(''); setMp4FileName('') }}>
+              {form.id ? '取消' : '重置'}
+            </button>
           </div>
         </form>
 

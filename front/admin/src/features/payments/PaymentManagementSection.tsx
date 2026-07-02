@@ -3,7 +3,6 @@ import type { FormEvent } from 'react'
 import { BadgeCheck, Download, Loader, Pencil, RefreshCw, Trash2, Undo2 } from 'lucide-react'
 
 import type {
-  ApiResponse,
   CurrencyCode,
   Order,
   OrderStatus,
@@ -14,6 +13,8 @@ import type {
   Video,
 } from '../../adminTypes'
 import { PanelTitle, Pagination } from '../../components/shared'
+import { adminRequest } from '../../core/adminApi'
+import { confirmAction, showError, showSuccess } from '../../core/feedback'
 
 const ORDERS_PER_PAGE = 20
 
@@ -86,13 +87,7 @@ const currencyOptions: Array<{ value: CurrencyCode; label: string }> = [
 const currencyValues = new Set<CurrencyCode>(currencyOptions.map((option) => option.value))
 
 async function request<T>(url: string, token: string, init: RequestInit = {}): Promise<T> {
-  const headers = new Headers(init.headers)
-  headers.set('Authorization', `Bearer ${token}`)
-  if (init.body) headers.set('Content-Type', 'application/json')
-  const res = await fetch(url, { ...init, headers })
-  const body = (await res.json()) as ApiResponse<T>
-  if (!res.ok || body.code !== 0) throw new Error(body.msg || '请求失败')
-  return body.data as T
+  return adminRequest<T>(url, { ...init, token })
 }
 
 function money(order: { currency: string; amount_cents: number }) {
@@ -150,6 +145,7 @@ export function PaymentManagementSection({
   const [products, setProducts] = useState<Product[]>([])
   const [orders, setOrders] = useState<Order[]>([])
   const [orderPage, setOrderPage] = useState(1)
+  const [orderStatusFilter, setOrderStatusFilter] = useState<'all' | OrderStatus>('all')
   const [orderTotal, setOrderTotal] = useState(0)
   const [paidTotal, setPaidTotal] = useState(0)
   const [videos, setVideos] = useState<Video[]>([])
@@ -197,7 +193,9 @@ export function PaymentManagementSection({
       setVideos(nextVideos ?? [])
       setPaidTotal(paidStat?.total ?? 0)
     } catch (err) {
-      setError(err instanceof Error ? err.message : '加载支付数据失败')
+      const message = err instanceof Error ? err.message : '加载支付数据失败'
+      setError(message)
+      showError(message)
     } finally {
       setLoading(false)
     }
@@ -208,12 +206,15 @@ export function PaymentManagementSection({
       page: String(orderPage),
       per_page: String(ORDERS_PER_PAGE),
     })
+    if (orderStatusFilter !== 'all') params.set('status', orderStatusFilter)
     try {
       const data = await request<Paged<Order>>(`/api/admin/orders?${params.toString()}`, token)
       setOrders(data?.items ?? [])
       setOrderTotal(data?.total ?? 0)
     } catch (err) {
-      setError(err instanceof Error ? err.message : '加载订单失败')
+      const message = err instanceof Error ? err.message : '加载订单失败'
+      setError(message)
+      showError(message)
     }
   }
 
@@ -227,7 +228,7 @@ export function PaymentManagementSection({
     void loadOrders()
     // reload the order page when the page or token changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orderPage, token])
+  }, [orderPage, orderStatusFilter, token])
 
   async function handleSaveProduct(event: FormEvent) {
     event.preventDefault()
@@ -255,8 +256,11 @@ export function PaymentManagementSection({
       await request<Product>(url, token, { method, body: JSON.stringify(body) })
       resetProductForm()
       await loadPayments()
+      showSuccess(productForm.id ? '套餐已保存' : '套餐已新增')
     } catch (err) {
-      setError(err instanceof Error ? err.message : '保存套餐失败')
+      const message = err instanceof Error ? err.message : '保存套餐失败'
+      setError(message)
+      showError(message)
     } finally {
       setSavingProduct(false)
     }
@@ -264,14 +268,23 @@ export function PaymentManagementSection({
 
   async function handleDeleteProduct(product: Product) {
     if (!canManageProducts) return
-    if (!window.confirm(`确认删除套餐「${product.name}」？`)) return
+    const confirmed = await confirmAction({
+      title: '删除套餐',
+      message: `确认删除套餐「${product.name}」？`,
+      confirmLabel: '删除',
+      variant: 'danger',
+    })
+    if (!confirmed) return
     setError('')
     try {
       await request<unknown>(`/api/admin/products/${product.id}`, token, { method: 'DELETE' })
       if (productForm.id === product.id) resetProductForm()
       await loadPayments()
+      showSuccess('套餐已删除')
     } catch (err) {
-      setError(err instanceof Error ? err.message : '删除套餐失败')
+      const message = err instanceof Error ? err.message : '删除套餐失败'
+      setError(message)
+      showError(message)
     }
   }
 
@@ -297,13 +310,22 @@ export function PaymentManagementSection({
 
   async function handleDeleteOrder(order: Order) {
     if (!canManageOrders) return
-    if (!window.confirm(`确认删除订单「${order.order_no}」？`)) return
+    const confirmed = await confirmAction({
+      title: '删除订单',
+      message: `确认删除订单「${order.order_no}」？`,
+      confirmLabel: '删除',
+      variant: 'danger',
+    })
+    if (!confirmed) return
     setError('')
     try {
       await request<unknown>(`/api/admin/orders/${order.id}`, token, { method: 'DELETE' })
       await Promise.all([loadOrders(), loadPayments()])
+      showSuccess('订单已删除')
     } catch (err) {
-      setError(err instanceof Error ? err.message : '删除订单失败')
+      const message = err instanceof Error ? err.message : '删除订单失败'
+      setError(message)
+      showError(message)
     }
   }
 
@@ -312,7 +334,9 @@ export function PaymentManagementSection({
     try {
       // The CSV endpoint needs the auth header, so fetch as a blob and trigger a
       // client-side download rather than navigating to it directly.
-      const res = await fetch('/api/admin/orders?format=csv', {
+      const params = new URLSearchParams({ format: 'csv' })
+      if (orderStatusFilter !== 'all') params.set('status', orderStatusFilter)
+      const res = await fetch(`/api/admin/orders?${params.toString()}`, {
         headers: { Authorization: `Bearer ${token}` },
       })
       if (!res.ok) throw new Error('导出失败')
@@ -325,20 +349,32 @@ export function PaymentManagementSection({
       link.click()
       link.remove()
       URL.revokeObjectURL(url)
+      showSuccess('订单 CSV 已导出')
     } catch (err) {
-      setError(err instanceof Error ? err.message : '导出失败')
+      const message = err instanceof Error ? err.message : '导出失败'
+      setError(message)
+      showError(message)
     }
   }
 
   async function handleRefundOrder(order: Order) {
     if (!canRefund || order.status !== 'paid') return
-    if (!window.confirm(`确认为订单「${order.order_no}」退款？会员套餐将回收对应天数。`)) return
+    const confirmed = await confirmAction({
+      title: '订单退款',
+      message: `确认为订单「${order.order_no}」退款？会员套餐将回收对应天数。`,
+      confirmLabel: '退款',
+      variant: 'danger',
+    })
+    if (!confirmed) return
     setError('')
     try {
       await request<unknown>(`/api/admin/orders/${order.id}/refund`, token, { method: 'POST' })
       await Promise.all([loadOrders(), loadPayments()])
+      showSuccess('订单已退款')
     } catch (err) {
-      setError(err instanceof Error ? err.message : '退款失败')
+      const message = err instanceof Error ? err.message : '退款失败'
+      setError(message)
+      showError(message)
     }
   }
 
@@ -582,7 +618,7 @@ export function PaymentManagementSection({
               </button>
             )}
             <button className="ghost-button" type="button" onClick={resetProductForm}>
-              重置
+              {productForm.id ? '取消' : '重置'}
             </button>
           </div>
         </form>
@@ -591,10 +627,25 @@ export function PaymentManagementSection({
       <section className="table-panel">
         <div className="section-header">
           <PanelTitle title="订单" count={orderTotal} />
-          <button className="ghost-button" type="button" onClick={handleExportOrders} disabled={orderTotal === 0}>
-            <Download size={15} />
-            导出 CSV
-          </button>
+          <div className="history-filter-bar" style={{ marginTop: 0 }}>
+            <select
+              value={orderStatusFilter}
+              onChange={(event) => {
+                setOrderStatusFilter(event.target.value as 'all' | OrderStatus)
+                setOrderPage(1)
+              }}
+              aria-label="订单状态"
+            >
+              <option value="all">全部状态</option>
+              {Object.entries(orderStatusLabels).map(([value, label]) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
+            </select>
+            <button className="ghost-button" type="button" onClick={handleExportOrders} disabled={orderTotal === 0}>
+              <Download size={15} />
+              导出 CSV
+            </button>
+          </div>
         </div>
         <div className="table-wrap">
           <table>

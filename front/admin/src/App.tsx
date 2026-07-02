@@ -16,8 +16,6 @@ import './App.css'
 
 import type {
   AdminSession,
-  ApiResponse,
-  ConfirmDialogState,
   Entity,
   LoginResponse,
   Menu,
@@ -29,7 +27,9 @@ import type {
   User,
   UserForm,
 } from './adminTypes'
-import { ConfirmDialog } from './components/confirm'
+import { FeedbackHost } from './components/feedback'
+import { adminRequest } from './core/adminApi'
+import { confirmAction, showError, showSuccess } from './core/feedback'
 import { AppUserManagementSection } from './features/appUsers'
 import { AuditLogsSection } from './features/audit'
 import { CategoryManagementSection } from './features/categories'
@@ -307,7 +307,6 @@ function compareChildNavItems(left: ChildNavItem, right: ChildNavItem) {
 
 const adminRememberKey = 'admin.remember'
 const adminUsernameKey = 'admin.username'
-const adminPasswordKey = 'admin.password'
 const adminSessionKey = 'admin.session'
 const adminThemeKey = 'admin.theme'
 const themeOrder: ThemeMode[] = ['system', 'light', 'dark']
@@ -328,24 +327,13 @@ function nextTheme(theme: ThemeMode): ThemeMode {
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const headers: Record<string, string> = {
-    ...authHeaders(),
-  }
-  if (!(init?.body instanceof FormData)) {
-    headers['Content-Type'] = 'application/json'
-  }
-  const res = await fetch(url, {
+  return adminRequest<T>(url, {
     ...init,
     headers: {
-      ...headers,
+      ...authHeaders(),
       ...(init?.headers as Record<string, string> | undefined),
     },
   })
-  const body = (await res.json()) as ApiResponse<T>
-  if (!res.ok || body.code !== 0) {
-    throw new Error(body.msg || '请求失败')
-  }
-  return body.data as T
 }
 
 function authHeaders(): Record<string, string> {
@@ -400,6 +388,17 @@ function App() {
     setSession(null)
   }
 
+  useEffect(() => {
+    function logoutForExpiredSession() {
+      localStorage.removeItem(adminSessionKey)
+      setSession(null)
+      showError('登录已过期，请重新登录')
+    }
+
+    window.addEventListener('admin:unauthorized', logoutForExpiredSession)
+    return () => window.removeEventListener('admin:unauthorized', logoutForExpiredSession)
+  }, [])
+
   function handleThemeChange() {
     const next = nextTheme(theme)
     setTheme(next)
@@ -431,18 +430,21 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.username])
 
-  if (!session) {
-    return <AdminLogin theme={theme} onThemeChange={handleThemeChange} onLoggedIn={handleLoggedIn} />
-  }
-
   return (
-    <AdminDashboard
-      session={session}
-      theme={theme}
-      onSessionChange={handleSessionChange}
-      onThemeChange={handleThemeChange}
-      onLogout={handleLogout}
-    />
+    <>
+      <FeedbackHost />
+      {!session ? (
+        <AdminLogin theme={theme} onThemeChange={handleThemeChange} onLoggedIn={handleLoggedIn} />
+      ) : (
+        <AdminDashboard
+          session={session}
+          theme={theme}
+          onSessionChange={handleSessionChange}
+          onThemeChange={handleThemeChange}
+          onLogout={handleLogout}
+        />
+      )}
+    </>
   )
 }
 
@@ -457,7 +459,7 @@ function AdminLogin({
 }) {
   const { t } = useI18n()
   const [username, setUsername] = useState(() => localStorage.getItem(adminUsernameKey) ?? 'admin')
-  const [password, setPassword] = useState(() => localStorage.getItem(adminPasswordKey) ?? '')
+  const [password, setPassword] = useState('')
   const [remember, setRemember] = useState(() => localStorage.getItem(adminRememberKey) === 'true')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -478,12 +480,11 @@ function AdminLogin({
       if (remember) {
         localStorage.setItem(adminRememberKey, 'true')
         localStorage.setItem(adminUsernameKey, username.trim())
-        localStorage.setItem(adminPasswordKey, password)
       } else {
         localStorage.removeItem(adminRememberKey)
         localStorage.removeItem(adminUsernameKey)
-        localStorage.removeItem(adminPasswordKey)
       }
+      localStorage.removeItem('admin.password')
       onLoggedIn(data)
     } catch (err) {
       setError(err instanceof Error ? err.message : t('login.errFailed'))
@@ -564,7 +565,6 @@ function AdminDashboard({
   const [error, setError] = useState('')
   const [avatarPreview, setAvatarPreview] = useState('')
   const [avatarRefreshKey, setAvatarRefreshKey] = useState(0)
-  const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null)
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [openNavGroups, setOpenNavGroups] = useState<Record<string, boolean>>({})
   const userMenuRef = useRef<HTMLDivElement | null>(null)
@@ -792,33 +792,41 @@ function AdminDashboard({
       })
       reset()
       await loadAll()
-      setNotice(id ? '修改已保存' : '新增成功')
+      const message = id ? '修改已保存' : '新增成功'
+      setNotice(message)
+      showSuccess(message)
     } catch (err) {
-      setError(err instanceof Error ? err.message : '保存失败')
+      const message = err instanceof Error ? err.message : '保存失败'
+      setError(message)
+      showError(message)
     } finally {
       setSaving(false)
     }
   }
 
-  function deleteRecord(entity: Entity, id: number) {
-    setConfirmDialog({
+  async function deleteRecord(entity: Entity, id: number) {
+    const confirmed = await confirmAction({
       title: '确认删除',
       message: '删除后无法恢复，确定要删除这条数据吗？',
       confirmLabel: '删除',
-      onConfirm: () => void performDeleteRecord(entity, id),
+      variant: 'danger',
     })
+    if (!confirmed) return
+    await performDeleteRecord(entity, id)
   }
 
   async function performDeleteRecord(entity: Entity, id: number) {
-    setConfirmDialog(null)
     setSaving(true)
     setError('')
     try {
       await request(`/api/admin/${entity}/${id}`, { method: 'DELETE' })
       await loadAll()
       setNotice('删除成功')
+      showSuccess('删除成功')
     } catch (err) {
-      setError(err instanceof Error ? err.message : '删除失败')
+      const message = err instanceof Error ? err.message : '删除失败'
+      setError(message)
+      showError(message)
     } finally {
       setSaving(false)
     }
@@ -844,8 +852,11 @@ function AdminDashboard({
       })
       setAvatarRefreshKey(Date.now())
       setNotice('头像已更新')
+      showSuccess('头像已更新')
     } catch (err) {
-      setError(err instanceof Error ? err.message : '头像上传失败')
+      const message = err instanceof Error ? err.message : '头像上传失败'
+      setError(message)
+      showError(message)
     } finally {
       setSaving(false)
     }
@@ -1064,12 +1075,6 @@ function AdminDashboard({
           <AuditLogsSection token={session.token} />
         )}
       </section>
-
-      <ConfirmDialog
-        state={confirmDialog}
-        busy={saving}
-        onCancel={() => setConfirmDialog(null)}
-      />
     </main>
   )
 }

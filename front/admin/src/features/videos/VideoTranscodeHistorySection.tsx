@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   CheckCircle2,
   Clock3,
@@ -10,8 +10,10 @@ import {
   XCircle,
 } from 'lucide-react'
 
-import type { ApiResponse, Paged, TranscodeHistoryItem, TranscodeTaskStatus } from '../../adminTypes'
+import type { Paged, TranscodeHistoryItem, TranscodeTaskStatus } from '../../adminTypes'
 import { PanelTitle, Pagination } from '../../components/shared'
+import { adminRequest } from '../../core/adminApi'
+import { confirmAction, showError, showSuccess } from '../../core/feedback'
 
 const PER_PAGE = 20
 
@@ -93,10 +95,6 @@ export function VideoTranscodeHistorySection({
   const [error, setError] = useState('')
   const [retryingId, setRetryingId] = useState<number | null>(null)
   const [deletingId, setDeletingId] = useState<number | null>(null)
-  const headers = useMemo(
-    () => ({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }),
-    [token],
-  )
 
   const loadTasks = useCallback(async () => {
     setLoading(true)
@@ -106,17 +104,17 @@ export function VideoTranscodeHistorySection({
       if (status !== 'all') params.set('status', status)
       if (quality !== 'all') params.set('quality', quality)
       if (keyword.trim()) params.set('q', keyword.trim())
-      const res = await fetch(`/api/admin/video/transcode-tasks?${params.toString()}`, { headers })
-      const json: ApiResponse<Paged<TranscodeHistoryItem>> = await res.json()
-      if (json.code !== 0) throw new Error(json.msg)
-      setTasks(json.data?.items ?? [])
-      setTotal(json.data?.total ?? 0)
+      const data = await adminRequest<Paged<TranscodeHistoryItem>>(`/api/admin/video/transcode-tasks?${params.toString()}`, { token })
+      setTasks(data?.items ?? [])
+      setTotal(data?.total ?? 0)
     } catch (err) {
-      setError(err instanceof Error ? err.message : '转码历史加载失败')
+      const message = err instanceof Error ? err.message : '转码历史加载失败'
+      setError(message)
+      showError(message)
     } finally {
       setLoading(false)
     }
-  }, [headers, keyword, quality, status, page])
+  }, [keyword, quality, status, page, token])
 
   // Status-breakdown totals for the summary cards, scoped to the current
   // quality/keyword filter but independent of the selected status tab and page.
@@ -125,9 +123,8 @@ export function VideoTranscodeHistorySection({
       const params = new URLSearchParams({ page: '1', per_page: '1', status: statusValue })
       if (quality !== 'all') params.set('quality', quality)
       if (keyword.trim()) params.set('q', keyword.trim())
-      const res = await fetch(`/api/admin/video/transcode-tasks?${params.toString()}`, { headers })
-      const json: ApiResponse<Paged<TranscodeHistoryItem>> = await res.json()
-      return json.code === 0 && json.data ? json.data.total : 0
+      const data = await adminRequest<Paged<TranscodeHistoryItem>>(`/api/admin/video/transcode-tasks?${params.toString()}`, { token })
+      return data?.total ?? 0
     }
     try {
       const [active, success, failed] = await Promise.all([
@@ -139,7 +136,7 @@ export function VideoTranscodeHistorySection({
     } catch {
       // summary is best-effort; ignore errors
     }
-  }, [headers, keyword, quality])
+  }, [keyword, quality, token])
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -159,17 +156,18 @@ export function VideoTranscodeHistorySection({
     setRetryingId(task.id)
     setError('')
     try {
-      const res = await fetch(`/api/admin/videos/${task.video_id}/transcode`, {
+      await adminRequest<unknown>(`/api/admin/videos/${task.video_id}/transcode`, {
         method: 'POST',
-        headers,
+        token,
         body: JSON.stringify({ qualities: [task.quality] }),
       })
-      const json: ApiResponse<unknown> = await res.json()
-      if (json.code !== 0) throw new Error(json.msg)
       await loadTasks()
       void loadCounts()
+      showSuccess('重试任务已提交')
     } catch (err) {
-      setError(err instanceof Error ? err.message : '重试提交失败')
+      const message = err instanceof Error ? err.message : '重试提交失败'
+      setError(message)
+      showError(message)
     } finally {
       setRetryingId(null)
     }
@@ -178,20 +176,27 @@ export function VideoTranscodeHistorySection({
   async function deleteTask(task: TranscodeHistoryItem) {
     if (isActiveStatus(task.status)) return
     const name = task.video_title || `视频 #${task.video_id}`
-    if (!window.confirm(`确认删除「${name}」的 ${task.quality || '未知清晰度'} 转码记录？`)) return
+    const confirmed = await confirmAction({
+      title: '删除转码记录',
+      message: `确认删除「${name}」的 ${task.quality || '未知清晰度'} 转码记录？`,
+      confirmLabel: '删除',
+      variant: 'danger',
+    })
+    if (!confirmed) return
     setDeletingId(task.id)
     setError('')
     try {
-      const res = await fetch(`/api/admin/video/transcode-tasks/${task.id}`, {
+      await adminRequest<unknown>(`/api/admin/video/transcode-tasks/${task.id}`, {
         method: 'DELETE',
-        headers,
+        token,
       })
-      const json: ApiResponse<unknown> = await res.json()
-      if (json.code !== 0) throw new Error(json.msg)
       await loadTasks()
       void loadCounts()
+      showSuccess('转码记录已删除')
     } catch (err) {
-      setError(err instanceof Error ? err.message : '删除转码记录失败')
+      const message = err instanceof Error ? err.message : '删除转码记录失败'
+      setError(message)
+      showError(message)
     } finally {
       setDeletingId(null)
     }

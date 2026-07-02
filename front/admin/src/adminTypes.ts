@@ -339,5 +339,7 @@ export type ConfirmDialogState = {
   title: string
   message: string
   confirmLabel: string
+  cancelLabel?: string
+  variant?: 'primary' | 'danger'
   onConfirm: () => void
 }

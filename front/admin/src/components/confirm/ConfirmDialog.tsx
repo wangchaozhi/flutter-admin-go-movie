@@ -1,4 +1,4 @@
-import { Trash2 } from 'lucide-react'
+import { BadgeCheck, Trash2 } from 'lucide-react'
 
 import type { ConfirmDialogState } from '../../adminTypes'
 
@@ -12,6 +12,8 @@ export function ConfirmDialog({
   onCancel: () => void
 }) {
   if (!state) return null
+  const danger = state.variant !== 'primary'
+  const Icon = danger ? Trash2 : BadgeCheck
 
   return (
     <div className="confirm-backdrop" role="presentation" onMouseDown={onCancel}>
@@ -27,10 +29,15 @@ export function ConfirmDialog({
         </div>
         <div className="confirm-actions">
           <button className="ghost-button" disabled={busy} type="button" onClick={onCancel}>
-            取消
+            {state.cancelLabel ?? '取消'}
           </button>
-          <button className="primary-button danger-confirm" disabled={busy} type="button" onClick={state.onConfirm}>
-            <Trash2 size={15} />
+          <button
+            className={`primary-button ${danger ? 'danger-confirm' : ''}`}
+            disabled={busy}
+            type="button"
+            onClick={state.onConfirm}
+          >
+            <Icon size={15} />
             {state.confirmLabel}
           </button>
         </div>

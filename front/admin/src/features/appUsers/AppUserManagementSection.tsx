@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { ArrowDown, ArrowUp, CalendarClock, Crown, Loader, Minus, Pencil, Plus, Search, ShieldBan, ShieldCheck, Smartphone, Trash2 } from 'lucide-react'
-import type { ApiResponse, AppUser, AppUserForm, Paged } from '../../adminTypes'
+import type { AppUser, AppUserForm, Paged } from '../../adminTypes'
 import { PanelTitle, Pagination } from '../../components/shared'
+import { adminRequest } from '../../core/adminApi'
+import { confirmAction, showError, showSuccess } from '../../core/feedback'
 
 const PER_PAGE = 20
 
@@ -43,8 +45,8 @@ export function AppUserManagementSection({
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
+  const [error, setError] = useState('')
 
-  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
   const hasFilter = debouncedQuery.trim() !== '' || vipFilter !== 'all'
 
   async function load() {
@@ -56,11 +58,14 @@ export function AppUserManagementSection({
     const keyword = debouncedQuery.trim()
     if (keyword) params.set('q', keyword)
     if (vipFilter !== 'all') params.set('vip', vipFilter)
-    const res = await fetch(`/api/admin/app-users?${params.toString()}`, { headers })
-    const json: ApiResponse<Paged<AppUser>> = await res.json()
-    if (json.code === 0 && json.data) {
-      setUsers(json.data.items ?? [])
-      setTotal(json.data.total ?? 0)
+    try {
+      const data = await adminRequest<Paged<AppUser>>(`/api/admin/app-users?${params.toString()}`, { token })
+      setUsers(data?.items ?? [])
+      setTotal(data?.total ?? 0)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '加载 App 用户失败'
+      setError(message)
+      showError(message)
     }
   }
 
@@ -81,50 +86,96 @@ export function AppUserManagementSection({
     e.preventDefault()
     if (!form.id && !form.username.trim()) return
     setSaving(true)
+    setError('')
     try {
       const url = form.id ? `/api/admin/app-users/${form.id}` : '/api/admin/app-users'
       const method = form.id ? 'PUT' : 'POST'
-      await fetch(url, { method, headers, body: JSON.stringify(form) })
+      await adminRequest<unknown>(url, { method, token, body: JSON.stringify(form) })
       setForm(emptyForm)
-      load()
+      await load()
+      showSuccess(form.id ? '用户已保存' : '用户已创建')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '保存用户失败'
+      setError(message)
+      showError(message)
     } finally {
       setSaving(false)
     }
   }
 
   async function handleDelete(id: number) {
-    if (!window.confirm('确认删除该用户？')) return
-    await fetch(`/api/admin/app-users/${id}`, { method: 'DELETE', headers })
+    const confirmed = await confirmAction({
+      title: '删除 App 用户',
+      message: '确认删除该用户？删除后无法恢复。',
+      confirmLabel: '删除',
+      variant: 'danger',
+    })
+    if (!confirmed) return
+    try {
+      await adminRequest<unknown>(`/api/admin/app-users/${id}`, { method: 'DELETE', token })
+      showSuccess('用户已删除')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '删除用户失败'
+      setError(message)
+      showError(message)
+      return
+    }
     if (form.id === id) setForm(emptyForm)
-    load()
+    await load()
   }
 
   async function handleToggleStatus(u: AppUser) {
     const newStatus = u.status === 'banned' ? 'active' : 'banned'
-    await fetch(`/api/admin/app-users/${u.id}`, {
-      method: 'PUT', headers,
-      body: JSON.stringify({ status: newStatus }),
-    })
-    load()
+    try {
+      await adminRequest<unknown>(`/api/admin/app-users/${u.id}`, {
+        method: 'PUT',
+        token,
+        body: JSON.stringify({ status: newStatus }),
+      })
+      await load()
+      showSuccess(newStatus === 'active' ? '用户已解封' : '用户已封禁')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '更新用户状态失败'
+      setError(message)
+      showError(message)
+    }
   }
 
   async function adjustVip(id: number, days: number) {
     if (vipBusy || days === 0) return
     setVipBusy(true)
     try {
-      await fetch(`/api/admin/app-users/${id}/vip`, {
-        method: 'POST', headers,
+      await adminRequest<unknown>(`/api/admin/app-users/${id}/vip`, {
+        method: 'POST',
+        token,
         body: JSON.stringify({ days }),
       })
       await load()
+      showSuccess(days > 0 ? '会员时长已增加' : '会员时长已减少')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '调整会员时长失败'
+      setError(message)
+      showError(message)
     } finally {
       setVipBusy(false)
     }
   }
 
+  async function clearVip(id: number) {
+    const confirmed = await confirmAction({
+      title: '清除会员资格',
+      message: '确认清除该用户的会员资格？',
+      confirmLabel: '清除',
+      variant: 'danger',
+    })
+    if (!confirmed) return
+    await adjustVip(id, -100000)
+  }
+
   const canCreate = can('app_user:create')
   const canEdit = can('app_user:edit')
   const canDelete = can('app_user:delete')
+  const canSave = form.id ? canEdit : canCreate
 
   const editingUser = form.id ? users.find(u => u.id === form.id) : undefined
 
@@ -132,6 +183,7 @@ export function AppUserManagementSection({
     <section className="content-grid">
       <section className="table-panel">
         <PanelTitle title="App 用户列表" count={total} />
+        {error && <span className="status error">{error}</span>}
         <div className="table-filters">
           <div className="table-search">
             <Search size={14} />
@@ -293,13 +345,15 @@ export function AppUserManagementSection({
           )}
 
           <div className="form-actions">
-            {(canCreate || canEdit) && (
+            {canSave && (
               <button type="submit" disabled={saving}>
                 {saving ? <Loader size={14} className="spin" /> : <Smartphone size={14} />}
                 {form.id ? '保存' : '创建'}
               </button>
             )}
-            <button type="button" className="secondary" onClick={() => setForm(emptyForm)}>重置</button>
+            <button type="button" className="secondary" onClick={() => setForm(emptyForm)}>
+              {form.id ? '取消' : '重置'}
+            </button>
           </div>
         </form>
 
@@ -352,9 +406,7 @@ export function AppUserManagementSection({
                   type="button"
                   className="danger"
                   disabled={vipBusy}
-                  onClick={() => {
-                    if (window.confirm('确认清除该用户的会员资格？')) adjustVip(editingUser.id, -100000)
-                  }}
+                  onClick={() => void clearVip(editingUser.id)}
                 >
                   <Trash2 size={12} /> 清除会员
                 </button>

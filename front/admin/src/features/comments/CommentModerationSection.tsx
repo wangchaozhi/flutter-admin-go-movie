@@ -1,18 +1,15 @@
 import { useEffect, useState } from 'react'
 import { RefreshCw, Star, Trash2 } from 'lucide-react'
 
-import type { AdminComment, ApiResponse, Paged } from '../../adminTypes'
+import type { AdminComment, Paged } from '../../adminTypes'
 import { PanelTitle, Pagination } from '../../components/shared'
+import { adminRequest } from '../../core/adminApi'
+import { confirmAction, showError, showSuccess } from '../../core/feedback'
 
 const PER_PAGE = 20
 
 async function request<T>(url: string, token: string, init: RequestInit = {}): Promise<T> {
-  const headers = new Headers(init.headers)
-  headers.set('Authorization', `Bearer ${token}`)
-  const res = await fetch(url, { ...init, headers })
-  const body = (await res.json()) as ApiResponse<T>
-  if (!res.ok || body.code !== 0) throw new Error(body.msg || '请求失败')
-  return body.data as T
+  return adminRequest<T>(url, { ...init, token })
 }
 
 function formatDateTime(value: string) {
@@ -48,7 +45,9 @@ export function CommentModerationSection({
       setComments(data?.items ?? [])
       setTotal(data?.total ?? 0)
     } catch (err) {
-      setError(err instanceof Error ? err.message : '加载评论失败')
+      const message = err instanceof Error ? err.message : '加载评论失败'
+      setError(message)
+      showError(message)
     } finally {
       setLoading(false)
     }
@@ -59,13 +58,22 @@ export function CommentModerationSection({
 
   async function handleDelete(comment: AdminComment) {
     if (!canDelete) return
-    if (!window.confirm('确认删除该评论？')) return
+    const confirmed = await confirmAction({
+      title: '删除评论',
+      message: '确认删除该评论？删除后无法恢复。',
+      confirmLabel: '删除',
+      variant: 'danger',
+    })
+    if (!confirmed) return
     setError('')
     try {
       await request<unknown>(`/api/admin/comments/${comment.id}`, token, { method: 'DELETE' })
       await load()
+      showSuccess('评论已删除')
     } catch (err) {
-      setError(err instanceof Error ? err.message : '删除失败')
+      const message = err instanceof Error ? err.message : '删除失败'
+      setError(message)
+      showError(message)
     }
   }
 
