@@ -146,6 +146,7 @@ type MobileUser struct {
 	Nickname   string     `gorm:"column:nickname"        json:"nickname"`
 	Email      string     `gorm:"column:email"           json:"email"`
 	Status     string     `gorm:"column:status"          json:"status"`
+	AvatarKey  string     `gorm:"column:avatar_key"      json:"avatar_key"`
 	VIPUntil   *time.Time `gorm:"column:vip_until"       json:"vip_until"`
 	InviteCode string     `gorm:"column:invite_code"     json:"invite_code"`
 	CreatedAt  time.Time  `gorm:"column:created_at"      json:"created_at"`

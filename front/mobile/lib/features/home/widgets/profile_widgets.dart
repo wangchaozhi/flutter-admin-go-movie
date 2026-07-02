@@ -1,22 +1,48 @@
-import 'package:flutter/material.dart';
+import 'dart:typed_data';
 
+import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+
+import '../../../core/api_client.dart';
 import '../../../core/l10n/app_strings.dart';
 import '../../../core/l10n/locale_controller.dart';
 import '../../../models/video.dart';
 import '../../auth/change_password_sheet.dart';
 import '../../notifications/notifications_page.dart';
 import '../../search/search_page.dart';
+import '../../search/search_storage.dart';
 import '../models/home_models.dart';
+
+const _mobileAppVersion = '1.0.0+1';
+
+Future<void> _clearLocalCache(BuildContext context) async {
+  final imageCache = PaintingBinding.instance.imageCache;
+  imageCache.clear();
+  imageCache.clearLiveImages();
+  await SearchHistoryStorage().clear();
+  if (!context.mounted) return;
+  ScaffoldMessenger.of(
+    context,
+  ).showSnackBar(const SnackBar(content: Text('缓存已清理，登录状态和播放偏好已保留')));
+}
+
+void _openAboutApp(BuildContext context) {
+  Navigator.of(
+    context,
+  ).push(MaterialPageRoute<void>(builder: (_) => const AboutAppPage()));
+}
 
 class HomeTopBar extends StatelessWidget {
   const HomeTopBar({
     super.key,
     required this.username,
+    this.avatarUrl = '',
     required this.onOpenVip,
     required this.onLogout,
   });
 
   final String username;
+  final String avatarUrl;
   final VoidCallback onOpenVip;
   final VoidCallback onLogout;
 
@@ -25,7 +51,7 @@ class HomeTopBar extends StatelessWidget {
       context: context,
       backgroundColor: const Color(0xFF171B24),
       showDragHandle: true,
-      builder: (_) => _ProfileSheet(username: username),
+      builder: (_) => _ProfileSheet(username: username, avatarUrl: avatarUrl),
     );
   }
 
@@ -109,7 +135,7 @@ class HomeTopBar extends StatelessWidget {
                 ),
               ),
             ],
-            child: _AvatarButton(username: username),
+            child: _AvatarButton(username: username, avatarUrl: avatarUrl),
           ),
         ],
       ),
@@ -120,9 +146,41 @@ class HomeTopBar extends StatelessWidget {
 enum _UserMenuAction { profile, vip, logout }
 
 class _AvatarButton extends StatelessWidget {
-  const _AvatarButton({required this.username});
+  const _AvatarButton({
+    required this.username,
+    this.avatarUrl = '',
+    this.size = 44,
+    this.margin = const EdgeInsets.only(left: 8),
+  });
 
   final String username;
+  final String avatarUrl;
+  final double size;
+  final EdgeInsetsGeometry margin;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: margin,
+      child: _ProfileAvatar(
+        username: username,
+        avatarUrl: avatarUrl,
+        size: size,
+      ),
+    );
+  }
+}
+
+class _ProfileAvatar extends StatelessWidget {
+  const _ProfileAvatar({
+    required this.username,
+    required this.avatarUrl,
+    required this.size,
+  });
+
+  final String username;
+  final String avatarUrl;
+  final double size;
 
   @override
   Widget build(BuildContext context) {
@@ -131,9 +189,8 @@ class _AvatarButton extends StatelessWidget {
         : username.trim().characters.first.toUpperCase();
 
     return Container(
-      width: 44,
-      height: 44,
-      margin: const EdgeInsets.only(left: 8),
+      width: size,
+      height: size,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         gradient: const LinearGradient(
@@ -151,14 +208,41 @@ class _AvatarButton extends StatelessWidget {
         ],
       ),
       alignment: Alignment.center,
-      child: Text(
-        letter,
-        style: const TextStyle(
-          color: Color(0xFF101318),
-          fontSize: 18,
-          fontWeight: FontWeight.w900,
-        ),
-      ),
+      clipBehavior: Clip.antiAlias,
+      child: avatarUrl.isEmpty
+          ? Text(
+              letter,
+              style: TextStyle(
+                color: const Color(0xFF101318),
+                fontSize: size * 0.42,
+                fontWeight: FontWeight.w900,
+              ),
+            )
+          : FutureBuilder<Uint8List>(
+              future: ApiClient().getBytesAuth(avatarUrl),
+              builder: (context, snapshot) {
+                final bytes = snapshot.data;
+                if (bytes != null) {
+                  return Image.memory(
+                    bytes,
+                    fit: BoxFit.cover,
+                    width: size,
+                    height: size,
+                    gaplessPlayback: true,
+                  );
+                }
+                return Center(
+                  child: Text(
+                    letter,
+                    style: TextStyle(
+                      color: const Color(0xFF101318),
+                      fontSize: size * 0.42,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                );
+              },
+            ),
     );
   }
 }
@@ -226,9 +310,10 @@ class _VipBadgeIcon extends StatelessWidget {
 }
 
 class _ProfileSheet extends StatelessWidget {
-  const _ProfileSheet({required this.username});
+  const _ProfileSheet({required this.username, required this.avatarUrl});
 
   final String username;
+  final String avatarUrl;
 
   @override
   Widget build(BuildContext context) {
@@ -245,7 +330,7 @@ class _ProfileSheet extends StatelessWidget {
           children: [
             Row(
               children: [
-                _AvatarButton(username: username),
+                _AvatarButton(username: username, avatarUrl: avatarUrl),
                 const SizedBox(width: 14),
                 Expanded(
                   child: Column(
@@ -356,6 +441,7 @@ class ProfileCenter extends StatelessWidget {
     required this.onOpenFavorites,
     required this.onOpenOrders,
     required this.onOpenSettings,
+    required this.onOpenEditProfile,
     required this.onRefresh,
     required this.onLogout,
   });
@@ -373,6 +459,7 @@ class ProfileCenter extends StatelessWidget {
   final VoidCallback onOpenFavorites;
   final VoidCallback onOpenOrders;
   final VoidCallback onOpenSettings;
+  final VoidCallback onOpenEditProfile;
   final Future<void> Function() onRefresh;
   final VoidCallback onLogout;
 
@@ -416,9 +503,11 @@ class ProfileCenter extends StatelessWidget {
             username: displayName,
             loading: loadingProfile,
             isVip: isVip,
+            avatarUrl: profile?.avatarUrl ?? '',
             vipUntilLabel: profile?.vipUntilLabel ?? '',
             error: error,
             onOpenVip: onOpenVip,
+            onEditProfile: onOpenEditProfile,
           ),
           const SizedBox(height: 14),
           _VipMemberCard(
@@ -478,17 +567,21 @@ class _ProfileHeaderCard extends StatelessWidget {
     required this.username,
     required this.loading,
     required this.isVip,
+    required this.avatarUrl,
     required this.vipUntilLabel,
     required this.error,
     required this.onOpenVip,
+    required this.onEditProfile,
   });
 
   final String username;
   final bool loading;
   final bool isVip;
+  final String avatarUrl;
   final String vipUntilLabel;
   final String error;
   final VoidCallback onOpenVip;
+  final VoidCallback onEditProfile;
 
   @override
   Widget build(BuildContext context) {
@@ -502,7 +595,12 @@ class _ProfileHeaderCard extends StatelessWidget {
       ),
       child: Row(
         children: [
-          _AvatarButton(username: username),
+          _AvatarButton(
+            username: username,
+            avatarUrl: avatarUrl,
+            size: 52,
+            margin: EdgeInsets.zero,
+          ),
           const SizedBox(width: 14),
           Expanded(
             child: Column(
@@ -542,6 +640,12 @@ class _ProfileHeaderCard extends StatelessWidget {
                   ),
               ],
             ),
+          ),
+          IconButton(
+            onPressed: onEditProfile,
+            icon: const Icon(Icons.edit_rounded),
+            color: const Color(0xFF25D0AB),
+            tooltip: '编辑资料',
           ),
           if (isVip)
             const _VipBadgeIcon()
@@ -1062,6 +1166,364 @@ class SettingsPage extends StatelessWidget {
   }
 }
 
+class AboutAppPage extends StatelessWidget {
+  const AboutAppPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final s = AppStrings.of(context);
+    return _ProfileDetailScaffold(
+      title: s.t('settings.about'),
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+        children: [
+          Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: const Color(0xFF171B24),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0xFF2B3140)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 54,
+                      height: 54,
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFFF7C948), Color(0xFF25D0AB)],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Icon(
+                        Icons.movie_filter_rounded,
+                        color: Color(0xFF101318),
+                        size: 30,
+                      ),
+                    ),
+                    const SizedBox(width: 14),
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Go Movie',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 22,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          SizedBox(height: 4),
+                          Text(
+                            '移动端观影应用',
+                            style: TextStyle(color: Color(0xFF9CA3AF)),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 18),
+                const Text(
+                  '专注移动端观影体验，支持会员权益、播放记录、收藏、订单和个性化播放偏好。',
+                  style: TextStyle(
+                    color: Color(0xFFD1D5DB),
+                    height: 1.5,
+                    fontSize: 14,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          _AboutInfoCard(
+            children: const [
+              _AboutInfoRow(label: '版本', value: _mobileAppVersion),
+              _AboutInfoRow(label: '应用类型', value: 'Go Movie Mobile'),
+            ],
+          ),
+          const SizedBox(height: 14),
+          _AboutInfoCard(
+            children: [
+              _AboutInfoRow(label: '服务地址', value: ApiClient.baseUrl),
+              const _AboutInfoRow(label: '缓存清理', value: '图片缓存、搜索历史'),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AboutInfoCard extends StatelessWidget {
+  const _AboutInfoCard({required this.children});
+
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFF171B24),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFF2B3140)),
+      ),
+      child: Column(children: children),
+    );
+  }
+}
+
+class _AboutInfoRow extends StatelessWidget {
+  const _AboutInfoRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 9),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 82,
+            child: Text(
+              label,
+              style: const TextStyle(
+                color: Color(0xFF9CA3AF),
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              textAlign: TextAlign.right,
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class ProfileEditPage extends StatefulWidget {
+  const ProfileEditPage({
+    super.key,
+    required this.profile,
+    required this.onSaveProfile,
+    required this.onUploadAvatar,
+  });
+
+  final MobileProfile profile;
+  final Future<MobileProfile> Function(String nickname) onSaveProfile;
+  final Future<MobileProfile> Function(String filename, Uint8List bytes)
+  onUploadAvatar;
+
+  @override
+  State<ProfileEditPage> createState() => _ProfileEditPageState();
+}
+
+class _ProfileEditPageState extends State<ProfileEditPage> {
+  late MobileProfile _profile = widget.profile;
+  late final TextEditingController _nickname = TextEditingController(
+    text: widget.profile.displayName,
+  );
+  bool _savingName = false;
+  bool _uploadingAvatar = false;
+  String _message = '';
+
+  @override
+  void dispose() {
+    _nickname.dispose();
+    super.dispose();
+  }
+
+  Future<void> _saveName() async {
+    final value = _nickname.text.trim();
+    if (value.isEmpty) {
+      setState(() => _message = '请输入显示名称');
+      return;
+    }
+    setState(() {
+      _savingName = true;
+      _message = '';
+    });
+    try {
+      final next = await widget.onSaveProfile(value);
+      if (!mounted) return;
+      setState(() {
+        _profile = next;
+        _nickname.text = next.displayName;
+        _message = '资料已更新';
+      });
+    } catch (err) {
+      if (!mounted) return;
+      setState(() => _message = err.toString());
+    } finally {
+      if (mounted) setState(() => _savingName = false);
+    }
+  }
+
+  Future<void> _pickAvatar() async {
+    if (_uploadingAvatar) return;
+    final picker = ImagePicker();
+    final picked = await picker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 1024,
+      maxHeight: 1024,
+      imageQuality: 88,
+    );
+    if (picked == null) return;
+    setState(() {
+      _uploadingAvatar = true;
+      _message = '';
+    });
+    try {
+      final bytes = await picked.readAsBytes();
+      final next = await widget.onUploadAvatar(picked.name, bytes);
+      if (!mounted) return;
+      setState(() {
+        _profile = next;
+        _message = '头像已更新';
+      });
+    } catch (err) {
+      if (!mounted) return;
+      setState(() => _message = err.toString());
+    } finally {
+      if (mounted) setState(() => _uploadingAvatar = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _ProfileDetailScaffold(
+      title: '编辑资料',
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+        children: [
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFF171B24),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0xFF2B3140)),
+            ),
+            child: Column(
+              children: [
+                GestureDetector(
+                  onTap: _uploadingAvatar ? null : _pickAvatar,
+                  child: Stack(
+                    alignment: Alignment.bottomRight,
+                    children: [
+                      _ProfileAvatar(
+                        username: _profile.displayName,
+                        avatarUrl: _profile.avatarUrl,
+                        size: 84,
+                      ),
+                      Container(
+                        width: 30,
+                        height: 30,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF25D0AB),
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: const Color(0xFF171B24),
+                            width: 2,
+                          ),
+                        ),
+                        child: _uploadingAvatar
+                            ? const Padding(
+                                padding: EdgeInsets.all(7),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Color(0xFF101318),
+                                ),
+                              )
+                            : const Icon(
+                                Icons.photo_camera_rounded,
+                                color: Color(0xFF101318),
+                                size: 17,
+                              ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  _profile.username,
+                  style: const TextStyle(color: Color(0xFF9CA3AF)),
+                ),
+                const SizedBox(height: 18),
+                TextField(
+                  controller: _nickname,
+                  style: const TextStyle(color: Colors.white),
+                  textInputAction: TextInputAction.done,
+                  decoration: const InputDecoration(
+                    labelText: '显示名称',
+                    labelStyle: TextStyle(color: Color(0xFF9CA3AF)),
+                    prefixIcon: Icon(
+                      Icons.badge_outlined,
+                      color: Color(0xFF25D0AB),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderSide: BorderSide(color: Color(0xFF2B3140)),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderSide: BorderSide(color: Color(0xFF25D0AB)),
+                    ),
+                  ),
+                  onSubmitted: (_) => _saveName(),
+                ),
+                const SizedBox(height: 14),
+                FilledButton.icon(
+                  onPressed: _savingName ? null : _saveName,
+                  icon: _savingName
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.check_rounded),
+                  label: Text(_savingName ? '保存中' : '保存名称'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFF25D0AB),
+                    foregroundColor: const Color(0xFF07110F),
+                    minimumSize: const Size.fromHeight(44),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (_message.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            Text(
+              _message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Color(0xFFF7C948)),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 class _ProfileDetailPage extends StatelessWidget {
   const _ProfileDetailPage({
     required this.title,
@@ -1177,6 +1639,7 @@ class SettingsSheet extends StatefulWidget {
 class _SettingsSheetState extends State<SettingsSheet> {
   late MobileSetting _setting = widget.setting;
   bool _saving = false;
+  bool _clearingCache = false;
 
   Future<void> _save(MobileSetting setting) async {
     setState(() {
@@ -1185,6 +1648,13 @@ class _SettingsSheetState extends State<SettingsSheet> {
     });
     await widget.onSave(setting);
     if (mounted) setState(() => _saving = false);
+  }
+
+  Future<void> _clearCache() async {
+    if (_clearingCache) return;
+    setState(() => _clearingCache = true);
+    await _clearLocalCache(context);
+    if (mounted) setState(() => _clearingCache = false);
   }
 
   @override
@@ -1321,6 +1791,55 @@ class _SettingsSheetState extends State<SettingsSheet> {
                   color: Color(0xFF9CA3AF),
                 ),
                 onTap: () => showChangePasswordSheet(context),
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(
+                  Icons.cleaning_services_outlined,
+                  color: Color(0xFF25D0AB),
+                ),
+                title: Text(
+                  s.t('settings.clearCache'),
+                  style: const TextStyle(color: Colors.white),
+                ),
+                subtitle: const Text(
+                  '清理图片缓存和搜索历史，不影响登录状态',
+                  style: TextStyle(color: Color(0xFF9CA3AF)),
+                ),
+                trailing: _clearingCache
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Color(0xFF25D0AB),
+                        ),
+                      )
+                    : const Icon(
+                        Icons.chevron_right_rounded,
+                        color: Color(0xFF9CA3AF),
+                      ),
+                onTap: _clearingCache ? null : _clearCache,
+              ),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(
+                  Icons.info_outline_rounded,
+                  color: Color(0xFF25D0AB),
+                ),
+                title: Text(
+                  s.t('settings.about'),
+                  style: const TextStyle(color: Colors.white),
+                ),
+                subtitle: const Text(
+                  'Go Movie · $_mobileAppVersion',
+                  style: TextStyle(color: Color(0xFF9CA3AF)),
+                ),
+                trailing: const Icon(
+                  Icons.chevron_right_rounded,
+                  color: Color(0xFF9CA3AF),
+                ),
+                onTap: () => _openAboutApp(context),
               ),
             ],
           ),
@@ -1534,12 +2053,14 @@ class _SettingsCard extends StatelessWidget {
           _SettingRow(
             icon: Icons.cleaning_services_outlined,
             label: s.t('settings.clearCache'),
-            value: s.t('settings.clearCacheValue'),
+            value: '立即清理',
+            onTap: () => _clearLocalCache(context),
           ),
           _SettingRow(
             icon: Icons.info_outline_rounded,
             label: s.t('settings.about'),
-            value: s.t('center.aboutValue'),
+            value: _mobileAppVersion,
+            onTap: () => _openAboutApp(context),
           ),
           const SizedBox(height: 8),
           OutlinedButton.icon(
@@ -1566,15 +2087,17 @@ class _SettingRow extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.value,
+    this.onTap,
   });
 
   final IconData icon;
   final String label;
   final String value;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
+    final row = Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Row(
         children: [
@@ -1589,8 +2112,22 @@ class _SettingRow extends StatelessWidget {
           ),
           const Spacer(),
           Text(value, style: const TextStyle(color: Color(0xFF9CA3AF))),
+          if (onTap != null) ...[
+            const SizedBox(width: 4),
+            const Icon(
+              Icons.chevron_right_rounded,
+              color: Color(0xFF9CA3AF),
+              size: 20,
+            ),
+          ],
         ],
       ),
+    );
+    if (onTap == null) return row;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: row,
     );
   }
 }

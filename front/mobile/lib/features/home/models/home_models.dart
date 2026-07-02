@@ -69,6 +69,7 @@ class MobileProfile {
     required this.nickname,
     required this.email,
     required this.status,
+    required this.avatarUrl,
     required this.isVip,
     required this.vipUntil,
   });
@@ -80,6 +81,7 @@ class MobileProfile {
       nickname: json['nickname'] as String? ?? '',
       email: json['email'] as String? ?? '',
       status: json['status'] as String? ?? '',
+      avatarUrl: json['avatar_url'] as String? ?? '',
       isVip: json['is_vip'] as bool? ?? false,
       vipUntil: rawVipUntil == null || rawVipUntil.isEmpty
           ? null
@@ -91,6 +93,7 @@ class MobileProfile {
   final String nickname;
   final String email;
   final String status;
+  final String avatarUrl;
   final bool isVip;
   final DateTime? vipUntil;
 

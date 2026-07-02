@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 
 import '../../core/api_client.dart';
@@ -280,6 +282,42 @@ class _MobileHomePageState extends State<MobileHomePage> {
     }
   }
 
+  Future<MobileProfile> _saveProfileName(String nickname) async {
+    final resp = await ApiClient().putAuth('/api/mobile/profile', {
+      'nickname': nickname,
+    });
+    if (resp['code'] != 0) {
+      throw Exception(resp['msg']?.toString() ?? '保存资料失败');
+    }
+    final data = resp['data'] as Map<String, dynamic>? ?? {};
+    final profile = MobileProfile.fromJson(data);
+    if (mounted) {
+      setState(() => _profile = profile);
+    }
+    return profile;
+  }
+
+  Future<MobileProfile> _uploadProfileAvatar(
+    String filename,
+    Uint8List bytes,
+  ) async {
+    final resp = await ApiClient().postMultipartAuth(
+      '/api/mobile/profile/avatar',
+      fieldName: 'avatar',
+      filename: filename,
+      bytes: bytes,
+    );
+    if (resp['code'] != 0) {
+      throw Exception(resp['msg']?.toString() ?? '上传头像失败');
+    }
+    final data = resp['data'] as Map<String, dynamic>? ?? {};
+    final profile = MobileProfile.fromJson(data);
+    if (mounted) {
+      setState(() => _profile = profile);
+    }
+    return profile;
+  }
+
   Future<void> _loadOrders() async {
     try {
       final resp = await ApiClient().getAuth('/api/orders?limit=3');
@@ -462,6 +500,25 @@ class _MobileHomePageState extends State<MobileHomePage> {
     }
   }
 
+  Future<void> _openEditProfilePage() async {
+    if (_profile == null) {
+      await _loadProfile();
+    }
+    if (!mounted || _profile == null) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ProfileEditPage(
+          profile: _profile!,
+          onSaveProfile: _saveProfileName,
+          onUploadAvatar: _uploadProfileAvatar,
+        ),
+      ),
+    );
+    if (mounted) {
+      await _loadProfile();
+    }
+  }
+
   void _onNavSelected(int index) {
     setState(() => _selectedNav = index);
     switch (index) {
@@ -484,6 +541,7 @@ class _MobileHomePageState extends State<MobileHomePage> {
     final featuredVideo = _videos.where((v) => v.isReady).firstOrNull;
     final favoriteVideoIds = _favorites.map((entry) => entry.video.id).toSet();
     final catalogVideos = _catalogVideos.isNotEmpty ? _catalogVideos : _videos;
+    final displayName = _profile?.displayName ?? _username ?? '';
     final condenseHomeList = _selectedCategoryIndex == 0;
     final homeListVideos = condenseHomeList
         ? _videos.where((video) => video.isReady).take(8).toList()
@@ -533,6 +591,7 @@ class _MobileHomePageState extends State<MobileHomePage> {
         onOpenFavorites: _openFavoritesPage,
         onOpenOrders: _openOrdersPage,
         onOpenSettings: _openSettingsPage,
+        onOpenEditProfile: _openEditProfilePage,
         onRefresh: () => _loadProfileCenter(force: true),
         onLogout: _logout,
       ),
@@ -540,7 +599,8 @@ class _MobileHomePageState extends State<MobileHomePage> {
         slivers: [
           SliverToBoxAdapter(
             child: HomeTopBar(
-              username: _username ?? '',
+              username: displayName,
+              avatarUrl: _profile?.avatarUrl ?? '',
               onOpenVip: () {
                 _openVipAndRefreshProfile();
               },

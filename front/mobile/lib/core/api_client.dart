@@ -68,7 +68,10 @@ class ApiClient {
     return _send('GET', path, auth: true);
   }
 
-  Future<Map<String, dynamic>> postAuth(String path, Map<String, dynamic> body) {
+  Future<Map<String, dynamic>> postAuth(
+    String path,
+    Map<String, dynamic> body,
+  ) {
     return _send('POST', path, body: body, auth: true);
   }
 
@@ -78,6 +81,52 @@ class ApiClient {
 
   Future<Map<String, dynamic>> deleteAuth(String path) {
     return _send('DELETE', path, auth: true);
+  }
+
+  Future<Uint8List> getBytesAuth(String path) async {
+    final uri = Uri.parse('$baseUrl$path');
+    final token = await Session.token();
+    final headers = <String, String>{};
+    if (token != null) headers['Authorization'] = 'Bearer $token';
+    try {
+      final response = await http.get(uri, headers: headers).timeout(timeout);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        throw ApiException('资源加载失败 (HTTP ${response.statusCode})：$uri');
+      }
+      return response.bodyBytes;
+    } on TimeoutException {
+      throw ApiException('请求超时，请检查网络或服务器地址：$uri');
+    } on http.ClientException catch (e) {
+      throw ApiException('无法连接服务器 (${e.message})，请检查服务器地址：$uri');
+    }
+  }
+
+  Future<Map<String, dynamic>> postMultipartAuth(
+    String path, {
+    required String fieldName,
+    required String filename,
+    required Uint8List bytes,
+  }) async {
+    final uri = Uri.parse('$baseUrl$path');
+    final token = await Session.token();
+    final request = http.MultipartRequest('POST', uri);
+    if (token != null) request.headers['Authorization'] = 'Bearer $token';
+    request.files.add(
+      http.MultipartFile.fromBytes(fieldName, bytes, filename: filename),
+    );
+    try {
+      final streamed = await request.send().timeout(timeout);
+      final response = await http.Response.fromStream(streamed);
+      final decoded = _decode(response, uri);
+      if (decoded['code'] == bannedCode) {
+        await _forceLogout(decoded['msg']?.toString() ?? '账号已被封禁，请重新登录');
+      }
+      return decoded;
+    } on TimeoutException {
+      throw ApiException('请求超时，请检查网络或服务器地址：$uri');
+    } on http.ClientException catch (e) {
+      throw ApiException('无法连接服务器 (${e.message})，请检查服务器地址：$uri');
+    }
   }
 
   /// Single entry point for every request: builds the URL, attaches the auth
@@ -118,9 +167,7 @@ class ApiClient {
       final response = await request.timeout(timeout);
       final decoded = _decode(response, uri);
       if (decoded['code'] == bannedCode) {
-        await _forceLogout(
-          decoded['msg']?.toString() ?? '账号已被封禁，请重新登录',
-        );
+        await _forceLogout(decoded['msg']?.toString() ?? '账号已被封禁，请重新登录');
       }
       return decoded;
     } on TimeoutException {
@@ -137,9 +184,7 @@ class ApiClient {
   Map<String, dynamic> _decode(http.Response response, Uri uri) {
     final body = response.body.trim();
     if (body.isEmpty) {
-      throw ApiException(
-        '服务器无响应 (HTTP ${response.statusCode})，请检查服务器地址：$uri',
-      );
+      throw ApiException('服务器无响应 (HTTP ${response.statusCode})，请检查服务器地址：$uri');
     }
     final dynamic decoded;
     try {
@@ -152,8 +197,6 @@ class ApiClient {
     if (decoded is Map<String, dynamic>) {
       return decoded;
     }
-    throw ApiException(
-      '服务器返回了非预期数据 (HTTP ${response.statusCode})：$uri',
-    );
+    throw ApiException('服务器返回了非预期数据 (HTTP ${response.statusCode})：$uri');
   }
 }
