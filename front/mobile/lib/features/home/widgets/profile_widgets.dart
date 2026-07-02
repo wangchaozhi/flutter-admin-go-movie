@@ -421,6 +421,12 @@ class ProfileCenter extends StatelessWidget {
             onOpenVip: onOpenVip,
           ),
           const SizedBox(height: 14),
+          _VipMemberCard(
+            isVip: isVip,
+            vipUntilLabel: profile?.vipUntilLabel ?? '',
+            onTap: onOpenVip,
+          ),
+          const SizedBox(height: 14),
           _ShortcutGrid(
             items: [
               _ShortcutItem(
@@ -454,19 +460,11 @@ class ProfileCenter extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 14),
-          _VipMemberCard(
-            isVip: isVip,
-            vipUntilLabel: profile?.vipUntilLabel ?? '',
-            onTap: onOpenVip,
-          ),
-          const SizedBox(height: 14),
           _ActivitySummaryCard(
             historyCount: historyCount,
             favoriteCount: favoriteCount,
             orderCount: orders.length,
           ),
-          const SizedBox(height: 14),
-          _RecentOrdersCard(orders: orders, loading: loadingOrders),
           const SizedBox(height: 14),
           _SettingsCard(onLogout: onLogout),
         ],
@@ -879,11 +877,298 @@ class OrdersSheet extends StatelessWidget {
   }
 }
 
-class SettingsSheet extends StatefulWidget {
-  const SettingsSheet({super.key, required this.setting, required this.onSave});
+class HistoryPage extends StatefulWidget {
+  const HistoryPage({
+    super.key,
+    required this.initialItems,
+    required this.onRefresh,
+    required this.onOpenVideo,
+  });
+
+  final List<HistoryEntry> initialItems;
+  final Future<List<HistoryEntry>> Function() onRefresh;
+  final ValueChanged<Video> onOpenVideo;
+
+  @override
+  State<HistoryPage> createState() => _HistoryPageState();
+}
+
+class _HistoryPageState extends State<HistoryPage> {
+  late List<HistoryEntry> _items = widget.initialItems;
+  bool _loading = false;
+
+  Future<void> _refresh() async {
+    setState(() => _loading = true);
+    final items = await widget.onRefresh();
+    if (!mounted) return;
+    setState(() {
+      _items = items;
+      _loading = false;
+    });
+  }
+
+  void _openVideo(Video video) {
+    Navigator.pop(context);
+    widget.onOpenVideo(video);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = AppStrings.of(context);
+    return _ProfileDetailPage(
+      title: s.t('center.history'),
+      loading: _loading,
+      emptyText: s.t('center.noHistory'),
+      onRefresh: _refresh,
+      children: [
+        for (final item in _items)
+          _VideoActionRow(
+            video: item.video,
+            subtitle: s.t('center.watched', {'progress': '${item.progress}'}),
+            trailing: item.video.durationLabel,
+            onTap: () => _openVideo(item.video),
+          ),
+      ],
+    );
+  }
+}
+
+class FavoritesPage extends StatefulWidget {
+  const FavoritesPage({
+    super.key,
+    required this.initialItems,
+    required this.onRefresh,
+    required this.onOpenVideo,
+    required this.onRemove,
+  });
+
+  final List<FavoriteEntry> initialItems;
+  final Future<List<FavoriteEntry>> Function() onRefresh;
+  final ValueChanged<Video> onOpenVideo;
+  final Future<void> Function(Video video) onRemove;
+
+  @override
+  State<FavoritesPage> createState() => _FavoritesPageState();
+}
+
+class _FavoritesPageState extends State<FavoritesPage> {
+  late List<FavoriteEntry> _items = widget.initialItems;
+  bool _loading = false;
+
+  Future<void> _refresh() async {
+    setState(() => _loading = true);
+    final items = await widget.onRefresh();
+    if (!mounted) return;
+    setState(() {
+      _items = items;
+      _loading = false;
+    });
+  }
+
+  Future<void> _remove(Video video) async {
+    setState(() => _loading = true);
+    await widget.onRemove(video);
+    final items = await widget.onRefresh();
+    if (!mounted) return;
+    setState(() {
+      _items = items;
+      _loading = false;
+    });
+  }
+
+  void _openVideo(Video video) {
+    Navigator.pop(context);
+    widget.onOpenVideo(video);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = AppStrings.of(context);
+    return _ProfileDetailPage(
+      title: s.t('center.favorites'),
+      loading: _loading,
+      emptyText: s.t('center.noFavoriteFilms'),
+      onRefresh: _refresh,
+      children: [
+        for (final item in _items)
+          _VideoActionRow(
+            video: item.video,
+            subtitle: item.video.categoryName.isEmpty
+                ? s.t('center.favorited')
+                : item.video.categoryName,
+            trailing: s.t('center.remove'),
+            onTap: () => _openVideo(item.video),
+            onTrailingTap: () => _remove(item.video),
+          ),
+      ],
+    );
+  }
+}
+
+class OrdersPage extends StatefulWidget {
+  const OrdersPage({
+    super.key,
+    required this.initialOrders,
+    required this.onRefresh,
+  });
+
+  final List<OrderSummary> initialOrders;
+  final Future<List<OrderSummary>> Function() onRefresh;
+
+  @override
+  State<OrdersPage> createState() => _OrdersPageState();
+}
+
+class _OrdersPageState extends State<OrdersPage> {
+  late List<OrderSummary> _orders = widget.initialOrders;
+  bool _loading = false;
+
+  Future<void> _refresh() async {
+    setState(() => _loading = true);
+    final orders = await widget.onRefresh();
+    if (!mounted) return;
+    setState(() {
+      _orders = orders;
+      _loading = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = AppStrings.of(context);
+    return _ProfileDetailPage(
+      title: s.t('center.orders'),
+      loading: _loading,
+      emptyText: s.t('center.noOrders'),
+      onRefresh: _refresh,
+      children: [for (final order in _orders) _OrderRow(order: order)],
+    );
+  }
+}
+
+class SettingsPage extends StatelessWidget {
+  const SettingsPage({super.key, required this.setting, required this.onSave});
 
   final MobileSetting setting;
   final Future<void> Function(MobileSetting setting) onSave;
+
+  @override
+  Widget build(BuildContext context) {
+    final s = AppStrings.of(context);
+    return _ProfileDetailScaffold(
+      title: s.t('settings.title'),
+      child: SettingsSheet(setting: setting, onSave: onSave, showTitle: false),
+    );
+  }
+}
+
+class _ProfileDetailPage extends StatelessWidget {
+  const _ProfileDetailPage({
+    required this.title,
+    required this.loading,
+    required this.emptyText,
+    required this.onRefresh,
+    required this.children,
+  });
+
+  final String title;
+  final bool loading;
+  final String emptyText;
+  final Future<void> Function() onRefresh;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return _ProfileDetailScaffold(
+      title: title,
+      child: RefreshIndicator(
+        color: const Color(0xFF25D0AB),
+        onRefresh: onRefresh,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
+          children: [
+            if (loading)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 48),
+                child: Center(
+                  child: CircularProgressIndicator(color: Color(0xFF25D0AB)),
+                ),
+              )
+            else if (children.isEmpty)
+              _FullPageEmpty(text: emptyText)
+            else
+              ...children,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ProfileDetailScaffold extends StatelessWidget {
+  const _ProfileDetailScaffold({required this.title, required this.child});
+
+  final String title;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0D0F14),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF0D0F14),
+        foregroundColor: Colors.white,
+        elevation: 0,
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w900)),
+      ),
+      body: SafeArea(top: false, child: child),
+    );
+  }
+}
+
+class _FullPageEmpty extends StatelessWidget {
+  const _FullPageEmpty({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: 36),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 32),
+      decoration: BoxDecoration(
+        color: const Color(0xFF171B24),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFF2B3140)),
+      ),
+      child: Column(
+        children: [
+          const Icon(Icons.inbox_outlined, color: Color(0xFF25D0AB), size: 30),
+          const SizedBox(height: 10),
+          Text(
+            text,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Color(0xFF9CA3AF), height: 1.4),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class SettingsSheet extends StatefulWidget {
+  const SettingsSheet({
+    super.key,
+    required this.setting,
+    required this.onSave,
+    this.showTitle = true,
+  });
+
+  final MobileSetting setting;
+  final Future<void> Function(MobileSetting setting) onSave;
+  final bool showTitle;
 
   @override
   State<SettingsSheet> createState() => _SettingsSheetState();
@@ -915,15 +1200,17 @@ class _SettingsSheetState extends State<SettingsSheet> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                s.t('settings.title'),
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 20,
-                  fontWeight: FontWeight.w900,
+              if (widget.showTitle) ...[
+                Text(
+                  s.t('settings.title'),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 12),
+                const SizedBox(height: 12),
+              ],
               SwitchListTile.adaptive(
                 value: _setting.autoPlay,
                 activeThumbColor: const Color(0xFF25D0AB),
@@ -1132,7 +1419,6 @@ class _ActivitySummaryCard extends StatelessWidget {
     final s = AppStrings.of(context);
     return _SectionCard(
       title: '账号活动',
-      trailing: s.t('center.continueWatch'),
       child: Row(
         children: [
           Expanded(
@@ -1157,42 +1443,6 @@ class _ActivitySummaryCard extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-class _RecentOrdersCard extends StatelessWidget {
-  const _RecentOrdersCard({required this.orders, required this.loading});
-
-  final List<OrderSummary> orders;
-  final bool loading;
-
-  @override
-  Widget build(BuildContext context) {
-    final s = AppStrings.of(context);
-    return _SectionCard(
-      title: s.t('center.orders'),
-      trailing: loading
-          ? s.t('center.loadingShort')
-          : s.t('center.recentOrder'),
-      child: loading
-          ? const Padding(
-              padding: EdgeInsets.symmetric(vertical: 16),
-              child: Center(
-                child: CircularProgressIndicator(color: Color(0xFF25D0AB)),
-              ),
-            )
-          : orders.isEmpty
-          ? Padding(
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              child: Text(
-                s.t('center.noOrders'),
-                style: const TextStyle(color: Color(0xFF9CA3AF)),
-              ),
-            )
-          : Column(
-              children: [for (final order in orders) _OrderRow(order: order)],
-            ),
     );
   }
 }
@@ -1346,14 +1596,10 @@ class _SettingRow extends StatelessWidget {
 }
 
 class _SectionCard extends StatelessWidget {
-  const _SectionCard({
-    required this.title,
-    required this.trailing,
-    required this.child,
-  });
+  const _SectionCard({required this.title, required this.child, this.trailing});
 
   final String title;
-  final String trailing;
+  final String? trailing;
   final Widget child;
 
   @override
@@ -1380,14 +1626,15 @@ class _SectionCard extends StatelessWidget {
                   ),
                 ),
               ),
-              Text(
-                trailing,
-                style: const TextStyle(
-                  color: Color(0xFF9CA3AF),
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
+              if (trailing != null)
+                Text(
+                  trailing!,
+                  style: const TextStyle(
+                    color: Color(0xFF9CA3AF),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
-              ),
             ],
           ),
           const SizedBox(height: 12),

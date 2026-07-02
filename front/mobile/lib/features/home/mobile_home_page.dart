@@ -386,56 +386,80 @@ class _MobileHomePageState extends State<MobileHomePage> {
     if (mounted) setState(() => _libraryLoaded = true);
   }
 
-  Future<void> _showHistorySheet() async {
+  Future<void> _openHistoryPage() async {
     await _loadHistory();
     if (!mounted) return;
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: const Color(0xFF171B24),
-      showDragHandle: true,
-      builder: (_) => HistorySheet(
-        items: _history,
-        loading: _loadingHistory,
-        onOpenVideo: _openVideo,
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => HistoryPage(
+          initialItems: _history,
+          onRefresh: () async {
+            await _loadHistory();
+            return _history;
+          },
+          onOpenVideo: _openVideo,
+        ),
       ),
     );
+    if (mounted) {
+      await _loadHistory();
+    }
   }
 
-  Future<void> _showFavoritesSheet() async {
+  Future<void> _openFavoritesPage() async {
     await _loadFavorites();
     if (!mounted) return;
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: const Color(0xFF171B24),
-      showDragHandle: true,
-      builder: (_) => FavoritesSheet(
-        items: _favorites,
-        loading: _loadingFavorites,
-        onOpenVideo: _openVideo,
-        onRemove: _removeFavorite,
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => FavoritesPage(
+          initialItems: _favorites,
+          onRefresh: () async {
+            await _loadFavorites();
+            return _favorites;
+          },
+          onOpenVideo: _openVideo,
+          onRemove: _removeFavorite,
+        ),
       ),
     );
+    if (mounted) {
+      await _loadFavorites();
+    }
   }
 
-  void _showOrdersSheet() {
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: const Color(0xFF171B24),
-      showDragHandle: true,
-      builder: (_) => OrdersSheet(orders: _orders, loading: _loadingOrders),
-    );
-  }
-
-  void _showSettingsSheet() {
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: const Color(0xFF171B24),
-      showDragHandle: true,
-      builder: (_) => SettingsSheet(
-        setting: _setting ?? MobileSetting.defaults(),
-        onSave: _saveSetting,
+  Future<void> _openOrdersPage() async {
+    await _loadOrders();
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => OrdersPage(
+          initialOrders: _orders,
+          onRefresh: () async {
+            await _loadOrders();
+            return _orders;
+          },
+        ),
       ),
     );
+    if (mounted) {
+      await _loadOrders();
+    }
+  }
+
+  Future<void> _openSettingsPage() async {
+    await _loadSetting();
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => SettingsPage(
+          setting: _setting ?? MobileSetting.defaults(),
+          onSave: _saveSetting,
+        ),
+      ),
+    );
+    if (mounted) {
+      await _loadSetting();
+    }
   }
 
   void _onNavSelected(int index) {
@@ -505,10 +529,10 @@ class _MobileHomePageState extends State<MobileHomePage> {
         onOpenVip: () {
           _openVipAndRefreshProfile();
         },
-        onOpenHistory: _showHistorySheet,
-        onOpenFavorites: _showFavoritesSheet,
-        onOpenOrders: _showOrdersSheet,
-        onOpenSettings: _showSettingsSheet,
+        onOpenHistory: _openHistoryPage,
+        onOpenFavorites: _openFavoritesPage,
+        onOpenOrders: _openOrdersPage,
+        onOpenSettings: _openSettingsPage,
         onRefresh: () => _loadProfileCenter(force: true),
         onLogout: _logout,
       ),

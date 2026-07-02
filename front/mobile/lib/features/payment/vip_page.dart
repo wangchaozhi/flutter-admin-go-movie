@@ -287,48 +287,151 @@ class _PaymentMethodCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final selectedLabel = providerLabels[provider] ?? provider.toUpperCase();
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: const Color(0xFF171B24),
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: const Color(0xFF2B3140)),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.payments_outlined, color: Color(0xFF25D0AB)),
-          const SizedBox(width: 10),
-          const Expanded(
-            child: Text(
-              '支付方式',
-              style: TextStyle(
-                color: Color(0xFFE5E7EB),
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ),
-          DropdownButtonHideUnderline(
-            child: DropdownButton<String>(
-              value: provider,
-              dropdownColor: const Color(0xFF171B24),
-              style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w800,
-              ),
-              iconEnabledColor: const Color(0xFF9CA3AF),
-              items: [
-                for (final item in providers)
-                  DropdownMenuItem(
-                    value: item,
-                    child: Text(providerLabels[item] ?? item.toUpperCase()),
+          Row(
+            children: [
+              const Icon(Icons.payments_outlined, color: Color(0xFF25D0AB)),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text(
+                  '支付方式',
+                  style: TextStyle(
+                    color: Color(0xFFE5E7EB),
+                    fontWeight: FontWeight.w800,
                   ),
-              ],
-              onChanged: (value) {
-                if (value != null) onChanged(value);
-              },
-            ),
+                ),
+              ),
+              Text(
+                selectedLabel,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              const gap = 8.0;
+              final itemWidth =
+                  (constraints.maxWidth - gap * (providers.length - 1)) /
+                  providers.length;
+              final optionWidth = itemWidth.clamp(0.0, 72.0);
+              return Row(
+                children: [
+                  for (var i = 0; i < providers.length; i++) ...[
+                    SizedBox(
+                      width: optionWidth,
+                      child: _PaymentMethodOption(
+                        provider: providers[i],
+                        label: providerLabels[providers[i]] ?? providers[i],
+                        selected: providers[i] == provider,
+                        onTap: () => onChanged(providers[i]),
+                      ),
+                    ),
+                    if (i != providers.length - 1) const SizedBox(width: gap),
+                  ],
+                ],
+              );
+            },
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _PaymentMethodOption extends StatelessWidget {
+  const _PaymentMethodOption({
+    required this.provider,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String provider;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  String get _shortLabel => switch (provider) {
+    'mock' => '模拟',
+    'stripe' => 'Stripe',
+    'paypal' => 'PayPal',
+    'wechat' => '微信',
+    'alipay' => '支付宝',
+    _ => label,
+  };
+
+  IconData get _icon => switch (provider) {
+    'mock' => Icons.bolt_rounded,
+    'stripe' => Icons.credit_card_rounded,
+    'paypal' => Icons.account_balance_wallet_rounded,
+    'wechat' => Icons.chat_bubble_rounded,
+    'alipay' => Icons.account_balance_rounded,
+    _ => Icons.payments_rounded,
+  };
+
+  Color get _accent => switch (provider) {
+    'mock' => const Color(0xFF25D0AB),
+    'stripe' => const Color(0xFF7C3AED),
+    'paypal' => const Color(0xFF3B82F6),
+    'wechat' => const Color(0xFF22C55E),
+    'alipay' => const Color(0xFF1677FF),
+    _ => const Color(0xFF25D0AB),
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final foreground = selected ? const Color(0xFF101318) : _accent;
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: label,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: onTap,
+          child: Ink(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+            decoration: BoxDecoration(
+              color: selected ? _accent : _accent.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: selected ? _accent : _accent.withValues(alpha: 0.42),
+              ),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(_icon, color: foreground, size: 22),
+                const SizedBox(height: 5),
+                Text(
+                  _shortLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: selected ? const Color(0xFF101318) : Colors.white,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
